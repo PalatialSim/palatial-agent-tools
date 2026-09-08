@@ -20,3 +20,9 @@ jobs:
       - run: npm run check
       - run: npm test
       - run: npm pack --dry-run --ignore-scripts
+  published-release-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: docker build --file test/isolated-release.Dockerfile --tag palatial-agent-isolation:0.1.0 .
+      - run: docker run --rm --network none --read-only --tmpfs /tmp:rw,size=128m palatial-agent-isolation:0.1.0

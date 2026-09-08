@@ -149,4 +149,6 @@ npm pack
 
 Tests use fixtures and the actual MCP SDK; they do not spend Palatial credits. A production generation canary and native simulator validation remain separate release checks.
 
+To test the published package in a fresh Docker container with external networking disabled at runtime, follow the [isolated testing guide](docs/testing.md). It covers clean installation, HTTPS fixture flows, and the separate live-canary procedure.
+
 Client integration references: [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli), [Claude Code MCP](https://code.claude.com/docs/en/mcp).

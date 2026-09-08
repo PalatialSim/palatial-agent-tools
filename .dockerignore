@@ -1,0 +1,4 @@
+*
+!test/
+!test/isolated-release-smoke.mjs
+!test/isolated-release.Dockerfile
