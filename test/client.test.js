@@ -30,6 +30,34 @@ test('text creation uses the documented endpoint, records the asset ID, and neve
   assert.equal(calls.filter(c => c.init.method === 'POST').length, 1);
 });
 
+test('configured API origin follows the created asset into its durable receipt', async t => {
+  const { client } = await fixture(t, async () => json({ id: 'dev-asset' }, 201), {
+    baseUrl: 'https://dashboard.dev.palatial.cloud/api/v1/external/',
+  });
+  const created = await client.create(basic);
+  assert.equal(created.dashboard_url, 'https://dashboard.dev.palatial.cloud');
+  const receipt = JSON.parse(await readFile(created.receipt_file));
+  assert.equal(receipt.api_origin, 'https://dashboard.dev.palatial.cloud');
+  assert.equal(receipt.dashboard_url, created.dashboard_url);
+});
+
+test('workspace enumeration establishes connectivity but does not assert create authorization', async t => {
+  const { client } = await fixture(t, async () => json({ data: [{ id: 'workspace-1' }] }));
+  const result = await client.doctor();
+  assert.equal(result.authenticated, true);
+  assert.equal(result.creation_authorization, 'not_verified');
+});
+
+test('status polling preserves processing and export phases without inferring completion', async t => {
+  const record = { status: 'PROCESSING_IMPORT', progress: 84,
+    processingSummary: { runId: 'run-1', currentStageKey: 'export', runStatus: 'running' },
+    export: { status: 'PROCESSING' } };
+  const { client } = await fixture(t, async () => json(record));
+  const result = await client.getAsset('asset-1');
+  assert.equal(result.status, 'PROCESSING_IMPORT');
+  assert.deepEqual(result.details, record);
+});
+
 test('multiview and CAD use actual multipart files and repeated engine fields', async t => {
   const captured = [];
   const { dir, client } = await fixture(t, async (url, init) => { captured.push({ url: String(url), body: init.body }); return json({ id: 'asset-files' }, 201); });
