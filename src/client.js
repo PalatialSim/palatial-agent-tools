@@ -97,7 +97,7 @@ export class PalatialClient {
   async doctor() {
     const workspaces = await this.request('workspaces');
     const items = Array.isArray(workspaces) ? workspaces : Array.isArray(workspaces?.data) ? workspaces.data : undefined;
-    return { authenticated: true, api_origin: this.base.origin, ...(items ? { workspace_count: items.length } : {}), message: 'Read-only connectivity check passed. No asset was generated or exported.' };
+    return { authenticated: true, creation_authorization: 'not_verified', api_origin: this.base.origin, ...(items ? { workspace_count: items.length } : {}), message: 'Read-only connectivity check passed. Creating assets also requires workspace owner context and credits; this check does not verify those permissions.' };
   }
 
   async create(input) {
@@ -134,7 +134,7 @@ export class PalatialClient {
     const requestId = randomUUID();
     const requestReceipt = path.join(this.receiptDir, `${requestId}.json`);
     await mkdir(this.receiptDir, { recursive: true, mode: 0o700 });
-    const intent = { request_id: requestId, name: p.name, source, engine: p.engine, submitted_at: new Date().toISOString(), status: 'submission_outcome_unknown' };
+    const intent = { request_id: requestId, name: p.name, source, engine: p.engine, api_origin: this.base.origin, submitted_at: new Date().toISOString(), status: 'submission_outcome_unknown' };
     await writeFile(requestReceipt, JSON.stringify(intent, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
     let result;
     try {
@@ -144,7 +144,7 @@ export class PalatialClient {
     }
     const assetId = result?.id;
     if (typeof assetId !== 'string' || !assetIdSchema.safeParse(assetId).success) throw new Error(`Create response did not contain a valid asset ID. The job may exist: inspect the Palatial dashboard before submitting again. Recovery receipt: ${requestReceipt}`);
-    const created = { asset_id: assetId, status: statusValue(result) || 'SUBMITTED', dashboard_url: 'https://dashboard.palatial.cloud', request_id: requestId, receipt_file: requestReceipt, message: 'Save this asset ID. Use palatial_get_asset to track it; do not submit again to poll.' };
+    const created = { asset_id: assetId, status: statusValue(result) || 'SUBMITTED', dashboard_url: this.base.origin, request_id: requestId, receipt_file: requestReceipt, message: 'Save this asset ID. Use palatial_get_asset to track it; do not submit again to poll.' };
     try { await writeFile(requestReceipt, JSON.stringify({ ...intent, ...created }, null, 2) + '\n', { mode: 0o600 }); }
     catch { created.receipt_warning = 'Asset was submitted successfully, but the local receipt could not be updated. Save asset_id from this response.'; }
     return created;
