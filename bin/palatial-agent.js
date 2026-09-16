@@ -8,6 +8,7 @@ import { PalatialClient, DEFAULT_API_URL } from '../src/client.js';
 import { getApiKey, saveApiKey, deleteApiKey } from '../src/auth.js';
 import { serveStdio } from '../src/mcp.js';
 import { VERSION } from '../src/version.js';
+import { checkForUpdate, applyUpdate } from '../src/update.js';
 
 const HELP = `Palatial Agent Tools ${VERSION} (Node.js 22+)
 
@@ -68,17 +69,9 @@ async function main() {
   if (positionals.length > 1) throw new Error('Unexpected positional arguments. Run palatial-agent --help.');
   if (command === 'mcp') { await serveStdio(); return; }
   if (command === 'update') {
-    const response = await fetch('https://api.github.com/repos/PalatialSim/palatial-agent-tools/releases/latest', { headers: { Accept: 'application/vnd.github+json', 'User-Agent': `palatial-agent/${VERSION}` }, signal: AbortSignal.timeout(10000) });
-    if (!response.ok) throw new Error(`Could not check GitHub Releases (HTTP ${response.status}).`);
-    const release = await response.json();
-    const tag = typeof release.tag_name === 'string' ? release.tag_name : '';
-    const latest = tag.replace(/^v/, '');
-    if (!/^\d+\.\d+\.\d+(?:[-+].*)?$/.test(latest)) throw new Error('Latest GitHub Release did not contain a valid semver tag.');
-    const url = `https://github.com/PalatialSim/palatial-agent-tools/releases/download/${encodeURIComponent(tag)}/palatial-agent-tools-${latest}.tgz`;
-    if (!values.apply) return { current: VERSION, latest, update_available: latest !== VERSION, install_command: `npm install --global ${url}`, restart_required: true };
-    const result = spawnSync('npm', ['install', '--global', url], { encoding: 'utf8', shell: false, timeout: 120000 });
-    if (result.status !== 0) throw new Error(result.stderr?.trim() || 'Global package update failed.');
-    return { current: VERSION, latest, updated: true, restart_required: true };
+    const update = await checkForUpdate({ force: true, disabled: false });
+    if (update.status !== 'checked') throw new Error('Could not check GitHub Releases. Try again later.');
+    return values.apply ? applyUpdate({ latest: update.latest }) : update;
   }
   if (command === 'setup') {
     if (!['codex', 'claude-code', 'both'].includes(values.client)) throw new Error('Choose --client codex, claude-code, or both.');
@@ -107,7 +100,7 @@ async function main() {
   }
   if (!['doctor', 'create', 'status', 'download', 'cancel'].includes(command)) throw new Error('Unknown command. Run palatial-agent --help.');
   const client = new PalatialClient({ apiKey: await getApiKey(), baseUrl: process.env.PALATIAL_API_URL || DEFAULT_API_URL });
-  if (command === 'doctor') return client.doctor();
+  if (command === 'doctor') return { ...(await client.doctor()), version: VERSION, update: await checkForUpdate() };
   if (command === 'create') {
     if (!values.request) throw new Error('Provide --request pointing to a JSON file.');
     return client.create(JSON.parse(await readFile(values.request, 'utf8')));

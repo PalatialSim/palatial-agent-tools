@@ -1,2 +1,3 @@
-// The MCP server advertises the published package version.
-export const VERSION = '0.1.0';
+import { readFileSync } from 'node:fs';
+// Package metadata is the sole release-version source for CLI and MCP.
+export const VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;

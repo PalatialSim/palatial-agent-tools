@@ -173,3 +173,50 @@ test('saved credentials have restricted permissions and environment keys take pr
   await deleteApiKey(env);
   await assert.rejects(getApiKey(env), /not authenticated/);
 });
+
+test('asset listing encodes workspace filters and pagination in the documented filter object', async t => {
+  const { client } = await fixture(t, async (url, init) => {
+    assert.equal(init.method, 'GET');
+    assert.deepEqual(JSON.parse(url.searchParams.get('filter')), { limit: 5, skip: 10, where: { search: 'bin & lid', 'status.status': 'READY' } });
+    return json({ data: [{ id: 'a' }] });
+  });
+  assert.deepEqual(await client.listAssets({ search: 'bin & lid', status: 'READY', limit: 5, skip: 10 }), { data: [{ id: 'a' }] });
+  await assert.rejects(client.listAssets({ limit: 101 }));
+});
+
+test('asset details, pipeline progress and batch status use distinct documented routes', async t => {
+  const calls = [];
+  const { client } = await fixture(t, async (url, init) => { calls.push({ path: url.pathname, method: init.method, body: init.body }); return json({ ok: true }); });
+  await client.getAssetDetails('asset-a'); await client.pipelineProgress('asset-a'); await client.batchStatus(['asset-a', 'asset-b']);
+  assert.deepEqual(calls.map(c => c.path), ['/api/v1/external/assets/asset-a', '/api/v1/external/assets/asset-a/pipeline-runs/current', '/api/v1/external/assets/statuses']);
+  assert.deepEqual(JSON.parse(calls[2].body), { ids: ['asset-a', 'asset-b'] });
+  await assert.rejects(client.batchStatus([])); await assert.rejects(client.getAssetDetails('../escape'));
+  assert.equal(calls.length, 3);
+});
+
+test('variant creation submits only public fields and returns the independent asset ID', async t => {
+  let calls = 0;
+  const body = { feedback: 'Make it blue', name: 'Blue bin', parameters: { texture_size: 2048 } };
+  const { client } = await fixture(t, async (url, init) => {
+    calls++; assert.match(url.pathname, /assets\/source-a\/variants$/); assert.equal(init.method, 'POST');
+    assert.deepEqual(JSON.parse(init.body), body);
+    return json({ id: 'variant-a', status: { status: 'SUBMITTED' } }, 201);
+  });
+  const result = await client.createVariant('source-a', body);
+  assert.equal(result.asset_id, 'variant-a'); assert.equal(result.parent_asset_id, 'source-a');
+  await assert.rejects(client.createVariant('source-a', { feedback: '   ' }));
+  await assert.rejects(client.createVariant('source-a', { ...body, from: 'texture' }));
+  assert.equal(calls, 1);
+});
+
+test('reprocess preserves exact stage and run controls and never retries ambiguous writes', async t => {
+  let calls = 0;
+  const body = { from: 'texture', mode: 'step', stopAfter: 'texture', sourceRunId: 'run-1', destination: 'variant', feedback: 'matte finish' };
+  const { client } = await fixture(t, async (url, init) => {
+    calls++; assert.match(url.pathname, /assets\/asset-a\/reprocess$/); assert.deepEqual(JSON.parse(init.body), body); throw Error('connection closed');
+  });
+  await assert.rejects(client.reprocess('asset-a', body), /may have accepted/);
+  assert.equal(calls, 1);
+  await assert.rejects(client.reprocess('asset-a', { from: 'texture', mode: 'unsupported' }));
+  assert.equal(calls, 1);
+});

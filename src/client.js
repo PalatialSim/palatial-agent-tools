@@ -159,7 +159,7 @@ export class PalatialClient {
   async getAssetDetails(assetId) { assetIdSchema.parse(assetId); return this.request(`assets/${assetId}`); }
   async listAssets({ search, status, limit = 20, skip = 0 } = {}) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100 || !Number.isInteger(skip) || skip < 0) throw new Error('limit must be 1-100 and skip must be non-negative.');
-    const filter = { limit, skip, ...(search ? { 'where.search': search } : {}), ...(status ? { 'where.status.status': status } : {}) };
+    const filter = { limit, skip, where: { ...(search ? { search } : {}), ...(status ? { 'status.status': status } : {}) } };
     return this.request(`assets?filter=${encodeURIComponent(JSON.stringify(filter))}`);
   }
   async batchStatus(assetIds) { return this.request('assets/statuses', { method: 'POST', body: { ids: z.array(assetIdSchema).min(1).max(100).parse(assetIds) } }); }
@@ -173,7 +173,7 @@ export class PalatialClient {
   async createVariant(assetId, input) {
     assetIdSchema.parse(assetId);
     const body = z.object({
-      feedback: z.string().min(1).max(2000),
+      feedback: z.string().trim().min(1).max(2000),
       name: z.string().min(4).max(50).optional(),
       description: z.string().min(1).max(500).optional(),
       parameters: z.record(z.string(), z.unknown()).optional()
