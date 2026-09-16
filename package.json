@@ -3,17 +3,37 @@
   "version": "0.1.0",
   "description": "Palatial API client and MCP server for Codex CLI and Claude Code. Generate and download simulation assets from your terminal.",
   "type": "module",
-  "bin": { "palatial-agent": "bin/palatial-agent.js" },
-  "exports": { ".": "./src/client.js", "./mcp": "./src/mcp.js" },
-  "files": ["bin/", "src/", "README.md", "CHANGELOG.md", "LICENSE"],
-  "engines": { "node": ">=22" },
+  "bin": {
+    "palatial-agent": "bin/palatial-agent.js"
+  },
+  "exports": {
+    ".": "./src/client.js",
+    "./mcp": "./src/mcp.js"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "skills/"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "test": "node --test test/*.test.js",
     "check": "node --check bin/palatial-agent.js && node --check src/client.js && node --check src/mcp.js && node --check src/auth.js && node --check src/version.js && node --check src/update.js",
     "prepack": "npm run check && npm test"
   },
-  "dependencies": { "@modelcontextprotocol/sdk": "1.30.0", "zod": "^4.0.0" },
-  "repository": { "type": "git", "url": "git+https://github.com/PalatialSim/palatial-agent-tools.git" },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "zod": "^4.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PalatialSim/palatial-agent-tools.git"
+  },
   "homepage": "https://github.com/PalatialSim/palatial-agent-tools#readme",
   "license": "MIT"
 }
