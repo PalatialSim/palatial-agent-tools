@@ -30,7 +30,7 @@ export function createServer({ clientFactory, updateChecker = checkForUpdate } =
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
   }, invoke((c, input) => c.create(input)));
   server.registerTool('palatial_get_asset', {
-    description: 'Check an existing Palatial asset by its ID. READY means its outputs are available. Failure, cancellation, or pause require explicit handling; do not automatically regenerate.',
+    description: 'Check an existing Palatial asset by its ID. READY means its outputs are available. READY means outputs are available. For PROCESSING_FAILED, inspect failure_guidance and check export availability once; failed-stage charges are refunded and reprocessing charges only for remaining stages. Do not automatically regenerate.',
     inputSchema: z.object({ asset_id: assetIdSchema }).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   }, invoke((c, input) => c.getAsset(input.asset_id)));

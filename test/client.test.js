@@ -136,11 +136,11 @@ test('export strips API credentials on storage redirect, streams ZIP, and caches
 test('export preserves existing files and does not charge for a non-READY asset', async t => {
   const calls = [];
   const { dir, client } = await fixture(t, async url => { calls.push(String(url)); return json({ status: 'PROCESSING_FAILED' }); });
-  await assert.rejects(client.download('asset-x', dir), /PROCESSING_FAILED/);
-  assert.equal(calls.length, 1);
+  await assert.rejects(client.download('asset-x', dir), /No export package was available/);
+  assert.equal(calls.length, 2);
   await writeFile(path.join(dir, 'asset-y-export.zip'), 'preserve me');
   await assert.rejects(client.download('asset-y', dir), /already exists/);
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2);
   assert.equal(await readFile(path.join(dir, 'asset-y-export.zip'), 'utf8'), 'preserve me');
 });
 

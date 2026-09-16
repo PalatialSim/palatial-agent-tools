@@ -153,7 +153,17 @@ export class PalatialClient {
   async getAsset(assetId) {
     assetIdSchema.parse(assetId);
     const record = await this.request(`assets/${assetId}/status`);
-    return { asset_id: assetId, status: statusValue(record) || 'UNKNOWN', details: record, ready_means: 'Outputs are available; inspect validation evidence and test in your target simulator.' };
+    const status = statusValue(record) || 'UNKNOWN';
+    const result = { asset_id: assetId, status, details: record };
+    if (status === 'READY') result.ready_means = 'Outputs are available; inspect validation evidence and test in your target simulator.';
+    if (status === 'PROCESSING_FAILED') result.failure_guidance = {
+      message: 'Processing failed. Preserve this asset ID and inspect the dashboard or available validation evidence.',
+      failed_stage: record.failedStageKey || record.failed_stage || record.stage || null,
+      refund: 'Charges for failed stages are refunded.',
+      reprocessing: 'Reprocessing charges only for the remaining stages. Confirm before starting it.',
+      next_steps: ['Check whether an export is available.', 'Open the asset in the Palatial dashboard.', 'Contact support with this asset ID if the failure is unclear.']
+    };
+    return result;
   }
 
   async getAssetDetails(assetId) { assetIdSchema.parse(assetId); return this.request(`assets/${assetId}`); }
@@ -210,7 +220,7 @@ export class PalatialClient {
       catch (error) { if (error.code !== 'ENOENT') throw error; }
     }
     const current = await this.getAsset(assetId);
-    if (current.status !== 'READY') throw new Error(`Asset is ${current.status}; wait for READY before exporting.`);
+    if (current.status !== 'READY' && current.status !== 'PROCESSING_FAILED') throw new Error(`Asset is ${current.status}; wait until processing completes before exporting.`);
     await mkdir(directory, { recursive: true });
     // Reserve the destination before asking for a billable export.
     const file = await open(destination, 'wx', 0o600);
@@ -246,7 +256,7 @@ export class PalatialClient {
       complete = true;
       return { ...receipt, receipt_file: receiptPath, cached: false };
     } catch (error) {
-      throw new Error(safeMessage(error, this.apiKey) + ' No automatic export retry was made; an export credit may already have been consumed.');
+      throw new Error(safeMessage(error, this.apiKey) + (current.status === 'PROCESSING_FAILED' ? ' No export package was available for this failed job; failed-stage charges are refunded. Reprocessing charges only for remaining stages and requires confirmation.' : ' No automatic export retry was made; an export credit may already have been consumed.'));
     } finally {
       await file.close();
       if (!complete) await unlink(destination).catch(() => {});
