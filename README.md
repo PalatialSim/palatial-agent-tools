@@ -78,6 +78,12 @@ This preference is inspectable and editable. It does not guarantee that every na
 | `palatial_doctor` | Check credentials and API connectivity | Read-only; no generation or export |
 | `palatial_create_asset` | Submit text, image, multiview, or CAD generation | Creates an asset; uses workspace credits |
 | `palatial_get_asset` | Check an existing asset's processing status | Read-only |
+| `palatial_get_asset_details` | Retrieve the complete asset record | Read-only |
+| `palatial_list_assets` | List workspace assets with optional name/status filters | Read-only |
+| `palatial_batch_get_statuses` | Check up to 100 asset statuses in one request | Read-only |
+| `palatial_get_pipeline_progress` | Retrieve stage-level progress for an asset | Read-only |
+| `palatial_create_variant` | Create an independent variant from a READY asset using feedback | Creates an asset; uses workspace credits |
+| `palatial_reprocess_asset` | Reprocess from a pipeline stage in place or as a variant | Changes processing; uses workspace credits |
 | `palatial_download_asset` | Save a READY export ZIP and SHA-256 receipt | Writes local files; export may consume a credit |
 | `palatial_cancel_asset` | Cancel a specific asset's processing | Stops a job; does not imply a refund |
 
@@ -152,3 +158,11 @@ Tests use fixtures and the actual MCP SDK; they do not spend Palatial credits. A
 To test the published package in a fresh Docker container with external networking disabled at runtime, follow the [isolated testing guide](docs/testing.md). It covers clean installation, HTTPS fixture flows, and the separate live-canary procedure.
 
 Client integration references: [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli), [Claude Code MCP](https://code.claude.com/docs/en/mcp).
+
+### Updating
+
+The MCP runs from the locally installed package. Run `palatial-agent update` to
+check the latest GitHub Release and print the installation command. Use
+`palatial-agent update --apply` for an explicit global update. Restart Codex or
+Claude Code after updating; an existing MCP process keeps running its previous
+version until restarted. See [CHANGELOG.md](CHANGELOG.md) for release notes.

@@ -35,7 +35,7 @@ palatial-agent setup --client both --dry-run
 palatial-agent setup --client both
 ```
 
-Start a fresh session in each installed client. Ask it to list the five Palatial tools. With no key, `palatial_doctor` must report missing credentials and make no generation request. This verifies discovery without a paid Palatial job; running the coding agent itself may use your agent subscription/API allowance.
+Start a fresh session in each installed client. Ask it to list the eleven Palatial tools. With no key, `palatial_doctor` must report missing credentials and make no generation request. This verifies discovery without a paid Palatial job; running the coding agent itself may use your agent subscription/API allowance.
 
 The release smoke separately verified real Claude Code registration/connection and Codex configuration parsing. It did not run a model-driven generation conversation in either terminal.
 

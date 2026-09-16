@@ -156,6 +156,36 @@ export class PalatialClient {
     return { asset_id: assetId, status: statusValue(record) || 'UNKNOWN', details: record, ready_means: 'Outputs are available; inspect validation evidence and test in your target simulator.' };
   }
 
+  async getAssetDetails(assetId) { assetIdSchema.parse(assetId); return this.request(`assets/${assetId}`); }
+  async listAssets({ search, status, limit = 20, skip = 0 } = {}) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100 || !Number.isInteger(skip) || skip < 0) throw new Error('limit must be 1-100 and skip must be non-negative.');
+    const filter = { limit, skip, ...(search ? { 'where.search': search } : {}), ...(status ? { 'where.status.status': status } : {}) };
+    return this.request(`assets?filter=${encodeURIComponent(JSON.stringify(filter))}`);
+  }
+  async batchStatus(assetIds) { return this.request('assets/statuses', { method: 'POST', body: { ids: z.array(assetIdSchema).min(1).max(100).parse(assetIds) } }); }
+  async pipelineProgress(assetId) { assetIdSchema.parse(assetId); return this.request(`assets/${assetId}/pipeline-runs/current`); }
+  async reprocess(assetId, input) {
+    assetIdSchema.parse(assetId);
+    const body = z.object({ from: z.string().min(1).max(100), mode: z.enum(['step', 'auto']).optional(), stopAfter: z.string().min(1).max(100).optional(), sourceRunId: z.string().min(1).max(128).optional(), destination: z.enum(['overwrite', 'variant']).optional(), feedback: z.string().max(4000).optional() }).strict().parse(input);
+    return this.request(`assets/${assetId}/reprocess`, { method: 'POST', body });
+  }
+
+  async createVariant(assetId, input) {
+    assetIdSchema.parse(assetId);
+    const body = z.object({
+      feedback: z.string().min(1).max(2000),
+      name: z.string().min(4).max(50).optional(),
+      description: z.string().min(1).max(500).optional(),
+      parameters: z.record(z.string(), z.unknown()).optional()
+    }).strict().parse(input);
+    const result = await this.request(`assets/${assetId}/variants`, { method: 'POST', body });
+    const variantId = result?.id;
+    if (typeof variantId !== 'string' || !assetIdSchema.safeParse(variantId).success) {
+      throw new Error('Variant response did not contain a valid asset ID. Inspect the Palatial dashboard before retrying.');
+    }
+    return { asset_id: variantId, parent_asset_id: assetId, status: statusValue(result) || 'SUBMITTED', details: result, message: 'Variant created as an independent asset. Use palatial_get_asset to track it; do not submit again to poll.' };
+  }
+
   async cancel(assetId) {
     assetIdSchema.parse(assetId);
     return this.request(`assets/${assetId}/cancel-processing`, { method: 'DELETE' });

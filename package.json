@@ -5,11 +5,11 @@
   "type": "module",
   "bin": { "palatial-agent": "bin/palatial-agent.js" },
   "exports": { ".": "./src/client.js", "./mcp": "./src/mcp.js" },
-  "files": ["bin/", "src/", "README.md", "LICENSE"],
+  "files": ["bin/", "src/", "README.md", "CHANGELOG.md", "LICENSE"],
   "engines": { "node": ">=22" },
   "scripts": {
     "test": "node --test test/*.test.js",
-    "check": "node --check bin/palatial-agent.js && node --check src/client.js && node --check src/mcp.js && node --check src/auth.js",
+    "check": "node --check bin/palatial-agent.js && node --check src/client.js && node --check src/mcp.js && node --check src/auth.js && node --check src/version.js",
     "prepack": "npm run check && npm test"
   },
   "dependencies": { "@modelcontextprotocol/sdk": "1.30.0", "zod": "^4.0.0" },

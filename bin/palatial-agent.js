@@ -7,12 +7,15 @@ import { spawnSync } from 'node:child_process';
 import { PalatialClient, DEFAULT_API_URL } from '../src/client.js';
 import { getApiKey, saveApiKey, deleteApiKey } from '../src/auth.js';
 import { serveStdio } from '../src/mcp.js';
+import { VERSION } from '../src/version.js';
 
-const HELP = `Palatial Agent Tools 0.1.0 (Node.js 22+)
+const HELP = `Palatial Agent Tools ${VERSION} (Node.js 22+)
 
 palatial-agent login                      Enter your workspace API key privately
 palatial-agent logout                     Delete the locally saved API key
 palatial-agent doctor                     Read-only authentication/network check
+palatial-agent update                     Check the latest release and print an install command
+palatial-agent update --apply             Install the latest release globally
 palatial-agent setup --client codex       Register the MCP server in Codex CLI
 palatial-agent setup --client claude-code Register the MCP server in Claude Code
 palatial-agent setup --client both        Register it in both terminals
@@ -57,13 +60,26 @@ function readSecret() {
 async function main() {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: {
     client: { type: 'string' }, 'dry-run': { type: 'boolean' }, request: { type: 'string' },
-    'asset-id': { type: 'string' }, 'output-dir': { type: 'string' }, help: { type: 'boolean', short: 'h' }, version: { type: 'boolean' }
+    'asset-id': { type: 'string' }, 'output-dir': { type: 'string' }, apply: { type: 'boolean' }, help: { type: 'boolean', short: 'h' }, version: { type: 'boolean' }
   } });
   const command = positionals[0];
-  if (values.version) { console.log('0.1.0'); return; }
+  if (values.version) { console.log(VERSION); return; }
   if (values.help || !command) { console.log(HELP); return; }
   if (positionals.length > 1) throw new Error('Unexpected positional arguments. Run palatial-agent --help.');
   if (command === 'mcp') { await serveStdio(); return; }
+  if (command === 'update') {
+    const response = await fetch('https://api.github.com/repos/PalatialSim/palatial-agent-tools/releases/latest', { headers: { Accept: 'application/vnd.github+json', 'User-Agent': `palatial-agent/${VERSION}` }, signal: AbortSignal.timeout(10000) });
+    if (!response.ok) throw new Error(`Could not check GitHub Releases (HTTP ${response.status}).`);
+    const release = await response.json();
+    const tag = typeof release.tag_name === 'string' ? release.tag_name : '';
+    const latest = tag.replace(/^v/, '');
+    if (!/^\d+\.\d+\.\d+(?:[-+].*)?$/.test(latest)) throw new Error('Latest GitHub Release did not contain a valid semver tag.');
+    const url = `https://github.com/PalatialSim/palatial-agent-tools/releases/download/${encodeURIComponent(tag)}/palatial-agent-tools-${latest}.tgz`;
+    if (!values.apply) return { current: VERSION, latest, update_available: latest !== VERSION, install_command: `npm install --global ${url}`, restart_required: true };
+    const result = spawnSync('npm', ['install', '--global', url], { encoding: 'utf8', shell: false, timeout: 120000 });
+    if (result.status !== 0) throw new Error(result.stderr?.trim() || 'Global package update failed.');
+    return { current: VERSION, latest, updated: true, restart_required: true };
+  }
   if (command === 'setup') {
     if (!['codex', 'claude-code', 'both'].includes(values.client)) throw new Error('Choose --client codex, claude-code, or both.');
     const executable = realpathSync(fileURLToPath(import.meta.url));

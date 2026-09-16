@@ -27,7 +27,7 @@ try {
   const version = spawnSync(process.execPath, [bin, '--version'], { encoding: 'utf8' });
   assert.equal(version.status, 0); assert.equal(version.stdout.trim(), '0.1.0');
   client = await connect({});
-  assert.equal((await client.listTools()).tools.length, 5);
+  assert.equal((await client.listTools()).tools.length, 11);
   const unauth = await client.callTool({ name: 'palatial_doctor', arguments: {} });
   assert.equal(unauth.isError, true);
   assert.match(unauth.content[0].text, /not authenticated/);

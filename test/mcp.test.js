@@ -17,7 +17,7 @@ test('real MCP protocol lists tools and calls the shared client without a model'
   await server.connect(a); await client.connect(b);
   t.after(async () => { await client.close(); await server.close(); });
   const list = await client.listTools();
-  assert.equal(list.tools.length, 5);
+  assert.equal(list.tools.length, 11);
   assert.equal(list.tools.find(x => x.name === 'palatial_download_asset').annotations.readOnlyHint, false);
   const result = await client.callTool({ name: 'palatial_get_asset', arguments: { asset_id: 'asset-test' } });
   assert.equal(result.structuredContent.asset_id, 'asset-test');
@@ -37,7 +37,7 @@ test('packaged CLI speaks stdio MCP and lists tools without authentication', asy
   const client = new Client({ name: 'stdio-test', version: '1.0' });
   await client.connect(transport);
   t.after(() => client.close());
-  assert.equal((await client.listTools()).tools.length, 5);
+  assert.equal((await client.listTools()).tools.length, 11);
   const result = await client.callTool({ name: 'palatial_doctor', arguments: {} });
   assert.equal(result.isError, true);
   assert.match(result.content[0].text, /not authenticated/);

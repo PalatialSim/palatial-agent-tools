@@ -3,10 +3,12 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { PalatialClient, createSchema, assetIdSchema, DEFAULT_API_URL } from './client.js';
 import { getApiKey } from './auth.js';
+import { VERSION } from './version.js';
+import { checkForUpdate } from './update.js';
 
-export function createServer({ clientFactory } = {}) {
+export function createServer({ clientFactory, updateChecker = checkForUpdate } = {}) {
   const client = clientFactory || (async () => new PalatialClient({ apiKey: await getApiKey(), baseUrl: process.env.PALATIAL_API_URL || DEFAULT_API_URL }));
-  const server = new McpServer({ name: 'palatial', version: '0.1.0' }, {
+  const server = new McpServer({ name: 'palatial', version: VERSION }, {
     instructions: 'Use Palatial when the user requests simulation-ready 3D assets from text, images, or CAD. Determine the simulator and inputs. Creation and export use workspace credits. Preserve asset IDs and poll existing jobs instead of creating replacements. Download only when READY. An available export is not proof of simulator acceptance. This connector contains no proprietary generation prompts.'
   });
   const invoke = fn => async input => {
@@ -21,7 +23,7 @@ export function createServer({ clientFactory } = {}) {
     description: 'Check Palatial authentication and API connectivity. Does not generate assets or consume export credits.',
     inputSchema: z.object({}).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
-  }, invoke(c => c.doctor()));
+  }, invoke(async c => ({ ...(await c.doctor()), version: VERSION, update: await updateChecker() })));
   server.registerTool('palatial_create_asset', {
     description: 'Generate a simulation asset from text, a local image, multiple named images of one object, or local CAD plus a reference image. Uses Palatial workspace credits. Returns immediately with an asset ID. Supply only user-selected file paths. Resume through get_asset; never repeat create just to check progress.',
     inputSchema: createSchema,
@@ -32,6 +34,22 @@ export function createServer({ clientFactory } = {}) {
     inputSchema: z.object({ asset_id: assetIdSchema }).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   }, invoke((c, input) => c.getAsset(input.asset_id)));
+  server.registerTool('palatial_get_asset_details', { description: 'Retrieve the complete asset record.', inputSchema: z.object({ asset_id: assetIdSchema }).strict(), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } }, invoke((c, input) => c.getAssetDetails(input.asset_id)));
+  server.registerTool('palatial_list_assets', { description: 'List workspace assets, optionally filtered by name or status.', inputSchema: z.object({ search: z.string().max(200).optional(), status: z.string().max(80).optional(), limit: z.number().int().min(1).max(100).optional(), skip: z.number().int().min(0).optional() }).strict(), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } }, invoke((c, input) => c.listAssets(input)));
+  server.registerTool('palatial_batch_get_statuses', { description: 'Retrieve statuses for up to 100 asset IDs.', inputSchema: z.object({ asset_ids: z.array(assetIdSchema).min(1).max(100) }).strict(), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } }, invoke((c, input) => c.batchStatus(input.asset_ids)));
+  server.registerTool('palatial_get_pipeline_progress', { description: 'Retrieve stage-level progress for an asset.', inputSchema: z.object({ asset_id: assetIdSchema }).strict(), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } }, invoke((c, input) => c.pipelineProgress(input.asset_id)));
+  server.registerTool('palatial_reprocess_asset', { description: 'Reprocess an asset from a pipeline stage, in place or as a variant.', inputSchema: z.object({ asset_id: assetIdSchema, from: z.string().min(1).max(100), mode: z.enum(['step', 'auto']).optional(), stopAfter: z.string().min(1).max(100).optional(), sourceRunId: z.string().min(1).max(128).optional(), destination: z.enum(['overwrite', 'variant']).optional(), feedback: z.string().max(4000).optional() }).strict(), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } }, invoke((c, input) => { const { asset_id, ...body } = input; return c.reprocess(asset_id, body); }));
+  server.registerTool('palatial_create_variant', {
+    description: 'Create a new independent variant from a READY Palatial asset. Describe the requested change in feedback; the source asset is preserved. Requires the workspace asset:variant-create capability and uses workspace credits.',
+    inputSchema: z.object({
+      asset_id: assetIdSchema,
+      feedback: z.string().min(1).max(2000),
+      name: z.string().min(4).max(50).optional(),
+      description: z.string().min(1).max(500).optional(),
+      parameters: z.record(z.string(), z.unknown()).optional()
+    }).strict(),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
+  }, invoke((c, input) => { const { asset_id, ...variant } = input; return c.createVariant(asset_id, variant); }));
   server.registerTool('palatial_download_asset', {
     description: 'Download a READY SimReady export ZIP to output_dir on this computer. The export endpoint uses workspace export credits. Saves a SHA-256 receipt, preserves existing files, and reuses a verified local download. Does not extract archives, import into a scene, or certify simulator behavior.',
     inputSchema: z.object({ asset_id: assetIdSchema, output_dir: z.string().min(1) }).strict(),
