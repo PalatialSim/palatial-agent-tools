@@ -30,6 +30,17 @@ test('text creation uses the documented endpoint, records the asset ID, and neve
   assert.equal(calls.filter(c => c.init.method === 'POST').length, 1);
 });
 
+test('creation forwards documented shape and pipeline options', async t => {
+  let body;
+  const { client } = await fixture(t, async (_url, init) => { body = JSON.parse(init.body); return json({ id: 'asset-options' }, 201); });
+  await client.create({ ...basic, shape_model: 'parametric', mesh_quality: 'high', collision_quality: 'sdf', optimize_textures: false, texture_max_resolution: 2048 });
+  assert.equal(body.shape_model, 'parametric');
+  assert.equal(body.mesh_quality, 'high');
+  assert.equal(body.collision_quality, 'sdf');
+  assert.equal(body.optimize_textures, false);
+  assert.equal(body.texture_max_resolution, 2048);
+});
+
 test('configured API origin follows the created asset into its durable receipt', async t => {
   const { client } = await fixture(t, async () => json({ id: 'dev-asset' }, 201), {
     baseUrl: 'https://dashboard.dev.palatial.cloud/api/v1/external/',

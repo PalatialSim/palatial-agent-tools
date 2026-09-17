@@ -9,34 +9,50 @@ export const DEFAULT_API_URL = 'https://dashboard.palatial.cloud/api/v1/external
 const engine = z.enum(['isaac_sim', 'mujoco', 'newton']);
 export const assetIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/, 'Invalid asset ID.');
 export const createSchema = z.object({
-  source: z.enum(['text', 'image', 'cad']),
-  name: z.string().min(4).max(50),
-  description: z.string().min(1).max(500),
-  engine: z.array(engine).min(1).max(3).default(['isaac_sim']),
-  image_path: z.string().optional(),
-  views: z.object({ front: z.string().optional(), left: z.string().optional(), back: z.string().optional(), right: z.string().optional() }).strict().optional(),
-  mesh_path: z.string().optional(),
-  datasheet_path: z.string().optional(),
-  create_articulation: z.boolean().optional(),
-  enable_parts_segmentation: z.boolean().optional(),
-  run_simulation: z.boolean().optional(),
-  units: z.enum(['m', 'cm', 'mm', 'inch', 'feet']).optional(),
-  up_direction: z.enum(['x', 'y', 'z']).optional(),
-  texture_size: z.union([z.literal(2048), z.literal(4096), z.literal(8192)]).optional(),
-  decimation_mode: z.enum(['auto', 'strict']).optional(),
-  decimation_target_faces: z.number().int().min(4).max(10000000).optional(),
-  decimation_target_ratio: z.number().min(0.001).max(0.999).optional()
+  source: z.enum(['text', 'image', 'cad']).describe('Input type: text prompt, one or more reference images, or CAD mesh plus a reference image.'),
+  name: z.string().min(4).max(50).describe('Asset name, 4-50 characters.'),
+  description: z.string().min(1).max(500).describe('What to build, including dimensions, materials, articulation, and intended use when known.'),
+  workspace: z.string().min(1).describe('All sources: optional workspace ID; omit to use the API-key workspace.').optional(),
+  engine: z.array(engine).min(1).max(3).default(['isaac_sim']).describe('All sources: simulator profiles; isaac_sim, mujoco, or newton; defaults to isaac_sim.').optional(),
+  image_path: z.string().describe('Image: one PNG/JPEG input; CAD: required PNG/JPEG reference; use instead of views.').optional(),
+  image_paths: z.array(z.string()).min(2).max(50).describe('Image with parametric shape_model: 2-50 PNG/JPEG inputs of the same object; each is uploaded as a file.').optional(),
+  views: z.object({ front: z.string().describe('Image multiview: front PNG/JPEG path.').optional(), left: z.string().describe('Image multiview: left PNG/JPEG path.').optional(), back: z.string().describe('Image multiview: back PNG/JPEG path.').optional(), right: z.string().describe('Image multiview: right PNG/JPEG path.').optional() }).strict().describe('Image only: named views of one object; provide at least two.').optional(),
+  mesh_path: z.string().describe('CAD only: path to the mesh file.').optional(),
+  datasheet_path: z.string().describe('CAD only: optional PDF datasheet.').optional(),
+  create_articulation: z.boolean().describe('All sources: create joints for moving parts such as doors or wheels.').optional(),
+  enable_parts_segmentation: z.boolean().describe('All sources: split into rigid parts; false for one rigid mesh, true for separate parts.').optional(),
+  run_simulation: z.boolean().describe('All sources: request physics validation.').optional(),
+  mesh_quality: z.enum(['low', 'medium', 'high']).describe('Image and text only: mesh quality preset; not used for CAD.').optional(),
+  collision_quality: z.enum(['low', 'medium', 'high', 'x_high', 'sdf']).describe('Image, text, and CAD: collision quality; sdf means signed-distance-field collision.').optional(),
+  shape_model: z.enum(['auto', 'diffusion', 'parametric']).describe('Image and text only: auto selects automatically; diffusion is faster, cheaper, and better for organic shapes and accepts one or multiview images; parametric is controllable, better for articulation, and accepts N images (up to 50).').optional(),
+  texture_model: z.literal('auto').describe('Image, text, and CAD: auto selects the supported texture model.').optional(),
+  decimation: z.boolean().describe('Image, text, and CAD: legacy adaptive reduction switch; prefer decimation_mode.').optional(),
+  optimize_textures: z.boolean().describe('Image, text, and CAD: downscale oversized maps without upscaling smaller maps.').optional(),
+  texture_max_resolution: z.union([z.literal(512), z.literal(1024), z.literal(2048), z.literal(4096), z.literal(8192)]).describe('Image, text, and CAD: maximum texture edge; smaller maps are never upscaled.').optional(),
+  triangle_count: z.enum(['minimal', 'low', 'medium', 'high', 'x_high', 'auto']).describe('Image, text, and CAD: legacy triangle preset; fixed values become strict targets when decimation is enabled.').optional(),
+  mesh_density: z.enum(['low', 'medium', 'high']).describe('Image, text, and CAD: density used when triangle_count is auto.').optional(),
+  apply_textures: z.boolean().describe('CAD only: generate textures from the reference image.').optional(),
+  units: z.enum(['m', 'cm', 'mm', 'inch', 'feet']).describe('Text and CAD: source units; convert them once rather than guessing scale.').optional(),
+  up_direction: z.enum(['x', 'y', 'z']).describe('Text and CAD: source up axis.').optional(),
+  texture_size: z.union([z.literal(2048), z.literal(4096), z.literal(8192)]).describe('Image, text, and CAD: texture size; 2048, 4096, or 8192.').optional(),
+  decimation_mode: z.enum(['auto', 'strict']).describe('Image, text, and CAD: auto is quality-driven; strict requires exactly one explicit target.').optional(),
+  decimation_target_faces: z.number().int().min(4).max(10000000).describe('Image, text, and CAD strict mode: maximum 4-10,000,000 faces; exclusive with ratio.').optional(),
+  decimation_target_ratio: z.number().min(0.001).max(0.999).describe('Image, text, and CAD strict mode: retain 0.001-0.999 of source faces; mutually exclusive with face target.').optional()
 }).strict();
 
 function validateCreate(input) {
   const p = createSchema.parse(input);
   const views = Object.entries(p.views || {}).filter(([, file]) => file);
-  if (p.source === 'text' && (p.image_path || views.length || p.mesh_path || p.datasheet_path)) throw new Error('Text generation does not accept input files.');
-  if (p.source === 'image' && (Boolean(p.image_path) === Boolean(views.length))) throw new Error('Image generation requires one image_path OR at least two named views.');
+  if (p.source === 'text' && (p.image_path || p.image_paths || views.length || p.mesh_path || p.datasheet_path)) throw new Error('Text generation does not accept input files.');
+  const imageInputs = Number(Boolean(p.image_path)) + Number(Boolean(p.image_paths)) + Number(views.length > 0);
+  if (p.source === 'image' && imageInputs !== 1) throw new Error('Image generation requires image_path, image_paths, or named views.');
   if (p.source === 'image' && views.length && views.length < 2) throw new Error('Multiview requires at least two views of the same object.');
+  if (p.source === 'image' && p.image_paths && p.shape_model !== 'parametric') throw new Error('image_paths is supported only with shape_model=parametric.');
+  if (p.source === 'image' && p.shape_model === 'diffusion' && views.length > 4) throw new Error('diffusion accepts a single image or up to four named views.');
   if (p.source === 'image' && (p.mesh_path || p.datasheet_path)) throw new Error('mesh_path and datasheet_path are only accepted for CAD.');
   if (p.source === 'cad' && (!p.mesh_path || !p.image_path || views.length)) throw new Error('CAD requires mesh_path and a reference image_path; named views are not accepted.');
-  if (p.source !== 'cad' && (p.units || p.up_direction)) throw new Error('units and up_direction are CAD-only parameters. Include requested dimensions in the description for other inputs.');
+  if (p.source === 'cad' && (p.mesh_quality || p.shape_model)) throw new Error('mesh_quality and shape_model are not used for CAD input.');
+  if (p.source === 'image' && (p.units || p.up_direction)) throw new Error('units and up_direction are not accepted for image input; include requested dimensions and orientation in the description.');
   const targets = Number(p.decimation_target_faces !== undefined) + Number(p.decimation_target_ratio !== undefined);
   if ((p.decimation_mode === 'strict' && targets !== 1) || (p.decimation_mode !== 'strict' && targets)) throw new Error('Strict decimation requires exactly one target; targets are not accepted in other modes.');
   return p;
@@ -102,7 +118,7 @@ export class PalatialClient {
 
   async create(input) {
     const p = validateCreate(input);
-    const { source, image_path, views, mesh_path, datasheet_path, ...parameters } = p;
+    const { source, image_path, image_paths, views, mesh_path, datasheet_path, ...parameters } = p;
     let body = parameters;
     if (source !== 'text') {
       body = new FormData();
@@ -122,6 +138,7 @@ export class PalatialClient {
       };
       if (source === 'image') {
         if (image_path) await addFile('file', image_path, 'image');
+        else if (image_paths) for (const filename of image_paths) await addFile('file', filename, 'image');
         else for (const [view, file] of Object.entries(views)) if (file) await addFile(view, file, 'image');
       } else {
         await addFile('mesh', mesh_path, 'mesh');

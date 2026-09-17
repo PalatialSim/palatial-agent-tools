@@ -25,7 +25,7 @@ export function createServer({ clientFactory, updateChecker = checkForUpdate } =
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   }, invoke(async c => ({ ...(await c.doctor()), version: VERSION, update: await updateChecker() })));
   server.registerTool('palatial_create_asset', {
-    description: 'Generate a simulation asset from text, a local image, multiple named images of one object, or local CAD plus a reference image. Uses Palatial workspace credits. Returns immediately with an asset ID. Supply only user-selected file paths. Resume through get_asset; never repeat create just to check progress.',
+    description: 'Generate a simulation asset from text, images, or CAD. shape_model is auto, diffusion, or parametric: diffusion is faster, cheaper, and better for organic shapes and accepts one or multiview images; parametric is controllable, better for articulation, and accepts N images (up to 50). Options are documented in the input schema. Text accepts no files; image accepts image_path, named views, or image_paths for parametric; CAD requires mesh_path and image_path. Uses Palatial workspace credits. Returns immediately with an asset ID. Resume through get_asset; never submit again to poll.',
     inputSchema: createSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
   }, invoke((c, input) => c.create(input)));

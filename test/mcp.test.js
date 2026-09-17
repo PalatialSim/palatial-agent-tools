@@ -25,6 +25,24 @@ test('real MCP protocol lists tools and calls the shared client without a model'
   assert.equal(invalid.isError, true);
 });
 
+test('create tool explains API options in its MCP schema', async t => {
+  const server = createServer({ clientFactory: async () => ({}) });
+  const client = new Client({ name: 'schema-test', version: '1.0' });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a); await client.connect(b);
+  t.after(async () => { await client.close(); await server.close(); });
+  const tool = (await client.listTools()).tools.find(item => item.name === 'palatial_create_asset');
+  assert.match(tool.inputSchema.properties.engine.description, /isaac_sim/);
+  assert.match(tool.inputSchema.properties.create_articulation.description, /joints/);
+  assert.match(tool.inputSchema.properties.units.description, /Text and CAD/);
+  assert.match(tool.inputSchema.properties.shape_model.description, /parametric/);
+  assert.match(tool.inputSchema.properties.shape_model.description, /faster, cheaper/);
+  assert.match(tool.inputSchema.properties.shape_model.description, /better for articulation/);
+  assert.deepEqual(tool.inputSchema.properties.shape_model.enum, ['auto', 'diffusion', 'parametric']);
+  assert.equal(tool.inputSchema.properties.agentic_articulation, undefined);
+  assert.match(tool.inputSchema.properties.decimation_target_ratio.description, /mutually exclusive/);
+});
+
 test('packaged CLI speaks stdio MCP and lists tools without authentication', async t => {
   const dir = await mkdtemp(path.join(tmpdir(), 'palatial-stdio-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
