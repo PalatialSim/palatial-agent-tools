@@ -88,6 +88,26 @@ test('multiview and CAD use actual multipart files and repeated engine fields', 
   assert.equal(captured[1].body.get('units'), 'mm');
 });
 
+test('auto uses diffusion multiview inputs while parametric accepts fifty files', async t => {
+  const { dir, client } = await fixture(t, async () => json({ id: 'asset-routing' }, 201));
+  const views = {};
+  for (const view of ['front', 'left', 'back', 'right']) {
+    const file = path.join(dir, `${view}.jpg`);
+    await writeFile(file, 'image fixture');
+    views[view] = file;
+  }
+  const automatic = await client.create({ ...basic, source: 'image', shape_model: 'auto', views });
+  assert.equal(automatic.asset_id, 'asset-routing');
+  const imagePaths = [];
+  for (let index = 0; index < 50; index += 1) {
+    const file = path.join(dir, `parametric-${index}.jpg`);
+    await writeFile(file, 'image fixture');
+    imagePaths.push(file);
+  }
+  const created = await client.create({ ...basic, source: 'image', shape_model: 'parametric', image_paths: imagePaths });
+  assert.equal(created.asset_id, 'asset-routing');
+});
+
 test('invalid input is rejected before any remote write', async t => {
   let calls = 0;
   const { client } = await fixture(t, async () => { calls++; return json({}); });

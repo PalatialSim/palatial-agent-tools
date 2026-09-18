@@ -24,7 +24,7 @@ export const createSchema = z.object({
   run_simulation: z.boolean().describe('All sources: request physics validation.').optional(),
   mesh_quality: z.enum(['low', 'medium', 'high']).describe('Image and text only: mesh quality preset; not used for CAD.').optional(),
   collision_quality: z.enum(['low', 'medium', 'high', 'x_high', 'sdf']).describe('Image, text, and CAD: collision quality; sdf means signed-distance-field collision.').optional(),
-  shape_model: z.enum(['auto', 'diffusion', 'parametric']).describe('Image and text only: auto selects automatically; diffusion is faster, cheaper, and better for organic shapes and accepts one or multiview images; parametric is controllable, better for articulation, and accepts N images (up to 50).').optional(),
+  shape_model: z.enum(['auto', 'diffusion', 'parametric']).describe('Image and text only: auto follows the diffusion route through Tencent Cloud Pro; diffusion is faster, cheaper, and better for organic shapes and accepts one image or named multiview inputs; parametric is controllable, better for articulation, and accepts N images (up to 50).').optional(),
   texture_model: z.literal('auto').describe('Image, text, and CAD: auto selects the supported texture model.').optional(),
   decimation: z.boolean().describe('Image, text, and CAD: legacy adaptive reduction switch; prefer decimation_mode.').optional(),
   optimize_textures: z.boolean().describe('Image, text, and CAD: downscale oversized maps without upscaling smaller maps.').optional(),
@@ -48,7 +48,7 @@ function validateCreate(input) {
   if (p.source === 'image' && imageInputs !== 1) throw new Error('Image generation requires image_path, image_paths, or named views.');
   if (p.source === 'image' && views.length && views.length < 2) throw new Error('Multiview requires at least two views of the same object.');
   if (p.source === 'image' && p.image_paths && p.shape_model !== 'parametric') throw new Error('image_paths is supported only with shape_model=parametric.');
-  if (p.source === 'image' && p.shape_model === 'diffusion' && views.length > 4) throw new Error('diffusion accepts a single image or up to four named views.');
+  if (p.source === 'image' && ['auto', 'diffusion'].includes(p.shape_model) && views.length > 4) throw new Error('auto and diffusion accept a single image or up to four named views.');
   if (p.source === 'image' && (p.mesh_path || p.datasheet_path)) throw new Error('mesh_path and datasheet_path are only accepted for CAD.');
   if (p.source === 'cad' && (!p.mesh_path || !p.image_path || views.length)) throw new Error('CAD requires mesh_path and a reference image_path; named views are not accepted.');
   if (p.source === 'cad' && (p.mesh_quality || p.shape_model)) throw new Error('mesh_quality and shape_model are not used for CAD input.');

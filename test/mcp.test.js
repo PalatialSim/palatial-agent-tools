@@ -36,6 +36,8 @@ test('create tool explains API options in its MCP schema', async t => {
   assert.match(tool.inputSchema.properties.create_articulation.description, /joints/);
   assert.match(tool.inputSchema.properties.units.description, /Text and CAD/);
   assert.match(tool.inputSchema.properties.shape_model.description, /parametric/);
+  assert.match(tool.inputSchema.properties.shape_model.description, /auto follows the diffusion route/);
+  assert.match(tool.inputSchema.properties.shape_model.description, /Tencent Cloud Pro/);
   assert.match(tool.inputSchema.properties.shape_model.description, /faster, cheaper/);
   assert.match(tool.inputSchema.properties.shape_model.description, /better for articulation/);
   assert.deepEqual(tool.inputSchema.properties.shape_model.enum, ['auto', 'diffusion', 'parametric']);
