@@ -180,6 +180,22 @@ test('CAD reuse flags are CAD-only and refuse the combinations that contradict t
   assert.doesNotThrow(() => validateCreate({ ...cad, keep_existing_textures: true, regenerate_parts: true }));
 });
 
+test('keeping a CAD appearance is refused on the formats that cannot carry one', () => {
+  const direct = { source: 'cad', name: 'Test part', description: 'A part', image_path: '/ref.png', mesh_path: '/part.obj', units: 'm', up_direction: 'z' };
+  // Verified against the live API: a direct mesh upload is one file and cannot
+  // prove material and texture sidecars, so the API answers
+  // CAD_AUTHORED_APPEARANCE_UNAVAILABLE without naming the field responsible.
+  for (const field of ['keep_existing_textures', 'physics_validation_only']) {
+    assert.throws(() => validateCreate({ ...direct, [field]: true }), /USD, STEP, or IGES/);
+  }
+  assert.throws(() => validateCreate({ ...direct, apply_textures: false }), /USD, STEP, or IGES/);
+  // Shape reuse promises nothing about appearance, so it stays available.
+  assert.doesNotThrow(() => validateCreate({ ...direct, keep_existing_shape: true }));
+  // The formats that can carry an appearance keep all of it.
+  assert.doesNotThrow(() => validateCreate({ ...direct, mesh_path: '/part.usda', units: undefined, up_direction: undefined, physics_validation_only: true }));
+  assert.doesNotThrow(() => validateCreate({ ...direct, mesh_path: '/part.step', units: undefined, keep_existing_textures: true }));
+});
+
 test('every documented create parameter is reachable through the schema', () => {
   const documented = [
     'body_type', 'newton_solver', 'repair_mesh', 'replace_glass', 'auto_scale',

@@ -127,6 +127,10 @@ collision, physics and validation on what was supplied. Do not add
 is rejected. USD-family files carry their own units and up axis, so neither is
 given.
 
+The USD file is not incidental. Keeping an appearance needs a format that can
+carry material and texture sidecars, so this request would be rejected with the
+same model supplied as OBJ, GLB, GLTF, STL, PLY, or FBX.
+
 ## A soft object
 
 Cloth, garments, cable, and rope deform instead of holding a shape.

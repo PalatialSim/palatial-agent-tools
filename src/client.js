@@ -88,6 +88,17 @@ export function validateCreate(input) {
   if (p.source === 'image' && (p.units || p.up_direction)) throw new Error('units and up_direction are not accepted for image input; include requested dimensions and orientation in the description.');
   if (p.source === 'cad') {
     const extension = path.extname(p.mesh_path).toLowerCase();
+    // Verified against the live API: a direct mesh is one uploaded file, so it
+    // cannot prove the material and texture sidecars an authored appearance
+    // needs, and the API refuses the request rather than quietly generating
+    // over it. Anything that turns texture generation off trips it, so name the
+    // formats that can keep an appearance instead of letting the caller meet
+    // CAD_AUTHORED_APPEARANCE_UNAVAILABLE with no idea which field caused it.
+    if (DIRECT_MESH_EXTENSIONS.has(extension)) {
+      const keeping = ['apply_textures', 'keep_existing_textures', 'physics_validation_only']
+        .filter((field) => (field === 'apply_textures' ? p[field] === false : p[field] === true));
+      if (keeping.length) throw new Error(`${keeping.join(' and ')} keeps the appearance the file was uploaded with, and a direct mesh upload cannot carry one. Let textures be generated, or supply the model as USD, STEP, or IGES.`);
+    }
     if (DIRECT_MESH_EXTENSIONS.has(extension)) {
       if (!p.units || !p.up_direction) throw new Error('OBJ, GLB, GLTF, STL, PLY, and FBX inputs require both units and up_direction.');
     } else if (AXIS_ONLY_CAD_EXTENSIONS.has(extension)) {

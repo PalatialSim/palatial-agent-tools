@@ -133,6 +133,14 @@ Use `physics_validation_only` when the user says the model is already right and
 they only want it simulation-ready. Use the two narrower flags when only one
 half should be kept.
 
+**Keeping the appearance needs a format that can carry one.** A direct mesh
+upload is a single file, so it cannot prove the material and texture sidecars an
+authored appearance lives in, and the API refuses the request. On OBJ, GLB,
+GLTF, STL, PLY, and FBX, `keep_existing_textures`, `physics_validation_only`,
+and `apply_textures: false` are all rejected. Supply the model as USD, STEP, or
+IGES to keep its appearance, or let textures be generated. `keep_existing_shape`
+is unaffected and works on every format.
+
 ## Scale and orientation
 
 | Field | Values | Default | Sources | Notes |
@@ -174,3 +182,6 @@ names the rule.
   `apply_textures: true`, for the same reason.
 - `body_type: soft_bodies` accepts only `newton_solver: vbd`, and
   `body_type: rigid_bodies` rejects `vbd`.
+- A direct mesh (OBJ, GLB, GLTF, STL, PLY, FBX) rejects `keep_existing_textures`,
+  `physics_validation_only`, and `apply_textures: false`, because that format
+  cannot carry the appearance they promise to keep.

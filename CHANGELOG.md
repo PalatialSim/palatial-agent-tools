@@ -18,6 +18,13 @@
 - The parameter reference documents all nine, the worked requests gain a soft
   object and a keep-what-was-supplied CAD example, and the existing test that
   pins the reference against the schema now covers them.
+- Keeping a CAD appearance is refused up front on the formats that cannot carry
+  one. A direct mesh is a single uploaded file, so it cannot prove the material
+  and texture sidecars an authored appearance lives in, and the API refuses the
+  request. `keep_existing_textures`, `physics_validation_only`, and
+  `apply_textures: false` are now rejected for OBJ, GLB, GLTF, STL, PLY, and FBX
+  with a message naming the formats that do work, rather than reaching the API
+  as an error code with no field attached.
 
 Deliberately still not accepted: `quad_topo`, which the API rejects at any value
 but its default; `reconstruct`, which the file inputs already decide;
