@@ -18,10 +18,11 @@ retry safe.
 - Keep the top-level `asset_id` from the response as the canonical ID. Do not
   substitute a nested `details.id` unless the API calls it the asset ID.
 - Stop polling. A terminal failure does not become ready later.
-- A failed validation stage does not always mean nothing was produced. Check
-  export availability **once**. If a package comes back, label it a partial or
-  unvalidated export and name the stage that failed. If nothing comes back, say
-  so plainly.
+- A failed validation stage does not always mean nothing was produced. A partial
+  export still uses export credits, so do not request one automatically. Ask the
+  user first; after confirmation, call `palatial_download_asset` once with
+  `allow_failed_export: true`, then label any package partial or unvalidated and
+  name the stage that failed.
 - Charges for failed stages are refunded. Reprocessing charges only for the
   remaining stages, and needs the user's confirmation first.
 - Never create a replacement asset to find out what happened.

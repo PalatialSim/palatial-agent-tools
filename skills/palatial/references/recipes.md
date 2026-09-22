@@ -93,16 +93,16 @@ to follow.
   "mesh_path": "./cad/gripper.step",
   "image_path": "./references/gripper.png",
   "datasheet_path": "./cad/gripper-spec.pdf",
-  "units": "mm",
   "up_direction": "z",
   "create_articulation": true,
   "apply_textures": true
 }
 ```
 
-CAD source units and up axis are worth asking about. CAD files are commonly
-millimetres and Z-up, and neither field has a default on the CAD route, so an
-unstated value is a scale error waiting to happen.
+STEP and IGES require an up axis, but their conversion carries canonical scale,
+so this request intentionally omits `units`. Direct mesh formats such as OBJ,
+GLB, GLTF, STL, PLY, and FBX require both `units` and `up_direction`. USD-family
+files use authored stage metadata and reject both fields.
 
 ## A hard polygon budget
 

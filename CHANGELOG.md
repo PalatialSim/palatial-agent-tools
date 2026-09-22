@@ -15,6 +15,17 @@
 - `palatial-agent setup` installs the guidance as a Claude Code skill in
   `~/.claude/skills/palatial`, refreshes its own copy on a later run, and
   refuses to overwrite a skill it did not write.
+- Claude skill ownership now uses a package marker plus per-file SHA-256 hashes,
+  rejects symlink and edited-file targets, stages the whole tree before an
+  atomic replacement, and makes partial setup return a nonzero status.
+- Create validation now matches source-specific API rules, including field
+  applicability, workspace/name constraints, and format-specific CAD units and
+  up-axis requirements.
+- Failed assets require explicit user confirmation through
+  `allow_failed_export` before the client can make a billable export request.
+- Parameter guidance records effective collision and mesh defaults without
+  exposing internal provider routing, and guide responses no longer duplicate
+  the full document in structured output.
 - Server instructions now point a client at the guidance before its first
   create call.
 - Tests assert that the parameter reference documents every field and every
@@ -78,7 +89,8 @@ Palatial infrastructure.
 - Node.js 22+ support.
 - Contract and MCP transport tests with fixture-only API calls.
 - Cross-platform CI on Ubuntu, macOS, and Windows.
-- Clean-package installation and stdio MCP smoke validation.
+- Clean-package installation and stdio MCP smoke validation, built from the
+  current checkout on every supported CI operating system.
 - No production generation canary or native simulator acceptance is implied by
   this release; those remain separate release checks.
 

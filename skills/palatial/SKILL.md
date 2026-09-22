@@ -42,6 +42,9 @@ which stage it is on.
   check the Palatial dashboard before submitting anything else.
 - Confirm with the user before reprocessing, creating a variant, or generating
   a batch of assets from one request.
+- A failed asset may have a partial export, but requesting it still uses export
+  credits. Ask first, then pass `allow_failed_export: true` and label the result
+  partial or unvalidated.
 - `READY` means the outputs exist. It does not mean the asset behaves correctly
   in the user's simulator. Report generation and validation separately, and do
   not claim a simulator accepted an asset unless the user tested it.
@@ -63,8 +66,8 @@ it is the only place dimensions can go.
 
 `shape_model` applies to `text` and `image` only. CAD rejects it.
 
-- `auto` (default) follows the diffusion route. Use it unless you have a reason
-  not to.
+- `auto` (default) lets Palatial select a supported route. Use it unless the
+  user has a specific shape-model requirement.
 - `diffusion` is faster and cheaper and handles organic shapes better. Takes
   one image, or up to four named views.
 - `parametric` is more controllable and better for articulated objects. It is

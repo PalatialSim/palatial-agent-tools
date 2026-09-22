@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile, stat, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { PalatialClient } from '../src/client.js';
+import { PalatialClient, validateCreate } from '../src/client.js';
 import { credentialPath, getApiKey, saveApiKey, deleteApiKey } from '../src/auth.js';
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -80,12 +80,13 @@ test('multiview and CAD use actual multipart files and repeated engine fields', 
   assert.equal(captured[0].body.get('front').name, 'front.jpg');
   assert.equal(captured[0].body.get('file'), null);
   assert.deepEqual(captured[0].body.getAll('engine'), ['isaac_sim', 'mujoco']);
-  await client.create({ ...basic, source: 'cad', mesh_path: mesh, image_path: image, datasheet_path: datasheet, units: 'mm' });
+  await client.create({ ...basic, source: 'cad', mesh_path: mesh, image_path: image, datasheet_path: datasheet, up_direction: 'z' });
   assert.match(captured[1].url, /cadtosim$/);
   assert.equal(await captured[1].body.get('mesh').text(), 'STEP fixture');
   assert.equal(captured[1].body.get('image').type, 'image/jpeg');
   assert.equal(captured[1].body.get('datasheet').type, 'application/pdf');
-  assert.equal(captured[1].body.get('units'), 'mm');
+  assert.equal(captured[1].body.get('up_direction'), 'z');
+  assert.equal(captured[1].body.get('units'), null);
 });
 
 test('auto uses diffusion multiview inputs while parametric accepts fifty files', async t => {
@@ -115,11 +116,45 @@ test('invalid input is rejected before any remote write', async t => {
     { ...basic, source: 'image' },
     { ...basic, source: 'image', views: { front: '/missing.jpg' } },
     { ...basic, image_path: '/missing.jpg' },
+    { ...basic, apply_textures: true },
     { ...basic, source: 'cad', mesh_path: '/missing.step' },
     { ...basic, decimation_mode: 'strict' },
     { ...basic, decimation_mode: 'strict', decimation_target_faces: 200, decimation_target_ratio: 0.4 }
   ];
   for (const input of inputs) await assert.rejects(client.create(input));
+  assert.equal(calls, 0);
+});
+
+test('source-specific fields and CAD source frames are validated before upload', async t => {
+  let calls = 0;
+  const { client } = await fixture(t, async () => { calls++; return json({ id: 'unexpected' }, 201); });
+  const cad = { ...basic, source: 'cad', mesh_path: '/missing.step', image_path: '/missing.png' };
+  const rejected = [
+    { ...basic, source: 'image', image_path: '/missing.png', apply_textures: false },
+    { ...cad, image_paths: ['/a.png', '/b.png'], up_direction: 'z' },
+    cad,
+    { ...cad, units: 'mm', up_direction: 'z' },
+    { ...cad, mesh_path: '/missing.obj', up_direction: 'z' },
+    { ...cad, mesh_path: '/missing.obj', units: 'mm' },
+    { ...cad, mesh_path: '/missing.usd', units: 'm' },
+    { ...cad, mesh_path: '/missing.jt', up_direction: 'z' }
+  ];
+  for (const input of rejected) await assert.rejects(client.create(input));
+  assert.equal(calls, 0);
+  assert.doesNotThrow(() => validateCreate({ ...cad, mesh_path: '/part.obj', units: 'mm', up_direction: 'z' }));
+  assert.doesNotThrow(() => validateCreate({ ...cad, up_direction: 'z' }));
+  assert.doesNotThrow(() => validateCreate({ ...cad, mesh_path: '/part.usd' }));
+});
+
+test('names, descriptions, and workspace IDs match the public API contract', async t => {
+  let calls = 0;
+  const { client } = await fixture(t, async () => { calls++; return json({ id: 'unexpected' }, 201); });
+  for (const input of [
+    { ...basic, name: 'bad/name' },
+    { ...basic, name: '    ' },
+    { ...basic, description: '   ' },
+    { ...basic, workspace: 'workspace-1' }
+  ]) await assert.rejects(client.create(input));
   assert.equal(calls, 0);
 });
 
@@ -153,6 +188,7 @@ test('export strips API credentials on storage redirect, streams ZIP, and caches
   });
   const receipt = await client.download('asset-zip', dir);
   assert.equal(receipt.cached, false);
+  assert.equal(receipt.source_status, 'READY');
   assert.equal(receipt.validation, 'not_inspected');
   assert.equal(receipt.sha256.length, 64);
   assert.deepEqual(calls[2].init.headers, {});
@@ -164,14 +200,21 @@ test('export strips API credentials on storage redirect, streams ZIP, and caches
   assert.ok(!stored.includes(secret));
 });
 
-test('export preserves existing files and does not charge for a non-READY asset', async t => {
+test('failed export requires explicit confirmation before any billable request', async t => {
   const calls = [];
-  const { dir, client } = await fixture(t, async url => { calls.push(String(url)); return json({ status: 'PROCESSING_FAILED' }); });
-  await assert.rejects(client.download('asset-x', dir), /No export package was available/);
-  assert.equal(calls.length, 2);
+  const zip = Buffer.from('504b0506000000000000000000000000000000000000', 'hex');
+  const { dir, client } = await fixture(t, async url => {
+    calls.push(String(url));
+    return String(url).endsWith('/status') ? json({ status: 'PROCESSING_FAILED' }) : new Response(zip, { headers: { 'Content-Type': 'application/zip' } });
+  });
+  await assert.rejects(client.download('asset-x', dir), /allow_failed_export=true/);
+  assert.equal(calls.length, 1);
+  const partial = await client.download('asset-x', dir, { allowFailedExport: true });
+  assert.equal(partial.export_classification, 'partial_or_unvalidated');
+  assert.equal(calls.length, 3);
   await writeFile(path.join(dir, 'asset-y-export.zip'), 'preserve me');
   await assert.rejects(client.download('asset-y', dir), /already exists/);
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3);
   assert.equal(await readFile(path.join(dir, 'asset-y-export.zip'), 'utf8'), 'preserve me');
 });
 

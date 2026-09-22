@@ -1,5 +1,22 @@
 # Test in a fresh isolated environment
 
+## 0. Current checkout and package smoke
+
+```sh
+npm ci --ignore-scripts
+npm run check
+npm test
+npm run test:package
+npm pack --dry-run --ignore-scripts
+```
+
+`test:package` packs the current checkout, installs that tarball into a clean
+temporary prefix, and drives the installed CLI, MCP tool list, guide tool, and
+guide resource. The unit suite also proves that failed assets make no export
+request before explicit confirmation and that Claude skill setup protects
+unowned, edited, extra-file, and symlink targets while reporting partial setup
+with a nonzero exit status.
+
 ## 1. Offline runtime test of the published release
 
 From a checkout of this repository, with Docker running:

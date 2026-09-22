@@ -6,7 +6,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { createServer } from '../src/mcp.js';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -34,10 +34,10 @@ test('create tool explains API options in its MCP schema', async t => {
   const tool = (await client.listTools()).tools.find(item => item.name === 'palatial_create_asset');
   assert.match(tool.inputSchema.properties.engine.description, /isaac_sim/);
   assert.match(tool.inputSchema.properties.create_articulation.description, /joints/);
-  assert.match(tool.inputSchema.properties.units.description, /Text and CAD/);
+  assert.match(tool.inputSchema.properties.units.description, /direct-mesh CAD/);
   assert.match(tool.inputSchema.properties.shape_model.description, /parametric/);
-  assert.match(tool.inputSchema.properties.shape_model.description, /auto follows the diffusion route/);
-  assert.match(tool.inputSchema.properties.shape_model.description, /Tencent Cloud Pro/);
+  assert.match(tool.inputSchema.properties.shape_model.description, /auto lets Palatial select/);
+  assert.doesNotMatch(tool.inputSchema.properties.shape_model.description, /Tencent|provider|vendor/i);
   assert.match(tool.inputSchema.properties.shape_model.description, /faster, cheaper/);
   assert.match(tool.inputSchema.properties.shape_model.description, /better for articulation/);
   assert.deepEqual(tool.inputSchema.properties.shape_model.enum, ['auto', 'diffusion', 'parametric']);
@@ -62,6 +62,7 @@ test('guidance reaches any client as a tool, and as resources where they are sup
   const overview = await client.callTool({ name: 'palatial_guide', arguments: {} });
   assert.notEqual(overview.isError, true);
   assert.equal(overview.structuredContent.topic, 'overview');
+  assert.equal(overview.structuredContent.text, undefined, 'The guide prose must not be duplicated in structuredContent.');
   assert.match(overview.content[0].text, /palatial_create_asset/);
 
   const parameters = await client.callTool({ name: 'palatial_guide', arguments: { topic: 'parameters' } });
@@ -113,8 +114,13 @@ test('a Codex-only setup writes no Claude Code skill', () => {
   assert.equal(plan.claude_code_skill, undefined);
 });
 
-test('setup produces shell-free commands for both actual terminal clients', () => {
-  const result = spawnSync(process.execPath, [fileURLToPath(new URL('../bin/palatial-agent.js', import.meta.url)), 'setup', '--client', 'both', '--dry-run'], { encoding: 'utf8' });
+test('setup produces shell-free commands for both actual terminal clients', async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'palatial-setup-plan-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL('../bin/palatial-agent.js', import.meta.url)), 'setup', '--client', 'both', '--dry-run'], {
+    encoding: 'utf8',
+    env: { PATH: process.env.PATH, CLAUDE_CONFIG_DIR: path.join(root, 'claude') }
+  });
   assert.equal(result.status, 0, result.stderr);
   const { commands, claude_code_skill } = JSON.parse(result.stdout);
   assert.equal(commands[0].command, 'codex');
@@ -127,4 +133,25 @@ test('setup produces shell-free commands for both actual terminal clients', () =
   assert.equal(claude_code_skill.installed, false);
   assert.ok(claude_code_skill.path.endsWith(path.join('skills', 'palatial')));
   assert.ok(claude_code_skill.files.includes('SKILL.md'));
+});
+
+test('setup exits nonzero when registration succeeds but the Claude skill is not installed', async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'palatial-setup-partial-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bin = path.join(root, 'bin');
+  const skill = path.join(root, 'claude', 'skills', 'palatial');
+  await mkdir(bin, { recursive: true });
+  await mkdir(skill, { recursive: true });
+  await writeFile(path.join(skill, 'SKILL.md'), '---\nname: palatial\n---\nuser copy\n');
+  const mock = path.join(bin, process.platform === 'win32' ? 'claude.cmd' : 'claude');
+  await writeFile(mock, process.platform === 'win32' ? '@exit /b 0\r\n' : '#!/bin/sh\nexit 0\n');
+  if (process.platform !== 'win32') await chmod(mock, 0o755);
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL('../bin/palatial-agent.js', import.meta.url)), 'setup', '--client', 'claude-code'], {
+    encoding: 'utf8',
+    env: { PATH: `${bin}${path.delimiter}${process.env.PATH}`, CLAUDE_CONFIG_DIR: path.join(root, 'claude') }
+  });
+  assert.equal(result.status, 1, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.results[0].registered, true);
+  assert.equal(output.claude_code_skill.action, 'skipped');
 });

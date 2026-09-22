@@ -8,11 +8,11 @@ and an omitted field is safer than a guessed one.
 
 ## Always required
 
-| Field | Values | Notes |
-| --- | --- | --- |
-| `source` | `text`, `image`, `cad` | Decides which file fields are legal. See the source rules below. |
-| `name` | 4 to 50 characters | Letters, digits, spaces, underscores, hyphens, periods. |
-| `description` | 1 to 500 characters | What to build, including dimensions, materials, articulation, and intended use. For `source: image` this is the only place size and orientation can be stated. |
+| Field | Values | Default | Sources | Notes |
+| --- | --- | --- | --- | --- |
+| `source` | `text`, `image`, `cad` | required | all | Decides which file fields are legal. See the source rules below. |
+| `name` | 4 to 50 characters | required | all | Letters, digits, spaces, underscores, hyphens, periods. |
+| `description` | 1 to 500 characters | required | all | What to build, including dimensions, materials, articulation, and intended use. For `source: image` this is the only place size and orientation can be stated. |
 
 ## Common
 
@@ -23,13 +23,13 @@ and an omitted field is safer than a guessed one.
 
 ## Input files
 
-| Field | Values | Sources | Notes |
-| --- | --- | --- | --- |
-| `image_path` | one PNG or JPEG path | `image`, `cad` | The single reference for `image`. Required, and required alongside the mesh, for `cad`. |
-| `image_paths` | 2 to 50 PNG or JPEG paths | `image` | Photos of one object. Accepted **only** with `shape_model: parametric`. |
-| `views` | object with `front`, `left`, `back`, `right` | `image` | Named angles of one object. Give at least 2. `auto` and `diffusion` accept at most 4. |
-| `mesh_path` | path to the mesh file | `cad` | Required for CAD. |
-| `datasheet_path` | path to a PDF | `cad` | Optional specification sheet. |
+| Field | Values | Default | Sources | Notes |
+| --- | --- | --- | --- | --- |
+| `image_path` | one PNG or JPEG path | none | `image`, `cad` | The single reference for `image`. Required, and required alongside the mesh, for `cad`. |
+| `image_paths` | 2 to 50 PNG or JPEG paths | none | `image` | Photos of one object. Accepted **only** with `shape_model: parametric`. |
+| `views` | object with `front`, `left`, `back`, `right` | none | `image` | Named angles of one object. Give at least 2. `auto` and `diffusion` accept at most 4. |
+| `mesh_path` | path to the mesh file | none | `cad` | Required for CAD. |
+| `datasheet_path` | path to a PDF | none | `cad` | Optional specification sheet. |
 
 Each local input must be a regular file of at most 256 MiB. References must be
 PNG or JPEG; datasheets must be PDF.
@@ -41,14 +41,14 @@ PNG or JPEG; datasheets must be PDF.
 | `create_articulation` | boolean | `false` | all | Create joints for moving parts such as doors, drawers, or wheels. Turn on only when the user needs the object to move. |
 | `enable_parts_segmentation` | boolean | `true` | all | Split the object into separate rigid parts. Set `false` for one solid rigid mesh. |
 | `run_simulation` | boolean | `true` | all | Run physics validation after the build. |
-| `collision_quality` | `low`, `medium`, `high`, `x_high`, `sdf` | `sdf` | all | Collision geometry fidelity. `sdf` is a signed-distance-field collider and is the default for a reason; lower it only for a performance budget the user stated. |
-| `mesh_quality` | `low`, `medium`, `high` | `high` | `text`, `image` | Generation quality. **Rejected for CAD**, which starts from a mesh the user supplied. |
+| `collision_quality` | `low`, `medium`, `high`, `x_high`, `sdf` | `medium` for ordinary rigid assets | all | Collision geometry fidelity. Soft-body assets use `sdf`; this public client creates ordinary rigid assets unless the service determines otherwise. |
+| `mesh_quality` | `low`, `medium`, `high` | `high`; `medium` when parts segmentation is off and articulation is not requested | `text`, `image` | Generation quality. **Rejected for CAD**, which starts from a mesh the user supplied. |
 
 ## Shape and texture models
 
 | Field | Values | Default | Sources | Notes |
 | --- | --- | --- | --- | --- |
-| `shape_model` | `auto`, `diffusion`, `parametric` | `auto` | `text`, `image` | `auto` follows the diffusion route through Tencent Cloud Pro. `diffusion` is faster, cheaper, and better at organic shapes; it takes one image or up to 4 named views. `parametric` is more controllable and better for articulation; it is the only model that accepts `image_paths`. **Rejected for CAD.** |
+| `shape_model` | `auto`, `diffusion`, `parametric` | `auto` | `text`, `image` | `auto` lets Palatial select a supported route. `diffusion` is faster, cheaper, and better at organic shapes; it takes one image or up to 4 named views. `parametric` is more controllable and better for articulation; it is the only model that accepts `image_paths`. **Rejected for CAD.** |
 | `texture_model` | `auto` | `auto` | all | Selects the supported texture model. There is no other public value, so omit it. |
 | `apply_textures` | boolean | `true` | `cad` | Generate textures from the reference image. CAD only. When it is off, `texture_model` has nothing to run. |
 
@@ -100,13 +100,17 @@ Do not mix the legacy fields with the explicit ones in one request.
 
 | Field | Values | Default | Sources | Notes |
 | --- | --- | --- | --- | --- |
-| `units` | `m`, `cm`, `mm`, `inch`, `feet` | `m` for text; none for CAD | `text`, `cad` | The units the source is authored in. Ask the user rather than guessing; a wrong value produces an asset at the wrong scale that still looks correct on its own. |
-| `up_direction` | `x`, `y`, `z` | `y` for text; none for CAD | `text`, `cad` | The source up axis. |
+| `units` | `m`, `cm`, `mm`, `inch`, `feet` | `m` for text; format-dependent for CAD | `text`, `cad` | Required for OBJ, GLB, GLTF, STL, PLY, and FBX. Omit for STEP/IGES and USD-family files. |
+| `up_direction` | `x`, `y`, `z` | `y` for text; format-dependent for CAD | `text`, `cad` | Required for OBJ, GLB, GLTF, STL, PLY, FBX, STEP, and IGES. Omit for USD-family files. |
 
-For CAD neither field has a default. State what the file actually uses and the
-server canonicalizes it. CAD is commonly millimetres and Z-up while the text
-defaults are metres and Y-up, so an unstated CAD value is where thousandfold
-scale errors come from.
+CAD source-frame rules come from the file format:
+
+- OBJ, GLB, GLTF, STL, PLY, and FBX require both `units` and `up_direction`.
+- STEP, STP, IGES, and IGS require `up_direction`; their converted scale is
+  canonical, so `units` is rejected.
+- USD, USDA, USDC, and USDZ use authored stage metadata, so both fields are
+  rejected.
+- JT and SLDPRT are not supported by this public client.
 
 **Both are rejected for `source: image`.** A photo carries no units, so state
 the dimensions and orientation in `description` instead.
@@ -116,11 +120,13 @@ the dimensions and orientation in `description` instead.
 The client checks these before spending anything, and returns an error that
 names the rule.
 
-- `text` accepts no files at all.
+- `text` accepts no files and rejects `apply_textures`.
 - `image` requires exactly one of `image_path`, `image_paths`, or `views`.
 - `views` needs at least 2 entries, and at most 4 under `auto` or `diffusion`.
 - `image_paths` requires `shape_model: parametric`.
-- `image` rejects `mesh_path`, `datasheet_path`, `units`, and `up_direction`.
-- `cad` requires both `mesh_path` and `image_path`, and rejects `views`,
-  `mesh_quality`, and `shape_model`.
+- `image` rejects `mesh_path`, `datasheet_path`, `units`, `up_direction`, and
+  `apply_textures`.
+- `cad` requires both `mesh_path` and one `image_path`, and rejects
+  `image_paths`, `views`, `mesh_quality`, and `shape_model`. Source-frame fields
+  then follow the file-format rules above.
 - Strict decimation requires exactly one target. Any other mode accepts none.

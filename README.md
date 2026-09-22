@@ -43,7 +43,7 @@ claude
 
 Use `/mcp` to inspect the connection, then ask for the same read-only check.
 
-To configure both clients, run `palatial-agent setup --client both`. Preview every change with `--dry-run`. Setup adds a server named `palatial` in the user's client configuration, and for Claude Code it also installs the Palatial skill described below into `~/.claude/skills/palatial`. Review or remove an existing server or skill of that name first; setup refuses to overwrite a skill it did not write. It does not modify your project instructions or other servers. If you move this installation or change the Node.js executable, rerun setup.
+To configure both clients, run `palatial-agent setup --client both`. Preview every change with `--dry-run`. Setup adds a server named `palatial` in the user's client configuration, and for Claude Code it also installs the Palatial skill described below into `~/.claude/skills/palatial`. The installed copy carries an ownership manifest and file hashes; setup refuses to overwrite an unowned, edited, extra-file, or symlinked skill directory. A partial setup exits nonzero even when MCP registration succeeded. It does not modify your project instructions or other servers. If you move this installation or change the Node.js executable, rerun setup.
 
 The client runs over **stdio**: your coding agent starts it as a local process. You do not need Docker, a local GPU, an inbound port, or your own hosted MCP server. Internet access to Palatial and its export storage is required.
 
@@ -59,9 +59,9 @@ For an image:
 
 For CAD:
 
-> Convert ./cad/gripper.step using ./references/gripper.png with Palatial. The CAD source units are millimetres and its up axis is Z. Target Isaac Sim and keep the export in ./assets/gripper.
+> Convert ./cad/gripper.step using ./references/gripper.png with Palatial. Its up axis is Z. Target Isaac Sim and keep the export in ./assets/gripper.
 
-Specify the target simulator, dimensions or source units, and articulation requirements when known. Supported engine request values are `isaac_sim`, `mujoco`, and `newton`. Verify the output for your selected simulator; format and runtime capabilities depend on the pipeline.
+Specify the target simulator, dimensions, and articulation requirements when known. Direct mesh CAD inputs require their source units and up axis; STEP/IGES require only the up axis, and USD-family files use authored stage metadata. Supported engine request values are `isaac_sim`, `mujoco`, and `newton`. Verify the output for your selected simulator; format and runtime capabilities depend on the pipeline.
 
 ## How your agent learns to use this
 
@@ -114,7 +114,7 @@ This preference is inspectable and editable. It does not guarantee that every na
 | `palatial_get_pipeline_progress` | Retrieve stage-level progress for an asset | Read-only |
 | `palatial_create_variant` | Create an independent variant from a READY asset using feedback | Creates an asset; uses workspace credits |
 | `palatial_reprocess_asset` | Reprocess from a pipeline stage in place or as a variant | Changes processing; uses workspace credits |
-| `palatial_download_asset` | Save a READY export ZIP and SHA-256 receipt | Writes local files; export may consume a credit |
+| `palatial_download_asset` | Save a READY export ZIP and SHA-256 receipt | Writes local files; export may consume a credit. A failed asset requires user confirmation plus `allow_failed_export: true` |
 | `palatial_cancel_asset` | Cancel a specific asset's processing | Stops a job; does not imply a refund |
 
 The client accepts PNG/JPEG references and PDF datasheets. CAD requests require both a mesh file and reference image. Each local input is limited to 256 MiB; downloads are limited to 2 GiB in this preview. ZIP files are saved without automatic extraction or simulator import.
@@ -142,7 +142,7 @@ palatial-agent download --asset-id YOUR_ASSET_ID --output-dir ./assets
 
 Creation returns immediately with an asset ID. Status polling does not create another asset. A local submission receipt is saved under `~/.local/state/palatial-agent` (or `PALATIAL_STATE_DIR`) so accepted IDs can be recovered after a terminal session ends. An uncertain submission receipt means you should inspect the dashboard before submitting again; the receipt is not server-side idempotency.
 
-Exports include an absolute local path, SHA-256, byte count, and asset ID. A completed download with a matching receipt is reused locally without calling the export endpoint again. Existing files are preserved. If a download fails after export authorization, a credit may already have been consumed; the client does not automatically retry that export.
+Exports include an absolute local path, SHA-256, byte count, and asset ID. A completed download with a matching receipt is reused locally without calling the export endpoint again. Existing files are preserved. Failed assets are not exported automatically: the user must confirm the possible partial or unvalidated result before `allow_failed_export` is set. If a download fails after export authorization, a credit may already have been consumed; the client does not automatically retry that export.
 
 ## Authentication and data
 

@@ -27,7 +27,8 @@ palatial-agent guide                      Print the usage and parameter guidance
 palatial-agent guide --topic parameters   Print one topic: ${GUIDE_TOPICS.map(item => item.topic).join(', ')}
 palatial-agent create --request asset.json   Submit a generation request (uses credits)
 palatial-agent status --asset-id ID       Check an existing asset
-palatial-agent download --asset-id ID --output-dir ./assets  Export ZIP (uses credits)
+palatial-agent download --asset-id ID --output-dir ./assets  Export READY ZIP (uses credits)
+palatial-agent download --asset-id ID --output-dir ./assets --allow-failed-export  Export a failed asset after confirmation
 palatial-agent cancel --asset-id ID       Cancel an existing asset
 
 All command results are JSON, except guide, which prints Markdown. API keys
@@ -66,7 +67,7 @@ function readSecret() {
 async function main() {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: {
     client: { type: 'string' }, 'dry-run': { type: 'boolean' }, request: { type: 'string' },
-    'asset-id': { type: 'string' }, 'output-dir': { type: 'string' }, apply: { type: 'boolean' }, topic: { type: 'string' }, help: { type: 'boolean', short: 'h' }, version: { type: 'boolean' }
+    'asset-id': { type: 'string' }, 'output-dir': { type: 'string' }, 'allow-failed-export': { type: 'boolean' }, apply: { type: 'boolean' }, topic: { type: 'string' }, help: { type: 'boolean', short: 'h' }, version: { type: 'boolean' }
   } });
   const command = positionals[0];
   if (values.version) { console.log(VERSION); return; }
@@ -101,6 +102,7 @@ async function main() {
     });
     if (results.some(item => !item.registered)) process.exitCode = 1;
     const skill = wantsSkill ? await installClaudeSkill().catch(error => ({ installed: false, action: 'failed', reason: error.message })) : undefined;
+    if (skill && !skill.installed) process.exitCode = 1;
     return { results, ...(skill ? { claude_code_skill: skill } : {}), next: 'Start a fresh coding-agent session, list Palatial tools, then run palatial_doctor. Restart after moving the installation or changing Node.js.' };
   }
   if (command === 'login') {
@@ -125,7 +127,7 @@ async function main() {
   if (command === 'status') return client.getAsset(values['asset-id']);
   if (command === 'cancel') return client.cancel(values['asset-id']);
   if (!values['output-dir']) throw new Error('Provide --output-dir.');
-  return client.download(values['asset-id'], values['output-dir']);
+  return client.download(values['asset-id'], values['output-dir'], { allowFailedExport: values['allow-failed-export'] === true });
 }
 
 try {

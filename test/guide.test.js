@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, mkdtemp, writeFile, mkdir, rm, stat } from 'node:fs/promises';
+import { readFile, mkdtemp, writeFile, mkdir, rm, stat, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -10,36 +10,59 @@ import { GUIDE_TOPICS, readGuide, claudeSkillDirectory, installClaudeSkill } fro
 
 const guideFile = file => readFile(new URL(`../skills/palatial/${file}`, import.meta.url), 'utf8');
 
-/** Every create field and closed value the schema accepts, for documentation checks. */
-function schemaSurface(schema, keys = new Set(), values = new Set()) {
-  const walk = node => {
-    const def = node?.def;
-    if (!def) return;
-    if (def.type === 'object') for (const [key, child] of Object.entries(def.shape)) { keys.add(key); walk(child); }
-    else if (def.type === 'enum') for (const value of Object.values(def.entries)) values.add(String(value));
-    else if (def.type === 'literal') for (const value of def.values) values.add(String(value));
-    else if (def.type === 'union') for (const option of def.options) walk(option);
-    else if (def.type === 'array') walk(def.element);
-    else if (def.innerType) walk(def.innerType);
-  };
-  walk(schema);
-  return { keys, values };
+function parameterRows(text) {
+  const rows = new Map();
+  for (const line of text.split('\n')) {
+    const cells = line.split('|').slice(1, -1).map(cell => cell.trim());
+    const field = cells[0]?.match(/^`([^`]+)`$/)?.[1];
+    if (field) {
+      assert.ok(!rows.has(field), `Duplicate parameter row: ${field}`);
+      rows.set(field, cells);
+    }
+  }
+  return rows;
 }
 
-test('the parameter reference documents every create field the schema accepts', async () => {
+function closedValues(node) {
+  const def = node?.def;
+  if (!def) return [];
+  if (def.type === 'optional' || def.type === 'default') return closedValues(def.innerType);
+  if (def.type === 'array') return closedValues(def.element);
+  if (def.type === 'enum') return Object.values(def.entries).map(String);
+  if (def.type === 'literal') return def.values.map(String);
+  if (def.type === 'union') return def.options.flatMap(closedValues);
+  if (def.type === 'object') return Object.keys(def.shape);
+  return [];
+}
+
+test('the parameter reference structurally matches every create field and closed value', async () => {
   const text = await guideFile('references/parameters.md');
-  const { keys } = schemaSurface(createSchema);
-  const missing = [...keys].filter(key => !text.includes(`\`${key}\``));
-  assert.deepEqual(missing, [], `Undocumented create parameters: ${missing.join(', ')}`);
+  const rows = parameterRows(text);
+  const shape = createSchema.def.shape;
+  assert.deepEqual([...rows.keys()].sort(), Object.keys(shape).sort());
+  for (const [field, schema] of Object.entries(shape)) {
+    const expected = closedValues(schema).sort();
+    if (!expected.length) continue;
+    const documented = [...rows.get(field)[1].matchAll(/`([^`]+)`/g)].map(match => match[1]).filter(value => expected.includes(value)).sort();
+    assert.deepEqual(documented, expected, `${field} closed values drifted from the schema`);
+  }
 });
 
-test('the parameter reference documents every closed value the schema accepts', async () => {
-  const text = await guideFile('references/parameters.md');
-  const { values } = schemaSurface(createSchema);
-  // Numeric limits are written with thousands separators in prose.
-  const documented = text.replaceAll(',', '');
-  const missing = [...values].filter(value => !documented.includes(value));
-  assert.deepEqual(missing, [], `Undocumented parameter values: ${missing.join(', ')}`);
+test('the parameter reference pins source applicability and effective defaults', async () => {
+  const rows = parameterRows(await guideFile('references/parameters.md'));
+  const expected = {
+    source: ['required', 'all'], name: ['required', 'all'], description: ['required', 'all'],
+    engine: ['`["isaac_sim"]`', 'all'], workspace: ["the API key's workspace", 'all'],
+    image_path: ['none', '`image`, `cad`'], image_paths: ['none', '`image`'], views: ['none', '`image`'], mesh_path: ['none', '`cad`'], datasheet_path: ['none', '`cad`'],
+    create_articulation: ['`false`', 'all'], enable_parts_segmentation: ['`true`', 'all'], run_simulation: ['`true`', 'all'],
+    collision_quality: ['`medium` for ordinary rigid assets', 'all'], mesh_quality: ['`high`; `medium` when parts segmentation is off and articulation is not requested', '`text`, `image`'],
+    shape_model: ['`auto`', '`text`, `image`'], texture_model: ['`auto`', 'all'], apply_textures: ['`true`', '`cad`'],
+    texture_size: ['`4096`', 'all'], optimize_textures: ['`true`', 'all'], texture_max_resolution: ['`4096`', 'all'],
+    decimation: ['see above', 'all'], decimation_mode: ['see above', 'all'], decimation_target_faces: ['none', 'all'], decimation_target_ratio: ['none', 'all'],
+    triangle_count: ['`auto`', 'all'], mesh_density: ['`medium`', 'all'],
+    units: ['`m` for text; format-dependent for CAD', '`text`, `cad`'], up_direction: ['`y` for text; format-dependent for CAD', '`text`, `cad`']
+  };
+  assert.deepEqual(Object.fromEntries([...rows].map(([field, cells]) => [field, [cells[2], cells[3]]])), expected);
 });
 
 test('the skill declares the frontmatter Claude Code loads it by', async () => {
@@ -90,10 +113,10 @@ test('setup installs the skill where Claude Code reads it, and refreshes its own
   assert.equal(created.action, 'created');
   for (const file of created.files) assert.equal(await readFile(path.join(directory, file), 'utf8'), await guideFile(file));
 
-  await writeFile(path.join(directory, 'SKILL.md'), '---\nname: palatial\n---\nstale\n');
   const refreshed = await installClaudeSkill({ env });
   assert.equal(refreshed.action, 'refreshed');
   assert.equal(await readFile(path.join(directory, 'SKILL.md'), 'utf8'), await guideFile('SKILL.md'));
+  assert.equal(JSON.parse(await readFile(path.join(directory, '.palatial-agent-tools.json'), 'utf8')).owner, '@palatial/agent-tools');
 });
 
 test('setup never overwrites a skill this client did not write', async t => {
@@ -110,6 +133,46 @@ test('setup never overwrites a skill this client did not write', async t => {
   assert.equal(result.action, 'skipped');
   assert.match(result.reason, /Remove or rename/);
   assert.equal(await readFile(path.join(directory, 'SKILL.md'), 'utf8'), mine);
+});
+
+test('setup does not infer ownership from a matching name or partial directory', async t => {
+  const home = await mkdtemp(path.join(tmpdir(), 'palatial-skill-unowned-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const env = { CLAUDE_CONFIG_DIR: home };
+  const directory = claudeSkillDirectory(env);
+  await mkdir(path.join(directory, 'references'), { recursive: true });
+  const mine = '---\nname: palatial\ndescription: user-authored\n---\nkeep me\n';
+  await writeFile(path.join(directory, 'SKILL.md'), mine);
+  await writeFile(path.join(directory, 'references', 'parameters.md'), 'keep this too\n');
+  const result = await installClaudeSkill({ env });
+  assert.equal(result.installed, false);
+  assert.match(result.reason, /ownership marker/);
+  assert.equal(await readFile(path.join(directory, 'SKILL.md'), 'utf8'), mine);
+  assert.equal(await readFile(path.join(directory, 'references', 'parameters.md'), 'utf8'), 'keep this too\n');
+});
+
+test('setup refuses modified managed files and symlink targets', async t => {
+  const home = await mkdtemp(path.join(tmpdir(), 'palatial-skill-protected-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const env = { CLAUDE_CONFIG_DIR: home };
+  const directory = claudeSkillDirectory(env);
+  await installClaudeSkill({ env });
+  await writeFile(path.join(directory, 'SKILL.md'), 'locally edited\n');
+  const modified = await installClaudeSkill({ env });
+  assert.equal(modified.installed, false);
+  assert.match(modified.reason, /modified after installation/);
+  assert.equal(await readFile(path.join(directory, 'SKILL.md'), 'utf8'), 'locally edited\n');
+
+  const symlinkHome = await mkdtemp(path.join(tmpdir(), 'palatial-skill-symlink-'));
+  t.after(() => rm(symlinkHome, { recursive: true, force: true }));
+  const outside = path.join(symlinkHome, 'outside.md');
+  const symlinkDirectory = claudeSkillDirectory({ CLAUDE_CONFIG_DIR: symlinkHome });
+  await mkdir(symlinkDirectory, { recursive: true });
+  await writeFile(outside, 'outside\n');
+  await symlink(outside, path.join(symlinkDirectory, 'SKILL.md'));
+  const linked = await installClaudeSkill({ env: { CLAUDE_CONFIG_DIR: symlinkHome } });
+  assert.equal(linked.installed, false);
+  assert.equal(await readFile(outside, 'utf8'), 'outside\n');
 });
 
 const cli = (...args) => spawnSync(process.execPath, [fileURLToPath(new URL('../bin/palatial-agent.js', import.meta.url)), ...args], { encoding: 'utf8', env: { PATH: process.env.PATH } });
