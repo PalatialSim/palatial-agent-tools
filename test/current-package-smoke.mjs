@@ -6,14 +6,16 @@ import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
-const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const npmCli = process.env.npm_execpath;
+if (!npmCli) throw new Error('Run this smoke through npm run test:package so npm_execpath is available.');
+const runNpm = (args, options) => execFileSync(process.execPath, [npmCli, ...args], options);
 const root = await mkdtemp(path.join(tmpdir(), 'palatial-package-smoke-'));
 try {
-  const pack = JSON.parse(execFileSync(npm, ['pack', '--json', '--ignore-scripts', '--pack-destination', root], { encoding: 'utf8' }));
+  const pack = JSON.parse(runNpm(['pack', '--json', '--ignore-scripts', '--pack-destination', root], { encoding: 'utf8' }));
   assert.equal(pack.length, 1);
   const tarball = path.join(root, pack[0].filename);
   const install = path.join(root, 'install');
-  execFileSync(npm, ['install', '--ignore-scripts', '--no-audit', '--no-fund', '--prefix', install, tarball], { stdio: 'pipe' });
+  runNpm(['install', '--ignore-scripts', '--no-audit', '--no-fund', '--prefix', install, tarball], { stdio: 'pipe' });
 
   const packageRoot = path.join(install, 'node_modules', '@palatial', 'agent-tools');
   const cli = path.join(packageRoot, 'bin', 'palatial-agent.js');
