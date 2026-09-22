@@ -39,6 +39,23 @@ Start a fresh session in each installed client. Ask it to list the twelve Palati
 
 The release smoke separately verified real Claude Code registration/connection and Codex configuration parsing. It did not run a model-driven generation conversation in either terminal.
 
+### Installing a branch under test
+
+To try a pull request before it is released, install the branch tarball:
+
+```sh
+npm install --global "https://codeload.github.com/PalatialSim/palatial-agent-tools/tar.gz/refs/heads/BRANCH"
+```
+
+Do not use `npm install --global "OWNER/REPO#BRANCH"` for this. A global
+install of that spec can leave the package as a symlink into npm's cache
+clone directory, which npm later prunes; the command then disappears with a
+`command not found` that looks like a PATH problem and is not one. A local,
+non-global install of the same spec behaves correctly, so verify a global
+install globally. Confirm with `npm ls --global --depth=0`, which must print
+a real version rather than a path, and remove any stale
+`palatial-agent` link before reinstalling.
+
 ## 3. Live Palatial canary
 
 Use a dedicated test workspace and its API key. Confirm that generation and export spend is authorized before this stage. Prefer a Palatial-provided staging environment when available; this repository does not invent a staging URL or provide free test credits.
