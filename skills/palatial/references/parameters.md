@@ -41,8 +41,28 @@ PNG or JPEG; datasheets must be PDF.
 | `create_articulation` | boolean | `false` | all | Create joints for moving parts such as doors, drawers, or wheels. Turn on only when the user needs the object to move. |
 | `enable_parts_segmentation` | boolean | `true` | all | Split the object into separate rigid parts. Set `false` for one solid rigid mesh. |
 | `run_simulation` | boolean | `true` | all | Run physics validation after the build. |
-| `collision_quality` | `low`, `medium`, `high`, `x_high`, `sdf` | `medium` for ordinary rigid assets | all | Collision geometry fidelity. Soft-body assets use `sdf`; this public client creates ordinary rigid assets unless the service determines otherwise. |
+| `collision_quality` | `low`, `medium`, `high`, `x_high`, `sdf` | `medium` for ordinary rigid assets | all | Collision geometry fidelity. Soft-body assets use `sdf`. |
 | `mesh_quality` | `low`, `medium`, `high` | `high`; `medium` when parts segmentation is off and articulation is not requested | `text`, `image` | Generation quality. **Rejected for CAD**, which starts from a mesh the user supplied. |
+| `repair_mesh` | boolean | `true` | all | Close holes and fix bad geometry after generation. |
+| `replace_glass` | boolean | `false` | all | Rebuild transparent or translucent parts as real glass. Set it for clear plastic, acrylic, resin, crystal, and lenses too, not only for things called glass. |
+| `auto_scale` | boolean | `true` | all | Scale the finished asset to the real-world size stated in `description`. |
+
+## How the object behaves
+
+| Field | Values | Default | Sources | Notes |
+| --- | --- | --- | --- | --- |
+| `body_type` | `rigid_bodies`, `soft_bodies`, `mixed_bodies` | `rigid_bodies` | all | What the object is made to behave like. `rigid_bodies` is a solid object. `soft_bodies` deforms: cloth, garments, cable, rope. `mixed_bodies` has both in one asset. |
+| `newton_solver` | `mujoco`, `style3D`, `vbd` | `vbd` for soft bodies, `mujoco` for rigid | all | Read only when `engine` includes `newton`. |
+
+Soft bodies simulate in Newton, so a soft-body request should include `newton`
+in `engine`. The solver is tied to the body type: soft bodies accept only
+`vbd`, and rigid bodies accept `mujoco` or `style3D`. The API silently swaps a
+solver the body type cannot use, so this client refuses the contradictory pair
+instead and names the value that body type accepts.
+
+Body type is independent of articulation. A rigid object can still have joints:
+a swivel chair with rolling wheels is `rigid_bodies` with
+`create_articulation: true`.
 
 ## Shape and texture models
 
@@ -96,6 +116,23 @@ Decide it this way:
 
 Do not mix the legacy fields with the explicit ones in one request.
 
+## Reusing what a CAD file already has
+
+By default a CAD request rebuilds appearance and parts from the mesh the user
+supplied. These four flags say what to keep instead, which is how you run
+physics and validation on a model that is already correct.
+
+| Field | Values | Default | Sources | Notes |
+| --- | --- | --- | --- | --- |
+| `regenerate_parts` | boolean | `false` | `cad` | Split the supplied mesh into parts again rather than keeping the parts it already has. |
+| `keep_existing_textures` | boolean | `false` | `cad` | Keep the textures the mesh already has. This turns texture generation off. |
+| `keep_existing_shape` | boolean | `false` | `cad` | Keep the shape and parts the mesh already has. |
+| `physics_validation_only` | boolean | `false` | `cad` | Both of the above at once: skip appearance and parts, run collision, physics and validation. |
+
+Use `physics_validation_only` when the user says the model is already right and
+they only want it simulation-ready. Use the two narrower flags when only one
+half should be kept.
+
 ## Scale and orientation
 
 | Field | Values | Default | Sources | Notes |
@@ -130,3 +167,10 @@ names the rule.
   `image_paths`, `views`, `mesh_quality`, and `shape_model`. Source-frame fields
   then follow the file-format rules above.
 - Strict decimation requires exactly one target. Any other mode accepts none.
+- The four CAD reuse flags are rejected for `text` and `image`.
+- `keep_existing_shape` and `physics_validation_only` are rejected alongside
+  `regenerate_parts: true`, because they ask for opposite things.
+- `keep_existing_textures` and `physics_validation_only` are rejected alongside
+  `apply_textures: true`, for the same reason.
+- `body_type: soft_bodies` accepts only `newton_solver: vbd`, and
+  `body_type: rigid_bodies` rejects `vbd`.

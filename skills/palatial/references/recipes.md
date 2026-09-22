@@ -104,6 +104,49 @@ so this request intentionally omits `units`. Direct mesh formats such as OBJ,
 GLB, GLTF, STL, PLY, and FBX require both `units` and `up_direction`. USD-family
 files use authored stage metadata and reject both fields.
 
+## A CAD model that is already correct
+
+The user supplied a mesh they are happy with and only wants it simulation-ready.
+
+```json
+{
+  "source": "cad",
+  "name": "Conveyor roller",
+  "description": "A powered conveyor roller already modelled to spec. Keep the geometry and the appearance exactly as supplied; the roller spins on its axle.",
+  "engine": ["isaac_sim"],
+  "mesh_path": "./cad/roller.usdc",
+  "image_path": "./references/roller.png",
+  "create_articulation": true,
+  "physics_validation_only": true
+}
+```
+
+`physics_validation_only` skips appearance and parts regeneration and runs
+collision, physics and validation on what was supplied. Do not add
+`apply_textures` or `regenerate_parts` here: both contradict it and the request
+is rejected. USD-family files carry their own units and up axis, so neither is
+given.
+
+## A soft object
+
+Cloth, garments, cable, and rope deform instead of holding a shape.
+
+```json
+{
+  "source": "text",
+  "name": "Cotton tote bag",
+  "description": "An empty cotton tote bag, about 380 by 420 mm, two woven handles, soft unlined fabric that drapes.",
+  "engine": ["newton"],
+  "body_type": "soft_bodies",
+  "newton_solver": "vbd",
+  "enable_parts_segmentation": false
+}
+```
+
+Soft bodies simulate in Newton, so `engine` says `newton` and the solver is
+`vbd`, the only one soft bodies accept. A soft object is one piece, so parts
+segmentation is off. Leave `body_type` out entirely for ordinary solid objects.
+
 ## A hard polygon budget
 
 Only when the user gives a number. Strict mode takes exactly one target.

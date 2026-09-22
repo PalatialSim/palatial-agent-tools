@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile, stat, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { PalatialClient, validateCreate } from '../src/client.js';
+import { PalatialClient, validateCreate, createSchema } from '../src/client.js';
 import { credentialPath, getApiKey, saveApiKey, deleteApiKey } from '../src/auth.js';
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -144,6 +144,48 @@ test('source-specific fields and CAD source frames are validated before upload',
   assert.doesNotThrow(() => validateCreate({ ...cad, mesh_path: '/part.obj', units: 'mm', up_direction: 'z' }));
   assert.doesNotThrow(() => validateCreate({ ...cad, up_direction: 'z' }));
   assert.doesNotThrow(() => validateCreate({ ...cad, mesh_path: '/part.usd' }));
+});
+
+test('body type and its solver are accepted together and refused when they contradict', () => {
+  const soft = { ...basic, engine: ['newton'], body_type: 'soft_bodies', newton_solver: 'vbd' };
+  assert.doesNotThrow(() => validateCreate(soft));
+  assert.doesNotThrow(() => validateCreate({ ...basic, body_type: 'mixed_bodies' }));
+  assert.doesNotThrow(() => validateCreate({ ...basic, newton_solver: 'mujoco' }));
+  // The API swaps a solver the body type cannot use instead of reporting it, so
+  // an agent that asked for one and got another would never find out.
+  assert.throws(() => validateCreate({ ...soft, newton_solver: 'mujoco' }), /only newton_solver=vbd/);
+  assert.throws(() => validateCreate({ ...basic, body_type: 'rigid_bodies', newton_solver: 'vbd' }), /soft-body solver/);
+  assert.throws(() => validateCreate({ ...basic, body_type: 'squishy' }));
+});
+
+test('mesh and material switches reach every source', () => {
+  for (const field of ['repair_mesh', 'replace_glass', 'auto_scale']) {
+    assert.doesNotThrow(() => validateCreate({ ...basic, [field]: true }));
+    assert.doesNotThrow(() => validateCreate({ ...basic, [field]: false }));
+    assert.throws(() => validateCreate({ ...basic, [field]: 'yes' }));
+  }
+});
+
+test('CAD reuse flags are CAD-only and refuse the combinations that contradict them', () => {
+  const cad = { source: 'cad', name: 'Test part', description: 'A part', mesh_path: '/part.usd', image_path: '/ref.png' };
+  for (const field of ['regenerate_parts', 'keep_existing_textures', 'keep_existing_shape', 'physics_validation_only']) {
+    assert.doesNotThrow(() => validateCreate({ ...cad, [field]: true }));
+    assert.throws(() => validateCreate({ ...basic, [field]: true }), /only for CAD input/);
+  }
+  assert.throws(() => validateCreate({ ...cad, keep_existing_shape: true, regenerate_parts: true }), /opposite things/);
+  assert.throws(() => validateCreate({ ...cad, physics_validation_only: true, regenerate_parts: true }), /regenerate_parts=true/);
+  assert.throws(() => validateCreate({ ...cad, keep_existing_textures: true, apply_textures: true }), /apply_textures=true/);
+  assert.throws(() => validateCreate({ ...cad, physics_validation_only: true, apply_textures: true }), /apply_textures=true/);
+  // Keeping only one half is a real request and must stay available.
+  assert.doesNotThrow(() => validateCreate({ ...cad, keep_existing_textures: true, regenerate_parts: true }));
+});
+
+test('every documented create parameter is reachable through the schema', () => {
+  const documented = [
+    'body_type', 'newton_solver', 'repair_mesh', 'replace_glass', 'auto_scale',
+    'regenerate_parts', 'keep_existing_textures', 'keep_existing_shape', 'physics_validation_only'
+  ];
+  for (const field of documented) assert.ok(field in createSchema.shape, `${field} missing from createSchema`);
 });
 
 test('names, descriptions, and workspace IDs match the public API contract', async t => {
