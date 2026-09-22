@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+### Agent guidance
+
+- Packaged usage guidance under `skills/palatial/`: a workflow overview, a full
+  `palatial_create_asset` parameter reference with defaults and cross-field
+  rules, worked requests for each input type, and a troubleshooting guide.
+- `palatial_guide` MCP tool, so any client including Codex CLI can read that
+  guidance locally without an API call.
+- The same four documents are published as `palatial://guide/*` MCP resources.
+- `palatial-agent setup` installs the guidance as a Claude Code skill in
+  `~/.claude/skills/palatial`, refreshes its own copy on a later run, and
+  refuses to overwrite a skill it did not write.
+- Server instructions now point a client at the guidance before its first
+  create call.
+- Tests assert that the parameter reference documents every field and every
+  closed value the create schema accepts, so a new parameter cannot ship
+  undocumented.
+- The folded-in asset recovery notes replace the unreferenced
+  `skills/palatial-asset-recovery.md`, which no client ever loaded.
+
+### Changed
+
+- `palatial-agent setup --dry-run` now prints an object with `commands`, plus
+  `claude_code_skill` when Claude Code is in scope, instead of a bare array.
+
 ## 0.1.0 — first public release
 
 This release provides the Palatial public thin client for Codex CLI and Claude

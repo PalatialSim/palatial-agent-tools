@@ -43,7 +43,7 @@ claude
 
 Use `/mcp` to inspect the connection, then ask for the same read-only check.
 
-To configure both clients, run `palatial-agent setup --client both`. Preview the registration commands with `--dry-run`. Setup adds a server named `palatial` in the user's client configuration. Review or remove an existing server of that name first. It does not modify your project instructions or other servers. If you move this installation or change the Node.js executable, rerun setup.
+To configure both clients, run `palatial-agent setup --client both`. Preview every change with `--dry-run`. Setup adds a server named `palatial` in the user's client configuration, and for Claude Code it also installs the Palatial skill described below into `~/.claude/skills/palatial`. Review or remove an existing server or skill of that name first; setup refuses to overwrite a skill it did not write. It does not modify your project instructions or other servers. If you move this installation or change the Node.js executable, rerun setup.
 
 The client runs over **stdio**: your coding agent starts it as a local process. You do not need Docker, a local GPU, an inbound port, or your own hosted MCP server. Internet access to Palatial and its export storage is required.
 
@@ -63,6 +63,27 @@ For CAD:
 
 Specify the target simulator, dimensions or source units, and articulation requirements when known. Supported engine request values are `isaac_sim`, `mujoco`, and `newton`. Verify the output for your selected simulator; format and runtime capabilities depend on the pipeline.
 
+## How your agent learns to use this
+
+Tool names alone do not tell a coding agent that a second create is a second
+charge, or that `image_paths` works with one shape model and not the others.
+The package ships that guidance as plain Markdown you can read and edit, in
+`skills/palatial/`: a workflow overview, a full `palatial_create_asset`
+parameter reference with defaults and cross-field rules, worked requests for
+each input type, and a troubleshooting guide.
+
+It reaches your agent two ways, from the same files:
+
+- **Any client**, including Codex CLI, can call the `palatial_guide` tool. It
+  is local, read-only, free, and takes a `topic` of `overview`, `parameters`,
+  `recipes`, or `troubleshooting`. Clients that support MCP resources also see
+  the same four documents as `palatial://guide/*`.
+- **Claude Code** additionally loads the skill from disk, which setup installs,
+  so the guidance applies without a tool call.
+
+A release can change the guidance, so rerun setup after updating to refresh the
+installed skill.
+
 ## Make Palatial your project's default
 
 MCP exposes callable tools; the coding agent still decides when to use them. For more consistent routing, add this optional, non-proprietary instruction to your project's `AGENTS.md` for Codex or `CLAUDE.md` for Claude Code:
@@ -75,6 +96,7 @@ This preference is inspectable and editable. It does not guarantee that every na
 
 | Tool | Purpose | Changes or charges |
 | --- | --- | --- |
+| `palatial_guide` | Read the packaged usage and parameter guidance | Local and read-only; no API call |
 | `palatial_doctor` | Check credentials and API connectivity | Read-only; no generation or export |
 | `palatial_create_asset` | Submit text, image, multiview, or CAD generation | Creates an asset; uses workspace credits |
 | `palatial_get_asset` | Check an existing asset's processing status | Read-only |
@@ -126,6 +148,7 @@ The public client contains only input validation, authentication handling, API t
 | Symptom | Next step |
 | --- | --- |
 | Palatial tools are missing | Rerun setup and start a fresh coding-agent session; inspect the MCP connection. |
+| The agent ignores the guidance | Ask it to call `palatial_guide` directly. In Claude Code, check that `~/.claude/skills/palatial/SKILL.md` exists and rerun setup if not. |
 | Authentication fails | Run `palatial-agent login`; check for an overriding `PALATIAL_API_KEY`. |
 | HTTP 403 | Check workspace access and generation/export credits in Palatial. |
 | Generation request times out | Keep the recovery receipt and inspect the dashboard before submitting again. |
@@ -136,6 +159,7 @@ The public client contains only input validation, authentication handling, API t
 ```sh
 codex mcp remove palatial
 claude mcp remove --scope user palatial
+rm -rf ~/.claude/skills/palatial
 palatial-agent logout
 npm uninstall --global @palatial/agent-tools
 ```
