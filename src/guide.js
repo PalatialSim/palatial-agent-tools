@@ -43,7 +43,27 @@ export function claudeSkillDirectory(env = process.env) {
 
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 
-async function inspectOwnedSkill(directory, files) {
+async function listInstalledFiles(directory, relative = '') {
+  const found = [];
+  const current = relative ? path.join(directory, ...relative.split('/')) : directory;
+  for (const entry of await readdir(current, { withFileTypes: true })) {
+    const name = relative ? `${relative}/${entry.name}` : entry.name;
+    if (entry.isSymbolicLink()) throw new Error(`Managed path is a symlink: ${name}.`);
+    if (entry.isDirectory()) found.push(...await listInstalledFiles(directory, name));
+    else if (entry.isFile()) found.push(name);
+    else throw new Error(`Managed path is not a regular file: ${name}.`);
+  }
+  return found;
+}
+
+function safeManagedPath(directory, file) {
+  if (typeof file !== 'string' || path.isAbsolute(file) || file.split(/[\\/]/).includes('..')) throw new Error('Ownership marker contains an invalid managed path.');
+  const destination = path.resolve(directory, file);
+  if (!destination.startsWith(`${path.resolve(directory)}${path.sep}`)) throw new Error('Ownership marker contains an invalid managed path.');
+  return destination;
+}
+
+async function inspectOwnedSkill(directory) {
   let directoryInfo;
   try { directoryInfo = await lstat(directory); }
   catch (error) { if (error.code === 'ENOENT') return { exists: false }; throw error; }
@@ -56,27 +76,23 @@ async function inspectOwnedSkill(directory, files) {
   } catch {
     return { exists: true, owned: false, reason: 'The existing directory has no valid Palatial ownership marker.' };
   }
-  if (marker.owner !== OWNER || marker.schema_version !== 1 || typeof marker.files !== 'object') {
+  if (marker.owner !== OWNER || marker.schema_version !== 1 || !marker.files || Array.isArray(marker.files) || typeof marker.files !== 'object') {
     return { exists: true, owned: false, reason: 'The existing directory has no valid Palatial ownership marker.' };
   }
-  const expectedRoot = new Set(['SKILL.md', 'references', OWNER_FILE]);
-  const expectedReferences = new Set(files.filter(file => file.startsWith('references/')).map(file => path.basename(file)));
-  const rootEntries = await readdir(directory);
-  let referencesInfo;
-  try { referencesInfo = await lstat(path.join(directory, 'references')); }
-  catch { return { exists: true, owned: false, reason: 'Managed references directory is missing.' }; }
-  if (referencesInfo.isSymbolicLink() || !referencesInfo.isDirectory()) return { exists: true, owned: false, reason: 'Managed references path is not a regular directory.' };
-  const referenceEntries = await readdir(path.join(directory, 'references')).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error));
-  if (rootEntries.some(entry => !expectedRoot.has(entry)) || referenceEntries.some(entry => !expectedReferences.has(entry))) {
-    return { exists: true, owned: false, reason: 'The existing skill contains files this package does not own.' };
-  }
-  for (const file of files) {
-    const destination = path.join(directory, file);
+  let installedFiles;
+  try { installedFiles = await listInstalledFiles(directory); }
+  catch (error) { return { exists: true, owned: false, reason: error.message }; }
+  const previouslyManaged = new Set(Object.keys(marker.files));
+  if (installedFiles.some(file => file !== OWNER_FILE && !previouslyManaged.has(file))) return { exists: true, owned: false, reason: 'The existing skill contains files this package does not own.' };
+  for (const [file, expectedHash] of Object.entries(marker.files)) {
+    let destination;
+    try { destination = safeManagedPath(directory, file); }
+    catch (error) { return { exists: true, owned: false, reason: error.message }; }
     let info;
     try { info = await lstat(destination); }
     catch { return { exists: true, owned: false, reason: `Managed file is missing: ${file}.` }; }
     if (info.isSymbolicLink() || !info.isFile()) return { exists: true, owned: false, reason: `Managed path is not a regular file: ${file}.` };
-    if (marker.files[file] !== sha256(await readFile(destination))) return { exists: true, owned: false, reason: `Managed file was modified after installation: ${file}.` };
+    if (typeof expectedHash !== 'string' || expectedHash !== sha256(await readFile(destination))) return { exists: true, owned: false, reason: `Managed file was modified after installation: ${file}.` };
   }
   return { exists: true, owned: true };
 }
@@ -89,15 +105,10 @@ async function inspectOwnedSkill(directory, files) {
  */
 export async function installClaudeSkill({ env = process.env, dryRun = false } = {}) {
   const directory = claudeSkillDirectory(env);
-  const configRoot = env.CLAUDE_CONFIG_DIR || path.join(homedir(), '.claude');
   const files = GUIDE_TOPICS.map(entry => entry.file);
-  const inspection = await inspectOwnedSkill(directory, files);
+  const inspection = await inspectOwnedSkill(directory);
   if (inspection.exists && !inspection.owned) return { installed: false, action: 'skipped', path: directory, reason: `${inspection.reason} Remove or rename it, then rerun setup.` };
   const action = inspection.exists ? 'refreshed' : 'created';
-  try {
-    const configInfo = await lstat(configRoot);
-    if (configInfo.isSymbolicLink() || !configInfo.isDirectory()) throw new Error('Claude config path must be a regular directory, not a symlink.');
-  } catch (error) { if (error.code !== 'ENOENT') throw error; }
   if (dryRun) return { installed: false, action: `would be ${action}`, path: directory, files };
 
   const parent = path.dirname(directory);

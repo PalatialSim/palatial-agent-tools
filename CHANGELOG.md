@@ -17,7 +17,9 @@
   refuses to overwrite a skill it did not write.
 - Claude skill ownership now uses a package marker plus per-file SHA-256 hashes,
   rejects symlink and edited-file targets, stages the whole tree before an
-  atomic replacement, and makes partial setup return a nonzero status.
+  atomic replacement, permits an intentional symlinked Claude config root,
+  refreshes owned installs across package file additions/removals, and makes
+  partial setup return a nonzero status.
 - Create validation now matches source-specific API rules, including field
   applicability, workspace/name constraints, and format-specific CAD units and
   up-axis requirements.

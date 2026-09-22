@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 import { createSchema } from '../src/client.js';
 import { GUIDE_TOPICS, readGuide, claudeSkillDirectory, installClaudeSkill } from '../src/guide.js';
 
@@ -173,6 +174,48 @@ test('setup refuses modified managed files and symlink targets', async t => {
   const linked = await installClaudeSkill({ env: { CLAUDE_CONFIG_DIR: symlinkHome } });
   assert.equal(linked.installed, false);
   assert.equal(await readFile(outside, 'utf8'), 'outside\n');
+});
+
+test('setup refreshes an owned skill across package file additions and removals', async t => {
+  const home = await mkdtemp(path.join(tmpdir(), 'palatial-skill-upgrade-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const env = { CLAUDE_CONFIG_DIR: home };
+  const directory = claudeSkillDirectory(env);
+  await installClaudeSkill({ env });
+  const markerPath = path.join(directory, '.palatial-agent-tools.json');
+
+  const smaller = JSON.parse(await readFile(markerPath, 'utf8'));
+  delete smaller.files['references/recipes.md'];
+  await rm(path.join(directory, 'references', 'recipes.md'));
+  await writeFile(markerPath, JSON.stringify(smaller));
+  assert.equal((await installClaudeSkill({ env })).action, 'refreshed');
+  assert.equal(await readFile(path.join(directory, 'references', 'recipes.md'), 'utf8'), await guideFile('references/recipes.md'));
+
+  const retired = path.join(directory, 'references', 'retired.md');
+  const retiredContent = 'old package-owned file\n';
+  await writeFile(retired, retiredContent);
+  const larger = JSON.parse(await readFile(markerPath, 'utf8'));
+  larger.files['references/retired.md'] = createHash('sha256').update(retiredContent).digest('hex');
+  await writeFile(markerPath, JSON.stringify(larger));
+  assert.equal((await installClaudeSkill({ env })).action, 'refreshed');
+  await assert.rejects(stat(retired), { code: 'ENOENT' });
+});
+
+test('setup accepts a symlinked config root but still refuses unowned extra files', async t => {
+  const home = await mkdtemp(path.join(tmpdir(), 'palatial-skill-linked-root-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const actual = path.join(home, 'actual');
+  const linked = path.join(home, 'linked');
+  await mkdir(actual);
+  await symlink(actual, linked, process.platform === 'win32' ? 'junction' : 'dir');
+  const env = { CLAUDE_CONFIG_DIR: linked };
+  assert.equal((await installClaudeSkill({ env })).installed, true);
+  const directory = claudeSkillDirectory(env);
+  await writeFile(path.join(directory, 'notes.md'), 'user file\n');
+  const result = await installClaudeSkill({ env });
+  assert.equal(result.installed, false);
+  assert.match(result.reason, /does not own/);
+  assert.equal(await readFile(path.join(directory, 'notes.md'), 'utf8'), 'user file\n');
 });
 
 const cli = (...args) => spawnSync(process.execPath, [fileURLToPath(new URL('../bin/palatial-agent.js', import.meta.url)), ...args], { encoding: 'utf8', env: { PATH: process.env.PATH } });
