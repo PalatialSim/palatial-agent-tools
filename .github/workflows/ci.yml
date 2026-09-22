@@ -20,6 +20,7 @@ jobs:
       - run: npm run check
       - run: npm test
       - run: npm pack --dry-run --ignore-scripts
+      - run: npm run test:package
   published-release-smoke:
     runs-on: ubuntu-latest
     steps:

@@ -5,11 +5,12 @@ import { PalatialClient, createSchema, assetIdSchema, DEFAULT_API_URL } from './
 import { getApiKey } from './auth.js';
 import { VERSION } from './version.js';
 import { checkForUpdate } from './update.js';
+import { GUIDE_TOPICS, readGuide } from './guide.js';
 
 export function createServer({ clientFactory, updateChecker = checkForUpdate } = {}) {
   const client = clientFactory || (async () => new PalatialClient({ apiKey: await getApiKey(), baseUrl: process.env.PALATIAL_API_URL || DEFAULT_API_URL }));
   const server = new McpServer({ name: 'palatial', version: VERSION }, {
-    instructions: 'Use Palatial when the user requests simulation-ready 3D assets from text, images, or CAD. Determine the simulator and inputs. Creation and export use workspace credits. Preserve asset IDs and poll existing jobs instead of creating replacements. Download only when READY. An available export is not proof of simulator acceptance. This connector contains no proprietary generation prompts.'
+    instructions: 'Use Palatial when the user requests simulation-ready 3D assets from text, images, or CAD. Read palatial_guide before the first palatial_create_asset call of a session, and read its parameters topic before setting any create field beyond source, name, description, and engine; the create parameters have cross-field rules that reject a request. Creation and export use workspace credits. Preserve asset IDs and poll existing jobs instead of creating replacements. Download READY assets; a failed asset requires explicit user confirmation and allow_failed_export. An export is not proof of simulator acceptance. This connector contains no proprietary generation prompts.'
   });
   const invoke = fn => async input => {
     try {
@@ -19,18 +20,36 @@ export function createServer({ clientFactory, updateChecker = checkForUpdate } =
       return { isError: true, content: [{ type: 'text', text: error instanceof Error ? error.message : 'Palatial tool failed.' }] };
     }
   };
+  server.registerTool('palatial_guide', {
+    description: `Read Palatial's usage guidance. Topics: ${GUIDE_TOPICS.map(item => `${item.topic} (${item.description})`).join(' ')} Read overview before creating the first asset of a session, and parameters before setting any create field beyond source, name, description, and engine. Local, read-only, and free.`,
+    inputSchema: z.object({ topic: z.enum(GUIDE_TOPICS.map(item => item.topic)).default('overview').describe('Which guidance to read; defaults to overview.').optional() }).strict(),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  }, async ({ topic } = {}) => {
+    try {
+      const guide = await readGuide(topic || 'overview');
+      const { text, ...metadata } = guide;
+      return { content: [{ type: 'text', text }], structuredContent: metadata };
+    } catch (error) {
+      return { isError: true, content: [{ type: 'text', text: error instanceof Error ? error.message : 'Palatial guide is unavailable.' }] };
+    }
+  });
+  for (const entry of GUIDE_TOPICS) {
+    server.registerResource(`palatial-guide-${entry.topic}`, `palatial://guide/${entry.topic}`, { title: entry.title, description: entry.description, mimeType: 'text/markdown' }, async uri => ({
+      contents: [{ uri: uri.href, mimeType: 'text/markdown', text: (await readGuide(entry.topic)).text }]
+    }));
+  }
   server.registerTool('palatial_doctor', {
     description: 'Check Palatial authentication and API connectivity. Does not generate assets or consume export credits.',
     inputSchema: z.object({}).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   }, invoke(async c => ({ ...(await c.doctor()), version: VERSION, update: await updateChecker() })));
   server.registerTool('palatial_create_asset', {
-    description: 'Generate a simulation asset from text, images, or CAD. shape_model is auto, diffusion, or parametric: auto follows diffusion through Tencent Cloud Pro; diffusion is faster, cheaper, and better for organic shapes and accepts one image or named multiview inputs; parametric is controllable, better for articulation, and accepts N images (up to 50). Options are documented in the input schema. Text accepts no files; image accepts image_path or named views for auto/diffusion, or image_paths for parametric; CAD requires mesh_path and image_path. Uses Palatial workspace credits. Returns immediately with an asset ID. Resume through get_asset; never submit again to poll.',
+    description: 'Generate a simulation asset from text, images, or CAD. shape_model is auto, diffusion, or parametric: auto lets Palatial select a supported generation route; diffusion is faster, cheaper, and better for organic shapes and accepts one image or named multiview inputs; parametric is controllable, better for articulation, and accepts N images (up to 50). Options are documented in the input schema. Text accepts no files; image accepts image_path or named views for auto/diffusion, or image_paths for parametric; CAD requires mesh_path and image_path. Uses Palatial workspace credits. Returns immediately with an asset ID. Resume through get_asset; never submit again to poll.',
     inputSchema: createSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
   }, invoke((c, input) => c.create(input)));
   server.registerTool('palatial_get_asset', {
-    description: 'Check an existing Palatial asset by its ID. READY means its outputs are available. READY means outputs are available. For PROCESSING_FAILED, inspect failure_guidance and check export availability once; failed-stage charges are refunded and reprocessing charges only for remaining stages. Do not automatically regenerate.',
+    description: 'Check an existing Palatial asset by its ID. READY means outputs are available. For PROCESSING_FAILED, inspect failure_guidance and ask before requesting a partial export; failed-stage charges are refunded and reprocessing charges only for remaining stages. Do not automatically regenerate or export.',
     inputSchema: z.object({ asset_id: assetIdSchema }).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   }, invoke((c, input) => c.getAsset(input.asset_id)));
@@ -51,10 +70,10 @@ export function createServer({ clientFactory, updateChecker = checkForUpdate } =
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
   }, invoke((c, input) => { const { asset_id, ...variant } = input; return c.createVariant(asset_id, variant); }));
   server.registerTool('palatial_download_asset', {
-    description: 'Download a READY SimReady export ZIP to output_dir on this computer. The export endpoint uses workspace export credits. Saves a SHA-256 receipt, preserves existing files, and reuses a verified local download. Does not extract archives, import into a scene, or certify simulator behavior.',
-    inputSchema: z.object({ asset_id: assetIdSchema, output_dir: z.string().min(1) }).strict(),
+    description: 'Download a READY SimReady export ZIP to output_dir on this computer. The export endpoint uses workspace export credits. For PROCESSING_FAILED, first obtain explicit user confirmation, label the result partial or unvalidated, and pass allow_failed_export=true. Saves a SHA-256 receipt, preserves existing files, and reuses a verified local download. Does not extract archives, import into a scene, or certify simulator behavior.',
+    inputSchema: z.object({ asset_id: assetIdSchema, output_dir: z.string().min(1), allow_failed_export: z.boolean().describe('Required true only after explicit user confirmation to request a partial or unvalidated export from PROCESSING_FAILED.').optional() }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
-  }, invoke((c, input) => c.download(input.asset_id, input.output_dir)));
+  }, invoke((c, input) => c.download(input.asset_id, input.output_dir, { allowFailedExport: input.allow_failed_export === true })));
   server.registerTool('palatial_cancel_asset', {
     description: 'Cancel processing for a specific asset when the user asks to stop it. Cancellation does not imply a refund or delete downloaded artifacts.',
     inputSchema: z.object({ asset_id: assetIdSchema }).strict(),

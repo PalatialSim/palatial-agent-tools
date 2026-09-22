@@ -13,7 +13,7 @@ You need Node.js 22 or newer, a Palatial workspace API key, and Codex CLI or Cla
 Install the versioned package from the official GitHub Release:
 
 ```sh
-npm install --global https://github.com/PalatialSim/palatial-agent-tools/releases/download/v0.1.0/palatial-agent-tools-0.1.0.tgz
+npm install --global https://github.com/PalatialSim/palatial-agent-tools/releases/download/v0.1.1/palatial-agent-tools-0.1.1.tgz
 palatial-agent --version
 palatial-agent login
 palatial-agent doctor
@@ -43,7 +43,7 @@ claude
 
 Use `/mcp` to inspect the connection, then ask for the same read-only check.
 
-To configure both clients, run `palatial-agent setup --client both`. Preview the registration commands with `--dry-run`. Setup adds a server named `palatial` in the user's client configuration. Review or remove an existing server of that name first. It does not modify your project instructions or other servers. If you move this installation or change the Node.js executable, rerun setup.
+To configure both clients, run `palatial-agent setup --client both`. Preview every change with `--dry-run`. Setup adds a server named `palatial` in the user's client configuration, and for Claude Code it also installs the Palatial skill described below into `~/.claude/skills/palatial`. The installed copy carries an ownership manifest and file hashes; setup refuses to overwrite an unowned, edited, extra-file, or symlinked skill directory. A partial setup exits nonzero even when MCP registration succeeded. It does not modify your project instructions or other servers. If you move this installation or change the Node.js executable, rerun setup.
 
 The client runs over **stdio**: your coding agent starts it as a local process. You do not need Docker, a local GPU, an inbound port, or your own hosted MCP server. Internet access to Palatial and its export storage is required.
 
@@ -59,9 +59,38 @@ For an image:
 
 For CAD:
 
-> Convert ./cad/gripper.step using ./references/gripper.png with Palatial. The CAD source units are millimetres and its up axis is Z. Target Isaac Sim and keep the export in ./assets/gripper.
+> Convert ./cad/gripper.step using ./references/gripper.png with Palatial. Its up axis is Z. Target Isaac Sim and keep the export in ./assets/gripper.
 
-Specify the target simulator, dimensions or source units, and articulation requirements when known. Supported engine request values are `isaac_sim`, `mujoco`, and `newton`. Verify the output for your selected simulator; format and runtime capabilities depend on the pipeline.
+Specify the target simulator, dimensions, and articulation requirements when known. Direct mesh CAD inputs require their source units and up axis; STEP/IGES require only the up axis, and USD-family files use authored stage metadata. Supported engine request values are `isaac_sim`, `mujoco`, and `newton`. Verify the output for your selected simulator; format and runtime capabilities depend on the pipeline.
+
+## How your agent learns to use this
+
+Tool names alone do not tell a coding agent that a second create is a second
+charge, or that `image_paths` works with one shape model and not the others.
+The package ships that guidance as plain Markdown you can read and edit, in
+`skills/palatial/`: a workflow overview, a full `palatial_create_asset`
+parameter reference with defaults and cross-field rules, worked requests for
+each input type, and a troubleshooting guide.
+
+It reaches your agent two ways, from the same files:
+
+- **Any client**, including Codex CLI, can call the `palatial_guide` tool. It
+  is local, read-only, free, and takes a `topic` of `overview`, `parameters`,
+  `recipes`, or `troubleshooting`. Clients that support MCP resources also see
+  the same four documents as `palatial://guide/*`.
+- **Claude Code** additionally loads the skill from disk, which setup installs,
+  so the guidance applies without a tool call. Nothing starts it: Claude Code
+  matches the task against the skill's description and loads it on its own.
+
+To read the same guidance yourself, without a key or a network call:
+
+```sh
+palatial-agent guide
+palatial-agent guide --topic parameters
+```
+
+A release can change the guidance, so rerun setup after updating to refresh the
+installed skill.
 
 ## Make Palatial your project's default
 
@@ -75,6 +104,7 @@ This preference is inspectable and editable. It does not guarantee that every na
 
 | Tool | Purpose | Changes or charges |
 | --- | --- | --- |
+| `palatial_guide` | Read the packaged usage and parameter guidance | Local and read-only; no API call |
 | `palatial_doctor` | Check credentials and API connectivity | Read-only; no generation or export |
 | `palatial_create_asset` | Submit text, image, multiview, or CAD generation | Creates an asset; uses workspace credits |
 | `palatial_get_asset` | Check an existing asset's processing status | Read-only |
@@ -84,7 +114,7 @@ This preference is inspectable and editable. It does not guarantee that every na
 | `palatial_get_pipeline_progress` | Retrieve stage-level progress for an asset | Read-only |
 | `palatial_create_variant` | Create an independent variant from a READY asset using feedback | Creates an asset; uses workspace credits |
 | `palatial_reprocess_asset` | Reprocess from a pipeline stage in place or as a variant | Changes processing; uses workspace credits |
-| `palatial_download_asset` | Save a READY export ZIP and SHA-256 receipt | Writes local files; export may consume a credit |
+| `palatial_download_asset` | Save a READY export ZIP and SHA-256 receipt | Writes local files; export may consume a credit. A failed asset requires user confirmation plus `allow_failed_export: true` |
 | `palatial_cancel_asset` | Cancel a specific asset's processing | Stops a job; does not imply a refund |
 
 The client accepts PNG/JPEG references and PDF datasheets. CAD requests require both a mesh file and reference image. Each local input is limited to 256 MiB; downloads are limited to 2 GiB in this preview. ZIP files are saved without automatic extraction or simulator import.
@@ -104,6 +134,7 @@ Save `asset.json`:
 ```
 
 ```sh
+palatial-agent guide --topic recipes
 palatial-agent create --request asset.json
 palatial-agent status --asset-id YOUR_ASSET_ID
 palatial-agent download --asset-id YOUR_ASSET_ID --output-dir ./assets
@@ -111,7 +142,7 @@ palatial-agent download --asset-id YOUR_ASSET_ID --output-dir ./assets
 
 Creation returns immediately with an asset ID. Status polling does not create another asset. A local submission receipt is saved under `~/.local/state/palatial-agent` (or `PALATIAL_STATE_DIR`) so accepted IDs can be recovered after a terminal session ends. An uncertain submission receipt means you should inspect the dashboard before submitting again; the receipt is not server-side idempotency.
 
-Exports include an absolute local path, SHA-256, byte count, and asset ID. A completed download with a matching receipt is reused locally without calling the export endpoint again. Existing files are preserved. If a download fails after export authorization, a credit may already have been consumed; the client does not automatically retry that export.
+Exports include an absolute local path, SHA-256, byte count, and asset ID. A completed download with a matching receipt is reused locally without calling the export endpoint again. Existing files are preserved. Failed assets are not exported automatically: the user must confirm the possible partial or unvalidated result before `allow_failed_export` is set. If a download fails after export authorization, a credit may already have been consumed; the client does not automatically retry that export.
 
 ## Authentication and data
 
@@ -126,6 +157,7 @@ The public client contains only input validation, authentication handling, API t
 | Symptom | Next step |
 | --- | --- |
 | Palatial tools are missing | Rerun setup and start a fresh coding-agent session; inspect the MCP connection. |
+| The agent ignores the guidance | Ask it to call `palatial_guide` directly. In Claude Code, check that `~/.claude/skills/palatial/SKILL.md` exists and rerun setup if not. |
 | Authentication fails | Run `palatial-agent login`; check for an overriding `PALATIAL_API_KEY`. |
 | HTTP 403 | Check workspace access and generation/export credits in Palatial. |
 | Generation request times out | Keep the recovery receipt and inspect the dashboard before submitting again. |
@@ -136,6 +168,7 @@ The public client contains only input validation, authentication handling, API t
 ```sh
 codex mcp remove palatial
 claude mcp remove --scope user palatial
+rm -rf ~/.claude/skills/palatial
 palatial-agent logout
 npm uninstall --global @palatial/agent-tools
 ```

@@ -1,5 +1,22 @@
 # Test in a fresh isolated environment
 
+## 0. Current checkout and package smoke
+
+```sh
+npm ci --ignore-scripts
+npm run check
+npm test
+npm run test:package
+npm pack --dry-run --ignore-scripts
+```
+
+`test:package` packs the current checkout, installs that tarball into a clean
+temporary prefix, and drives the installed CLI, MCP tool list, guide tool, and
+guide resource. The unit suite also proves that failed assets make no export
+request before explicit confirmation and that Claude skill setup protects
+unowned, edited, extra-file, and symlink targets while reporting partial setup
+with a nonzero exit status.
+
 ## 1. Offline runtime test of the published release
 
 From a checkout of this repository, with Docker running:
@@ -35,9 +52,26 @@ palatial-agent setup --client both --dry-run
 palatial-agent setup --client both
 ```
 
-Start a fresh session in each installed client. Ask it to list the eleven Palatial tools. With no key, `palatial_doctor` must report missing credentials and make no generation request. This verifies discovery without a paid Palatial job; running the coding agent itself may use your agent subscription/API allowance.
+Start a fresh session in each installed client. Ask it to list the twelve Palatial tools. With no key, `palatial_doctor` must report missing credentials and make no generation request. Call `palatial_guide` with no arguments and with `topic: "parameters"`; both must return guidance without an API call. In Claude Code, confirm that setup wrote `~/.claude/skills/palatial/SKILL.md`. This verifies discovery without a paid Palatial job; running the coding agent itself may use your agent subscription/API allowance.
 
 The release smoke separately verified real Claude Code registration/connection and Codex configuration parsing. It did not run a model-driven generation conversation in either terminal.
+
+### Installing a branch under test
+
+To try a pull request before it is released, install the branch tarball:
+
+```sh
+npm install --global "https://codeload.github.com/PalatialSim/palatial-agent-tools/tar.gz/refs/heads/BRANCH"
+```
+
+Do not use `npm install --global "OWNER/REPO#BRANCH"` for this. A global
+install of that spec can leave the package as a symlink into npm's cache
+clone directory, which npm later prunes; the command then disappears with a
+`command not found` that looks like a PATH problem and is not one. A local,
+non-global install of the same spec behaves correctly, so verify a global
+install globally. Confirm with `npm ls --global --depth=0`, which must print
+a real version rather than a path, and remove any stale
+`palatial-agent` link before reinstalling.
 
 ## 3. Live Palatial canary
 
