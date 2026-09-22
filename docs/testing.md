@@ -22,8 +22,8 @@ with a nonzero exit status.
 From a checkout of this repository, with Docker running:
 
 ```sh
-docker build --file test/isolated-release.Dockerfile --tag palatial-agent-isolation:0.1.0 .
-docker run --rm --network none --read-only --tmpfs /tmp:rw,size=128m palatial-agent-isolation:0.1.0
+docker build --file test/isolated-release.Dockerfile --tag palatial-agent-isolation:0.1.1 .
+docker run --rm --network none --read-only --tmpfs /tmp:rw,size=128m palatial-agent-isolation:0.1.1
 ```
 
 The build downloads the **published release tarball**, verifies its fixed SHA-256, and installs it into a new Node.js 22 Linux image. It does not copy the application's source, host credentials, client configuration, or `node_modules` into the image.
@@ -42,6 +42,12 @@ The test exercises the installed CLI and actual stdio MCP protocol:
 - Ambiguous create failure without an automatic retry, and cancellation.
 
 Success ends with JSON containing `"overall": "passed"`, `"real_palatial_api_calls": 0`, and `"paid_generations": 0`. The container is removed automatically. The image remains available for another run.
+
+If Docker is unavailable, the same fixture runner can exercise an already
+checksum-verified release installation on the host by setting
+`PALATIAL_AGENT_BIN` to that installed release's `bin/palatial-agent.js`. Record
+that the host network was available; this is a fallback, not evidence of the
+Docker network boundary.
 
 ## 2. Real terminal compatibility
 

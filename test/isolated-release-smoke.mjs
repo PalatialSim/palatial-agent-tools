@@ -9,11 +9,18 @@ import { spawnSync } from 'node:child_process';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
-const bin = '/app/node_modules/@palatial/agent-tools/bin/palatial-agent.js';
+const bin = process.env.PALATIAL_AGENT_BIN || '/app/node_modules/@palatial/agent-tools/bin/palatial-agent.js';
 const fixtureKey = 'isolated-fixture-only-not-a-real-key';
 const scratch = await mkdtemp(path.join(tmpdir(), 'palatial-isolated-'));
 const zip = Buffer.from('504b0506000000000000000000000000000000000000', 'hex');
-const evidence = { environment: 'fresh Node.js 22 Docker container', application_source: 'public v0.1.0 release tarball; SHA-256 verified in image build', runtime_network: 'none; loopback HTTPS fixtures only', real_palatial_api_calls: 0, paid_generations: 0, results: {} };
+const evidence = {
+  environment: process.env.PALATIAL_TEST_ENVIRONMENT || 'fresh Node.js 22 Docker container',
+  application_source: 'public v0.1.1 release tarball; SHA-256 verified before execution',
+  runtime_network: process.env.PALATIAL_TEST_NETWORK || 'none; loopback HTTPS fixtures only',
+  real_palatial_api_calls: 0,
+  paid_generations: 0,
+  results: {}
+};
 let apiServer, storageServer, client;
 let apiCalls = 0, exportCalls = 0, failedCreates = 0;
 const submitted = [], jobs = new Map();
@@ -25,14 +32,18 @@ const connect = async env => {
 };
 try {
   const version = spawnSync(process.execPath, [bin, '--version'], { encoding: 'utf8' });
-  assert.equal(version.status, 0); assert.equal(version.stdout.trim(), '0.1.0');
+  assert.equal(version.status, 0); assert.equal(version.stdout.trim(), '0.1.1');
   client = await connect({});
-  assert.equal((await client.listTools()).tools.length, Number(process.env.EXPECTED_TOOL_COUNT || 11));
+  assert.equal((await client.listTools()).tools.length, Number(process.env.EXPECTED_TOOL_COUNT || 12));
+  const guide = await client.callTool({ name: 'palatial_guide', arguments: { topic: 'parameters' } });
+  assert.notEqual(guide.isError, true);
+  assert.match(guide.content[0].text, /STEP, STP, IGES, and IGS require `up_direction`/);
+  assert.equal((await client.listResources()).resources.length, 4);
   const unauth = await client.callTool({ name: 'palatial_doctor', arguments: {} });
   assert.equal(unauth.isError, true);
   assert.match(unauth.content[0].text, /not authenticated/);
   await client.close(); client = undefined;
-  evidence.results.clean_install_and_unauthenticated_discovery = 'passed';
+  evidence.results.clean_install_guidance_and_unauthenticated_discovery = 'passed';
 
   const cert = path.join(scratch, 'localhost.crt'), key = path.join(scratch, 'localhost.key');
   const openssl = spawnSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-keyout', key, '-out', cert, '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1'], { encoding: 'utf8' });
@@ -91,7 +102,7 @@ try {
     { source: 'text', name: 'Text fixture', description: 'Rigid bin' },
     { source: 'image', name: 'Image fixture', description: 'Rigid bin', image_path: image },
     { source: 'image', name: 'Views fixture', description: 'Rigid bin', views: { front: image, back: image }, engine: ['isaac_sim', 'mujoco'] },
-    { source: 'cad', name: 'CAD fixture', description: 'Rigid bin', image_path: image, mesh_path: mesh, units: 'mm' }
+    { source: 'cad', name: 'CAD fixture', description: 'Rigid bin', image_path: image, mesh_path: mesh, up_direction: 'z' }
   ];
   for (const input of inputs) {
     const created = await call('palatial_create_asset', input);
