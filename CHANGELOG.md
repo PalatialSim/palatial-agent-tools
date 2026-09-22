@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.2 — create parameter parity
 
 ### Create parameter parity
 
