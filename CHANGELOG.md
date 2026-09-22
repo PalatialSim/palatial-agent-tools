@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+### Create parameter parity
+
+- `palatial_create_asset` accepts `body_type`, so a request can ask for a soft
+  object (cloth, garments, cable, rope) rather than only a rigid one, with
+  `newton_solver` beside it. The API silently swaps a solver the body type
+  cannot use, so a contradictory pair is refused here and the error names the
+  value that body type accepts.
+- `repair_mesh`, `replace_glass`, and `auto_scale` are accepted on every source.
+- CAD requests accept `regenerate_parts`, `keep_existing_textures`,
+  `keep_existing_shape`, and `physics_validation_only`, so a mesh that is
+  already correct can go through collision, physics and validation without
+  having its appearance or parts rebuilt. The combinations that contradict each
+  other are refused before anything is spent.
+- The parameter reference documents all nine, the worked requests gain a soft
+  object and a keep-what-was-supplied CAD example, and the existing test that
+  pins the reference against the schema now covers them.
+- Keeping a CAD appearance is refused up front on the formats that cannot carry
+  one. A direct mesh is a single uploaded file, so it cannot prove the material
+  and texture sidecars an authored appearance lives in, and the API refuses the
+  request. `keep_existing_textures`, `physics_validation_only`, and
+  `apply_textures: false` are now rejected for OBJ, GLB, GLTF, STL, PLY, and FBX
+  with a message naming the formats that do work, rather than reaching the API
+  as an error code with no field attached.
+
+Deliberately still not accepted: `quad_topo`, which the API rejects at any value
+but its default; `reconstruct`, which the file inputs already decide;
+`meters_per_unit` and `source_up_axis`, which are the canonical forms of the
+`units` and `up_direction` fields already accepted.
+
 ## 0.1.1 — agent usage guidance
 
 ### Agent guidance

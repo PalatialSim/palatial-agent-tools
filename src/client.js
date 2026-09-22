@@ -23,6 +23,11 @@ export const createSchema = z.object({
   create_articulation: z.boolean().describe('All sources: create joints for moving parts such as doors or wheels.').optional(),
   enable_parts_segmentation: z.boolean().describe('All sources: split into rigid parts; false for one rigid mesh, true for separate parts.').optional(),
   run_simulation: z.boolean().describe('All sources: request physics validation.').optional(),
+  body_type: z.enum(['rigid_bodies', 'soft_bodies', 'mixed_bodies']).describe('All sources: what the object is made to behave like. rigid_bodies is a solid object, soft_bodies deforms (cloth, garments, cable), mixed_bodies has both. Soft bodies simulate in Newton, so include newton in engine.').optional(),
+  newton_solver: z.enum(['mujoco', 'style3D', 'vbd']).describe('All sources: Newton solver. Soft bodies accept only vbd; rigid bodies accept mujoco or style3D. Read only when engine includes newton.').optional(),
+  repair_mesh: z.boolean().describe('All sources: close holes and fix bad geometry after generation.').optional(),
+  replace_glass: z.boolean().describe('All sources: rebuild transparent or translucent parts as real glass. Set it for clear plastic, acrylic, resin, crystal, and lenses, not only for glass.').optional(),
+  auto_scale: z.boolean().describe('All sources: scale the finished asset to the real-world size stated in the description.').optional(),
   mesh_quality: z.enum(['low', 'medium', 'high']).describe('Image and text only: mesh quality preset; not used for CAD.').optional(),
   collision_quality: z.enum(['low', 'medium', 'high', 'x_high', 'sdf']).describe('Image, text, and CAD: collision quality; sdf means signed-distance-field collision.').optional(),
   shape_model: z.enum(['auto', 'diffusion', 'parametric']).describe('Image and text only: auto lets Palatial select a supported generation route; diffusion is faster, cheaper, and better for organic shapes and accepts one image or named multiview inputs; parametric is controllable, better for articulation, and accepts N images (up to 50).').optional(),
@@ -33,6 +38,10 @@ export const createSchema = z.object({
   triangle_count: z.enum(['minimal', 'low', 'medium', 'high', 'x_high', 'auto']).describe('Image, text, and CAD: legacy triangle preset; fixed values become strict targets when decimation is enabled.').optional(),
   mesh_density: z.enum(['low', 'medium', 'high']).describe('Image, text, and CAD: density used when triangle_count is auto.').optional(),
   apply_textures: z.boolean().describe('CAD only: generate textures from the reference image.').optional(),
+  regenerate_parts: z.boolean().describe('CAD only: split the supplied mesh into parts again instead of keeping the parts it already has.').optional(),
+  keep_existing_textures: z.boolean().describe('CAD only: keep the textures the mesh already has. Incompatible with apply_textures=true.').optional(),
+  keep_existing_shape: z.boolean().describe('CAD only: keep the shape and parts the mesh already has. Incompatible with regenerate_parts=true.').optional(),
+  physics_validation_only: z.boolean().describe('CAD only: keep both the existing shape and the existing textures and run only collision, physics and validation. Incompatible with regenerate_parts=true and with apply_textures=true.').optional(),
   units: z.enum(['m', 'cm', 'mm', 'inch', 'feet']).describe('Text and direct-mesh CAD: source units; convert them once rather than guessing scale.').optional(),
   up_direction: z.enum(['x', 'y', 'z']).describe('Text and non-USD CAD: source up axis.').optional(),
   texture_size: z.union([z.literal(2048), z.literal(4096), z.literal(8192)]).describe('Image, text, and CAD: texture size; 2048, 4096, or 8192.').optional(),
@@ -50,6 +59,24 @@ export function validateCreate(input) {
   const views = Object.entries(p.views || {}).filter(([, file]) => file);
   if (p.source === 'text' && (p.image_path || p.image_paths || views.length || p.mesh_path || p.datasheet_path)) throw new Error('Text generation does not accept input files.');
   if (p.source !== 'cad' && p.apply_textures !== undefined) throw new Error('apply_textures is accepted only for CAD input.');
+  // The reuse flags decide what NOT to rebuild from a mesh the user supplied,
+  // so they mean nothing where there is no supplied mesh.
+  const cadOnlyReuse = ['regenerate_parts', 'keep_existing_textures', 'keep_existing_shape', 'physics_validation_only'];
+  if (p.source !== 'cad') {
+    const offered = cadOnlyReuse.filter((field) => p[field] !== undefined);
+    if (offered.length) throw new Error(`${offered.join(' and ')} ${offered.length > 1 ? 'are' : 'is'} accepted only for CAD input.`);
+  }
+  // Keeping the existing shape and rebuilding its parts are opposite requests.
+  if (p.regenerate_parts === true && p.keep_existing_shape === true) throw new Error('keep_existing_shape and regenerate_parts=true ask for opposite things. Choose one.');
+  if (p.regenerate_parts === true && p.physics_validation_only === true) throw new Error('physics_validation_only keeps the existing shape, so it cannot be combined with regenerate_parts=true.');
+  // Both of these turn texture generation off, so asking for textures too is contradictory.
+  if (p.apply_textures === true && p.keep_existing_textures === true) throw new Error('keep_existing_textures turns texture generation off, so it cannot be combined with apply_textures=true.');
+  if (p.apply_textures === true && p.physics_validation_only === true) throw new Error('physics_validation_only keeps the existing textures, so it cannot be combined with apply_textures=true.');
+  // The API silently coerces a solver the body type cannot use. An agent that
+  // asked for one and quietly got another has no way to notice, so refuse the
+  // pair instead and name the value that body type accepts.
+  if (p.body_type === 'soft_bodies' && p.newton_solver && p.newton_solver !== 'vbd') throw new Error('Soft bodies accept only newton_solver=vbd.');
+  if (p.body_type === 'rigid_bodies' && p.newton_solver === 'vbd') throw new Error('vbd is the soft-body solver. Rigid bodies accept newton_solver=mujoco or style3D.');
   const imageInputs = Number(Boolean(p.image_path)) + Number(Boolean(p.image_paths)) + Number(views.length > 0);
   if (p.source === 'image' && imageInputs !== 1) throw new Error('Image generation requires image_path, image_paths, or named views.');
   if (p.source === 'image' && views.length && views.length < 2) throw new Error('Multiview requires at least two views of the same object.');
@@ -61,6 +88,17 @@ export function validateCreate(input) {
   if (p.source === 'image' && (p.units || p.up_direction)) throw new Error('units and up_direction are not accepted for image input; include requested dimensions and orientation in the description.');
   if (p.source === 'cad') {
     const extension = path.extname(p.mesh_path).toLowerCase();
+    // Verified against the live API: a direct mesh is one uploaded file, so it
+    // cannot prove the material and texture sidecars an authored appearance
+    // needs, and the API refuses the request rather than quietly generating
+    // over it. Anything that turns texture generation off trips it, so name the
+    // formats that can keep an appearance instead of letting the caller meet
+    // CAD_AUTHORED_APPEARANCE_UNAVAILABLE with no idea which field caused it.
+    if (DIRECT_MESH_EXTENSIONS.has(extension)) {
+      const keeping = ['apply_textures', 'keep_existing_textures', 'physics_validation_only']
+        .filter((field) => (field === 'apply_textures' ? p[field] === false : p[field] === true));
+      if (keeping.length) throw new Error(`${keeping.join(' and ')} keeps the appearance the file was uploaded with, and a direct mesh upload cannot carry one. Let textures be generated, or supply the model as USD, STEP, or IGES.`);
+    }
     if (DIRECT_MESH_EXTENSIONS.has(extension)) {
       if (!p.units || !p.up_direction) throw new Error('OBJ, GLB, GLTF, STL, PLY, and FBX inputs require both units and up_direction.');
     } else if (AXIS_ONLY_CAD_EXTENSIONS.has(extension)) {
