@@ -105,14 +105,26 @@ test('packaged CLI speaks stdio MCP and lists tools without authentication', asy
   assert.match(result.content[0].text, /not authenticated/);
 });
 
+test('a Codex-only setup writes no Claude Code skill', () => {
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL('../bin/palatial-agent.js', import.meta.url)), 'setup', '--client', 'codex', '--dry-run'], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  const plan = JSON.parse(result.stdout);
+  assert.equal(plan.commands.length, 1);
+  assert.equal(plan.claude_code_skill, undefined);
+});
+
 test('setup produces shell-free commands for both actual terminal clients', () => {
   const result = spawnSync(process.execPath, [fileURLToPath(new URL('../bin/palatial-agent.js', import.meta.url)), 'setup', '--client', 'both', '--dry-run'], { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
-  const commands = JSON.parse(result.stdout);
+  const { commands, claude_code_skill } = JSON.parse(result.stdout);
   assert.equal(commands[0].command, 'codex');
   assert.deepEqual(commands[0].args.slice(0, 4), ['mcp', 'add', 'palatial', '--']);
   assert.equal(commands[1].command, 'claude');
   assert.ok(commands[1].args.includes('stdio'));
   assert.equal(commands[1].args.at(-1), 'mcp');
   assert.ok(!result.stdout.includes('PALATIAL_API_KEY'));
+  // A dry run reports the skill it would write and writes nothing.
+  assert.equal(claude_code_skill.installed, false);
+  assert.ok(claude_code_skill.path.endsWith(path.join('skills', 'palatial')));
+  assert.ok(claude_code_skill.files.includes('SKILL.md'));
 });

@@ -9,6 +9,7 @@ import { getApiKey, saveApiKey, deleteApiKey } from '../src/auth.js';
 import { serveStdio } from '../src/mcp.js';
 import { VERSION } from '../src/version.js';
 import { checkForUpdate, applyUpdate } from '../src/update.js';
+import { installClaudeSkill } from '../src/guide.js';
 
 const HELP = `Palatial Agent Tools ${VERSION} (Node.js 22+)
 
@@ -20,7 +21,7 @@ palatial-agent update --apply             Install the latest release globally
 palatial-agent setup --client codex       Register the MCP server in Codex CLI
 palatial-agent setup --client claude-code Register the MCP server in Claude Code
 palatial-agent setup --client both        Register it in both terminals
-palatial-agent setup --client both --dry-run  Show commands without changing settings
+palatial-agent setup --client both --dry-run  Show planned changes without applying them
 palatial-agent mcp                        Run the stdio MCP server
 palatial-agent create --request asset.json   Submit a generation request (uses credits)
 palatial-agent status --asset-id ID       Check an existing asset
@@ -31,6 +32,8 @@ All command results are JSON. API keys are read from PALATIAL_API_KEY or the
 local credentials file; never include keys in chat, command arguments, or git.
 Creation returns an asset ID. Retain that ID and poll status; do not resubmit.
 The package contains API transport only. Generation runs on Palatial servers.
+Setup also installs the Palatial usage skill for Claude Code. Every client can
+read the same guidance through the palatial_guide tool.
 `;
 
 function readSecret() {
@@ -79,13 +82,17 @@ async function main() {
     const commands = [];
     if (values.client !== 'claude-code') commands.push({ client: 'codex', command: 'codex', args: ['mcp', 'add', 'palatial', '--', process.execPath, executable, 'mcp'] });
     if (values.client !== 'codex') commands.push({ client: 'claude-code', command: 'claude', args: ['mcp', 'add', '--scope', 'user', '--transport', 'stdio', 'palatial', '--', process.execPath, executable, 'mcp'] });
-    if (values['dry-run']) return commands;
+    // Codex reads guidance through the palatial_guide tool; Claude Code also
+    // loads skills from disk, so it gets the packaged copy installed for it.
+    const wantsSkill = values.client !== 'codex';
+    if (values['dry-run']) return { commands, ...(wantsSkill ? { claude_code_skill: await installClaudeSkill({ dryRun: true }) } : {}) };
     const results = commands.map(item => {
       const result = spawnSync(item.command, item.args, { encoding: 'utf8', shell: false, timeout: 30000 });
       return { client: item.client, registered: result.status === 0, message: result.error?.message || result.stderr?.trim() || result.stdout?.trim() };
     });
     if (results.some(item => !item.registered)) process.exitCode = 1;
-    return { results, next: 'Start a fresh coding-agent session, list Palatial tools, then run palatial_doctor. Restart after moving the installation or changing Node.js.' };
+    const skill = wantsSkill ? await installClaudeSkill().catch(error => ({ installed: false, action: 'failed', reason: error.message })) : undefined;
+    return { results, ...(skill ? { claude_code_skill: skill } : {}), next: 'Start a fresh coding-agent session, list Palatial tools, then run palatial_doctor. Restart after moving the installation or changing Node.js.' };
   }
   if (command === 'login') {
     const apiKey = await readSecret();
