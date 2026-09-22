@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.1 — agent usage guidance
 
 ### Agent guidance
 

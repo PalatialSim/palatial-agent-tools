@@ -13,7 +13,7 @@ You need Node.js 22 or newer, a Palatial workspace API key, and Codex CLI or Cla
 Install the versioned package from the official GitHub Release:
 
 ```sh
-npm install --global https://github.com/PalatialSim/palatial-agent-tools/releases/download/v0.1.0/palatial-agent-tools-0.1.0.tgz
+npm install --global https://github.com/PalatialSim/palatial-agent-tools/releases/download/v0.1.1/palatial-agent-tools-0.1.1.tgz
 palatial-agent --version
 palatial-agent login
 palatial-agent doctor
