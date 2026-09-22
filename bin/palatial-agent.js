@@ -3,13 +3,13 @@ import { parseArgs } from 'node:util';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { realpathSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
 import { PalatialClient, DEFAULT_API_URL } from '../src/client.js';
 import { getApiKey, saveApiKey, deleteApiKey } from '../src/auth.js';
 import { serveStdio } from '../src/mcp.js';
 import { VERSION } from '../src/version.js';
 import { checkForUpdate, applyUpdate } from '../src/update.js';
-import { installClaudeSkill, readGuide, GUIDE_TOPICS } from '../src/guide.js';
+import { readGuide, GUIDE_TOPICS } from '../src/guide.js';
+import { runSetup } from '../src/setup.js';
 
 const HELP = `Palatial Agent Tools ${VERSION} (Node.js 22+)
 
@@ -87,23 +87,12 @@ async function main() {
     return values.apply ? applyUpdate({ latest: update.latest }) : update;
   }
   if (command === 'setup') {
-    if (!['codex', 'claude-code', 'both'].includes(values.client)) throw new Error('Choose --client codex, claude-code, or both.');
     const executable = realpathSync(fileURLToPath(import.meta.url));
-    const commands = [];
-    if (values.client !== 'claude-code') commands.push({ client: 'codex', command: 'codex', args: ['mcp', 'add', 'palatial', '--', process.execPath, executable, 'mcp'] });
-    if (values.client !== 'codex') commands.push({ client: 'claude-code', command: 'claude', args: ['mcp', 'add', '--scope', 'user', '--transport', 'stdio', 'palatial', '--', process.execPath, executable, 'mcp'] });
     // Codex reads guidance through the palatial_guide tool; Claude Code also
     // loads skills from disk, so it gets the packaged copy installed for it.
-    const wantsSkill = values.client !== 'codex';
-    if (values['dry-run']) return { commands, ...(wantsSkill ? { claude_code_skill: await installClaudeSkill({ dryRun: true }) } : {}) };
-    const results = commands.map(item => {
-      const result = spawnSync(item.command, item.args, { encoding: 'utf8', shell: false, timeout: 30000 });
-      return { client: item.client, registered: result.status === 0, message: result.error?.message || result.stderr?.trim() || result.stdout?.trim() };
-    });
-    if (results.some(item => !item.registered)) process.exitCode = 1;
-    const skill = wantsSkill ? await installClaudeSkill().catch(error => ({ installed: false, action: 'failed', reason: error.message })) : undefined;
-    if (skill && !skill.installed) process.exitCode = 1;
-    return { results, ...(skill ? { claude_code_skill: skill } : {}), next: 'Start a fresh coding-agent session, list Palatial tools, then run palatial_doctor. Restart after moving the installation or changing Node.js.' };
+    const setup = await runSetup({ client: values.client, executable, dryRun: values['dry-run'] === true });
+    if (setup.failed) process.exitCode = 1;
+    return setup.output;
   }
   if (command === 'login') {
     const apiKey = await readSecret();

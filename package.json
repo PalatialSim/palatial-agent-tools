@@ -24,7 +24,7 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "test:package": "node test/current-package-smoke.mjs",
-    "check": "node --check bin/palatial-agent.js && node --check src/client.js && node --check src/mcp.js && node --check src/auth.js && node --check src/version.js && node --check src/update.js && node --check src/guide.js",
+    "check": "node --check bin/palatial-agent.js && node --check src/client.js && node --check src/mcp.js && node --check src/auth.js && node --check src/version.js && node --check src/update.js && node --check src/guide.js && node --check src/setup.js",
     "prepack": "npm run check && npm test"
   },
   "dependencies": {
