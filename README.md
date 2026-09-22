@@ -79,7 +79,15 @@ It reaches your agent two ways, from the same files:
   `recipes`, or `troubleshooting`. Clients that support MCP resources also see
   the same four documents as `palatial://guide/*`.
 - **Claude Code** additionally loads the skill from disk, which setup installs,
-  so the guidance applies without a tool call.
+  so the guidance applies without a tool call. Nothing starts it: Claude Code
+  matches the task against the skill's description and loads it on its own.
+
+To read the same guidance yourself, without a key or a network call:
+
+```sh
+palatial-agent guide
+palatial-agent guide --topic parameters
+```
 
 A release can change the guidance, so rerun setup after updating to refresh the
 installed skill.
@@ -126,6 +134,7 @@ Save `asset.json`:
 ```
 
 ```sh
+palatial-agent guide --topic recipes
 palatial-agent create --request asset.json
 palatial-agent status --asset-id YOUR_ASSET_ID
 palatial-agent download --asset-id YOUR_ASSET_ID --output-dir ./assets

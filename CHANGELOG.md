@@ -9,6 +9,8 @@
   rules, worked requests for each input type, and a troubleshooting guide.
 - `palatial_guide` MCP tool, so any client including Codex CLI can read that
   guidance locally without an API call.
+- `palatial-agent guide [--topic <topic>]` prints the same guidance as Markdown,
+  so a person can read what their agent reads without a key or a network call.
 - The same four documents are published as `palatial://guide/*` MCP resources.
 - `palatial-agent setup` installs the guidance as a Claude Code skill in
   `~/.claude/skills/palatial`, refreshes its own copy on a later run, and

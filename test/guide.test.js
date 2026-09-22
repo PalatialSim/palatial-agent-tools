@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { readFile, mkdtemp, writeFile, mkdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { createSchema } from '../src/client.js';
 import { GUIDE_TOPICS, readGuide, claudeSkillDirectory, installClaudeSkill } from '../src/guide.js';
 
@@ -108,4 +110,30 @@ test('setup never overwrites a skill this client did not write', async t => {
   assert.equal(result.action, 'skipped');
   assert.match(result.reason, /Remove or rename/);
   assert.equal(await readFile(path.join(directory, 'SKILL.md'), 'utf8'), mine);
+});
+
+const cli = (...args) => spawnSync(process.execPath, [fileURLToPath(new URL('../bin/palatial-agent.js', import.meta.url)), ...args], { encoding: 'utf8', env: { PATH: process.env.PATH } });
+
+test('the CLI prints the guidance as readable Markdown, with no key and no API call', async () => {
+  const overview = cli('guide');
+  assert.equal(overview.status, 0, overview.stderr);
+  assert.ok(overview.stdout.startsWith('# Palatial asset generation'), 'A person reads this; it must not arrive as an escaped JSON string.');
+  assert.ok(overview.stdout.endsWith('\n'));
+  assert.equal(overview.stdout, await guideFile('SKILL.md').then(text => text.slice(text.indexOf('---', 3) + 4).trimStart()));
+
+  const parameters = cli('guide', '--topic', 'parameters');
+  assert.equal(parameters.status, 0, parameters.stderr);
+  assert.match(parameters.stdout, /Strict decimation requires exactly one target/);
+});
+
+test('an unusable guide topic fails loudly and names the topics that exist', () => {
+  const result = cli('guide', '--topic', 'everything');
+  assert.equal(result.status, 1);
+  assert.match(JSON.parse(result.stderr).error, /overview, parameters, recipes, troubleshooting/);
+});
+
+test('help lists the guide command and every topic it accepts', () => {
+  const help = cli('--help');
+  assert.match(help.stdout, /palatial-agent guide {2,}/);
+  for (const entry of GUIDE_TOPICS) assert.ok(help.stdout.includes(entry.topic), `help omits the ${entry.topic} topic`);
 });

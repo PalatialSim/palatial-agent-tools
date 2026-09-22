@@ -9,7 +9,7 @@ import { getApiKey, saveApiKey, deleteApiKey } from '../src/auth.js';
 import { serveStdio } from '../src/mcp.js';
 import { VERSION } from '../src/version.js';
 import { checkForUpdate, applyUpdate } from '../src/update.js';
-import { installClaudeSkill } from '../src/guide.js';
+import { installClaudeSkill, readGuide, GUIDE_TOPICS } from '../src/guide.js';
 
 const HELP = `Palatial Agent Tools ${VERSION} (Node.js 22+)
 
@@ -23,13 +23,15 @@ palatial-agent setup --client claude-code Register the MCP server in Claude Code
 palatial-agent setup --client both        Register it in both terminals
 palatial-agent setup --client both --dry-run  Show planned changes without applying them
 palatial-agent mcp                        Run the stdio MCP server
+palatial-agent guide                      Print the usage and parameter guidance
+palatial-agent guide --topic parameters   Print one topic: ${GUIDE_TOPICS.map(item => item.topic).join(', ')}
 palatial-agent create --request asset.json   Submit a generation request (uses credits)
 palatial-agent status --asset-id ID       Check an existing asset
 palatial-agent download --asset-id ID --output-dir ./assets  Export ZIP (uses credits)
 palatial-agent cancel --asset-id ID       Cancel an existing asset
 
-All command results are JSON. API keys are read from PALATIAL_API_KEY or the
-local credentials file; never include keys in chat, command arguments, or git.
+All command results are JSON, except guide, which prints Markdown. API keys
+are read from PALATIAL_API_KEY or the local credentials file; never include keys in chat, command arguments, or git.
 Creation returns an asset ID. Retain that ID and poll status; do not resubmit.
 The package contains API transport only. Generation runs on Palatial servers.
 Setup also installs the Palatial usage skill for Claude Code. Every client can
@@ -64,13 +66,20 @@ function readSecret() {
 async function main() {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: {
     client: { type: 'string' }, 'dry-run': { type: 'boolean' }, request: { type: 'string' },
-    'asset-id': { type: 'string' }, 'output-dir': { type: 'string' }, apply: { type: 'boolean' }, help: { type: 'boolean', short: 'h' }, version: { type: 'boolean' }
+    'asset-id': { type: 'string' }, 'output-dir': { type: 'string' }, apply: { type: 'boolean' }, topic: { type: 'string' }, help: { type: 'boolean', short: 'h' }, version: { type: 'boolean' }
   } });
   const command = positionals[0];
   if (values.version) { console.log(VERSION); return; }
   if (values.help || !command) { console.log(HELP); return; }
   if (positionals.length > 1) throw new Error('Unexpected positional arguments. Run palatial-agent --help.');
   if (command === 'mcp') { await serveStdio(); return; }
+  if (command === 'guide') {
+    // The guidance is a document a person reads, so it prints as Markdown
+    // rather than as a JSON string full of escaped newlines. It needs no key.
+    const guide = await readGuide(values.topic || 'overview');
+    process.stdout.write(guide.text.endsWith('\n') ? guide.text : `${guide.text}\n`);
+    return;
+  }
   if (command === 'update') {
     const update = await checkForUpdate({ force: true, disabled: false });
     if (update.status !== 'checked') throw new Error('Could not check GitHub Releases. Try again later.');
