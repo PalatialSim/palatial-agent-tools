@@ -17,7 +17,7 @@ test('real MCP protocol lists tools and calls the shared client without a model'
   await server.connect(a); await client.connect(b);
   t.after(async () => { await client.close(); await server.close(); });
   const list = await client.listTools();
-  assert.equal(list.tools.length, 11);
+  assert.equal(list.tools.length, 12);
   assert.equal(list.tools.find(x => x.name === 'palatial_download_asset').annotations.readOnlyHint, false);
   const result = await client.callTool({ name: 'palatial_get_asset', arguments: { asset_id: 'asset-test' } });
   assert.equal(result.structuredContent.asset_id, 'asset-test');
@@ -45,6 +45,48 @@ test('create tool explains API options in its MCP schema', async t => {
   assert.match(tool.inputSchema.properties.decimation_target_ratio.description, /mutually exclusive/);
 });
 
+test('guidance reaches any client as a tool, and as resources where they are supported', async t => {
+  const server = createServer({ clientFactory: async () => ({}) });
+  const client = new Client({ name: 'guide-test', version: '1.0' });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a); await client.connect(b);
+  t.after(async () => { await client.close(); await server.close(); });
+
+  const tool = (await client.listTools()).tools.find(item => item.name === 'palatial_guide');
+  assert.equal(tool.annotations.readOnlyHint, true);
+  assert.match(tool.description, /parameters/);
+  assert.deepEqual(tool.inputSchema.properties.topic.enum, ['overview', 'parameters', 'recipes', 'troubleshooting']);
+
+  // Guidance must arrive without arguments: a model that ignores the topic
+  // still has to land on the workflow rather than on an error.
+  const overview = await client.callTool({ name: 'palatial_guide', arguments: {} });
+  assert.notEqual(overview.isError, true);
+  assert.equal(overview.structuredContent.topic, 'overview');
+  assert.match(overview.content[0].text, /palatial_create_asset/);
+
+  const parameters = await client.callTool({ name: 'palatial_guide', arguments: { topic: 'parameters' } });
+  assert.match(parameters.content[0].text, /decimation_target_faces/);
+  assert.match(parameters.content[0].text, /exactly one of/);
+
+  const unknown = await client.callTool({ name: 'palatial_guide', arguments: { topic: 'nonsense' } });
+  assert.equal(unknown.isError, true);
+
+  const resources = (await client.listResources()).resources;
+  assert.deepEqual(resources.map(item => item.uri).sort(), ['palatial://guide/overview', 'palatial://guide/parameters', 'palatial://guide/recipes', 'palatial://guide/troubleshooting']);
+  const read = await client.readResource({ uri: 'palatial://guide/troubleshooting' });
+  assert.equal(read.contents[0].mimeType, 'text/markdown');
+  assert.match(read.contents[0].text, /PROCESSING_FAILED/);
+});
+
+test('the server tells a client to read the guidance before its first create', async t => {
+  const server = createServer({ clientFactory: async () => ({}) });
+  const client = new Client({ name: 'instructions-test', version: '1.0' });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a); await client.connect(b);
+  t.after(async () => { await client.close(); await server.close(); });
+  assert.match(client.getInstructions(), /palatial_guide/);
+});
+
 test('packaged CLI speaks stdio MCP and lists tools without authentication', async t => {
   const dir = await mkdtemp(path.join(tmpdir(), 'palatial-stdio-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
@@ -57,7 +99,7 @@ test('packaged CLI speaks stdio MCP and lists tools without authentication', asy
   const client = new Client({ name: 'stdio-test', version: '1.0' });
   await client.connect(transport);
   t.after(() => client.close());
-  assert.equal((await client.listTools()).tools.length, 11);
+  assert.equal((await client.listTools()).tools.length, 12);
   const result = await client.callTool({ name: 'palatial_doctor', arguments: {} });
   assert.equal(result.isError, true);
   assert.match(result.content[0].text, /not authenticated/);

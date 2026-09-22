@@ -23,7 +23,7 @@
   },
   "scripts": {
     "test": "node --test test/*.test.js",
-    "check": "node --check bin/palatial-agent.js && node --check src/client.js && node --check src/mcp.js && node --check src/auth.js && node --check src/version.js && node --check src/update.js",
+    "check": "node --check bin/palatial-agent.js && node --check src/client.js && node --check src/mcp.js && node --check src/auth.js && node --check src/version.js && node --check src/update.js && node --check src/guide.js",
     "prepack": "npm run check && npm test"
   },
   "dependencies": {
