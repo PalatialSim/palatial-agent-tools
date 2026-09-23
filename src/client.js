@@ -18,7 +18,7 @@ export const createSchema = z.object({
   image_path: z.string().describe('Image: one PNG/JPEG/WebP input; CAD: optional PNG/JPEG/WebP reference for texture generation; use instead of views.').optional(),
   image_paths: z.array(z.string()).min(2).max(50).describe('Image with parametric shape_model: 2-50 PNG/JPEG/WebP inputs of the same object; each is uploaded as a file.').optional(),
   views: z.object({ front: z.string().describe('Image multiview: front PNG/JPEG/WebP path.').optional(), left: z.string().describe('Image multiview: left PNG/JPEG/WebP path.').optional(), back: z.string().describe('Image multiview: back PNG/JPEG/WebP path.').optional(), right: z.string().describe('Image multiview: right PNG/JPEG/WebP path.').optional() }).strict().describe('Image only: named views of one object; provide at least two.').optional(),
-  reconstruct: z.boolean().describe('Image pipeline only: enable or disable multiview reconstruction; defaults to true when multiple views are uploaded.').optional(),
+  reconstruct: z.boolean().describe('Legacy image option accepted by the API but currently ignored by the Queue. It does not generate views from one image or change how supplied views are processed.').optional(),
   mesh_path: z.string().describe('CAD only: path to the mesh file.').optional(),
   datasheet_path: z.string().describe('CAD only: optional PDF datasheet.').optional(),
   create_articulation: z.boolean().describe('All sources: create joints for moving parts such as doors or wheels.').optional(),
@@ -85,7 +85,7 @@ export function validateCreate(input) {
   if (p.source === 'image' && views.length && views.length < 2) throw new Error('Multiview requires at least two views of the same object.');
   if (p.source === 'image' && p.image_paths && p.shape_model !== 'parametric') throw new Error('image_paths is supported only with shape_model=parametric.');
   if (p.source !== 'image' && p.reconstruct !== undefined) throw new Error('reconstruct is accepted only for image input.');
-  if (p.reconstruct !== undefined && ['medium', 'mad_max'].includes(p.effort)) throw new Error('reconstruct controls the image pipeline and is not used by medium or mad_max effort.');
+  if (p.reconstruct !== undefined && ['medium', 'mad_max'].includes(p.effort)) throw new Error('The legacy reconstruct option is not accepted with medium or mad_max effort.');
   if (p.source === 'image' && ['auto', 'diffusion'].includes(p.shape_model) && views.length > 4) throw new Error('auto and diffusion accept a single image or up to four named views.');
   if (p.source === 'image' && (p.mesh_path || p.datasheet_path)) throw new Error('mesh_path and datasheet_path are only accepted for CAD.');
   if (p.source === 'cad' && (!p.mesh_path || p.image_paths || views.length)) throw new Error('CAD requires mesh_path; image_path is optional, and image_paths and named views are not accepted.');

@@ -54,7 +54,7 @@ test('the parameter reference pins source applicability and effective defaults',
   const expected = {
     source: ['required', 'all'], name: ['required', 'all'], description: ['required', 'all'],
     engine: ['`["isaac_sim"]`', 'all'], workspace: ["the API key's workspace", 'all'],
-    image_path: ['none', '`image`, `cad`'], image_paths: ['none', '`image`'], views: ['none', '`image`'], reconstruct: ['`true` for multiview', '`image`'], mesh_path: ['none', '`cad`'], datasheet_path: ['none', '`cad`'],
+    image_path: ['none', '`image`, `cad`'], image_paths: ['none', '`image`'], views: ['none', '`image`'], reconstruct: ['ignored', '`image`'], mesh_path: ['none', '`cad`'], datasheet_path: ['none', '`cad`'],
     create_articulation: ['`false`', 'all'], enable_parts_segmentation: ['`true`', 'all'], run_simulation: ['`true`', 'all'],
     collision_quality: ['`medium` for ordinary rigid assets', 'all'], mesh_quality: ['`high`; `medium` when parts segmentation is off and articulation is not requested', '`text`, `image`'],
     shape_model: ['`auto`', '`text`, `image`'], effort: ['`low` when parametric', '`text`, `image`'], texture_model: ['`auto`', 'all'], apply_textures: ['`true` with a CAD reference image, `false` without one', '`cad`'],
