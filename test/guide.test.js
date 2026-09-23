@@ -54,10 +54,10 @@ test('the parameter reference pins source applicability and effective defaults',
   const expected = {
     source: ['required', 'all'], name: ['required', 'all'], description: ['required', 'all'],
     engine: ['`["isaac_sim"]`', 'all'], workspace: ["the API key's workspace", 'all'],
-    image_path: ['none', '`image`, `cad`'], image_paths: ['none', '`image`'], views: ['none', '`image`'], mesh_path: ['none', '`cad`'], datasheet_path: ['none', '`cad`'],
+    image_path: ['none', '`image`, `cad`'], image_paths: ['none', '`image`'], views: ['none', '`image`'], reconstruct: ['`true` for multiview', '`image`'], mesh_path: ['none', '`cad`'], datasheet_path: ['none', '`cad`'],
     create_articulation: ['`false`', 'all'], enable_parts_segmentation: ['`true`', 'all'], run_simulation: ['`true`', 'all'],
     collision_quality: ['`medium` for ordinary rigid assets', 'all'], mesh_quality: ['`high`; `medium` when parts segmentation is off and articulation is not requested', '`text`, `image`'],
-    shape_model: ['`auto`', '`text`, `image`'], texture_model: ['`auto`', 'all'], apply_textures: ['`true`', '`cad`'],
+    shape_model: ['`auto`', '`text`, `image`'], effort: ['`low` when parametric', '`text`, `image`'], texture_model: ['`auto`', 'all'], apply_textures: ['`true` with a CAD reference image, `false` without one', '`cad`'],
     repair_mesh: ['`true`', 'all'], replace_glass: ['`false`', 'all'], auto_scale: ['`true`', 'all'],
     body_type: ['`rigid_bodies`', 'all'], newton_solver: ['`vbd` for soft bodies, `mujoco` for rigid', 'all'],
     regenerate_parts: ['`false`', '`cad`'], keep_existing_textures: ['`false`', '`cad`'],
@@ -65,7 +65,7 @@ test('the parameter reference pins source applicability and effective defaults',
     texture_size: ['`4096`', 'all'], optimize_textures: ['`true`', 'all'], texture_max_resolution: ['`4096`', 'all'],
     decimation: ['see above', 'all'], decimation_mode: ['see above', 'all'], decimation_target_faces: ['none', 'all'], decimation_target_ratio: ['none', 'all'],
     triangle_count: ['`auto`', 'all'], mesh_density: ['`medium`', 'all'],
-    units: ['`m` for text; format-dependent for CAD', '`text`, `cad`'], up_direction: ['`y` for text; format-dependent for CAD', '`text`, `cad`']
+    units: ['`m` for text; format-dependent for CAD', '`text`, `cad`'], meters_per_unit: ['none', '`cad`'], up_direction: ['`y` for text; format-dependent for CAD', '`text`, `cad`']
   };
   assert.deepEqual(Object.fromEntries([...rows].map(([field, cells]) => [field, [cells[2], cells[3]]])), expected);
 });

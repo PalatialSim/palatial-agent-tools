@@ -41,6 +41,27 @@ test('creation forwards documented shape and pipeline options', async t => {
   assert.equal(body.texture_max_resolution, 2048);
 });
 
+test('parametric effort reaches text and image creates and rejects unsupported routes', async t => {
+  const bodies = [];
+  const { dir, client } = await fixture(t, async (_url, init) => { bodies.push(init.body); return json({ id: 'effort-asset' }, 201); });
+  await client.create({ ...basic, shape_model: 'parametric', effort: 'medium' });
+  assert.equal(JSON.parse(bodies[0]).effort, 'medium');
+  const image = path.join(dir, 'photo.jpg');
+  await writeFile(image, 'photo fixture');
+  await client.create({ ...basic, source: 'image', image_path: image, shape_model: 'parametric', effort: 'mad_max' });
+  assert.equal(bodies[1].get('effort'), 'mad_max');
+  await client.create({ ...basic, source: 'image', image_path: image, shape_model: 'parametric', reconstruct: false });
+  assert.equal(bodies[2].get('reconstruct'), 'false');
+  for (const input of [
+    { ...basic, effort: 'medium' },
+    { ...basic, shape_model: 'diffusion', effort: 'low' },
+    { ...basic, source: 'cad', mesh_path: '/part.usd', effort: 'mad_max' },
+    { ...basic, reconstruct: true },
+    { ...basic, source: 'image', image_path: image, shape_model: 'parametric', effort: 'medium', reconstruct: false }
+  ]) assert.throws(() => validateCreate(input));
+  assert.equal(bodies.length, 3);
+});
+
 test('configured API origin follows the created asset into its durable receipt', async t => {
   const { client } = await fixture(t, async () => json({ id: 'dev-asset' }, 201), {
     baseUrl: 'https://dashboard.dev.palatial.cloud/api/v1/external/',
@@ -87,6 +108,32 @@ test('multiview and CAD use actual multipart files and repeated engine fields', 
   assert.equal(captured[1].body.get('datasheet').type, 'application/pdf');
   assert.equal(captured[1].body.get('up_direction'), 'z');
   assert.equal(captured[1].body.get('units'), null);
+});
+
+test('CAD with no reference image uploads only the mesh and preserves scale choices', async t => {
+  const captured = [];
+  const { dir, client } = await fixture(t, async (_url, init) => { captured.push(init.body); return json({ id: 'bare-cad' }, 201); });
+  const mesh = path.join(dir, 'part.obj');
+  await writeFile(mesh, 'mesh fixture');
+  await client.create({ ...basic, source: 'cad', mesh_path: mesh, meters_per_unit: 0.002, up_direction: 'z', keep_existing_shape: true });
+  assert.equal(captured[0].get('image'), null);
+  assert.equal(captured[0].get('meters_per_unit'), '0.002');
+  assert.equal(captured[0].get('keep_existing_shape'), 'true');
+  assert.throws(() => validateCreate({ ...basic, source: 'cad', mesh_path: mesh, meters_per_unit: 0.002, up_direction: 'z', apply_textures: true }), /requires a CAD reference/);
+  assert.equal(captured.length, 1);
+});
+
+test('CAD GLB appearance intent and optional reference reach the server inspection path', async t => {
+  let body;
+  const { dir, client } = await fixture(t, async (_url, init) => { body = init.body; return json({ id: 'glb-cad' }, 201); });
+  const mesh = path.join(dir, 'part.glb');
+  const image = path.join(dir, 'reference.jpg');
+  await writeFile(mesh, 'embedded-texture fixture');
+  await writeFile(image, 'photo fixture');
+  await client.create({ ...basic, source: 'cad', mesh_path: mesh, image_path: image, units: 'm', up_direction: 'y', keep_existing_textures: true });
+  assert.equal(body.get('mesh').name, 'part.glb');
+  assert.equal(body.get('image').name, 'reference.jpg');
+  assert.equal(body.get('keep_existing_textures'), 'true');
 });
 
 test('auto uses diffusion multiview inputs while parametric accepts fifty files', async t => {
@@ -182,13 +229,20 @@ test('CAD reuse flags are CAD-only and refuse the combinations that contradict t
 
 test('keeping a CAD appearance is refused on the formats that cannot carry one', () => {
   const direct = { source: 'cad', name: 'Test part', description: 'A part', image_path: '/ref.png', mesh_path: '/part.obj', units: 'm', up_direction: 'z' };
-  // Verified against the live API: a direct mesh upload is one file and cannot
-  // prove material and texture sidecars, so the API answers
-  // CAD_AUTHORED_APPEARANCE_UNAVAILABLE without naming the field responsible.
+  // External texture sidecars do not travel with a single mesh upload.
   for (const field of ['keep_existing_textures', 'physics_validation_only']) {
-    assert.throws(() => validateCreate({ ...direct, [field]: true }), /USD, STEP, or IGES/);
+    assert.throws(() => validateCreate({ ...direct, [field]: true }), /cannot preserve an authored appearance/);
   }
-  assert.throws(() => validateCreate({ ...direct, apply_textures: false }), /USD, STEP, or IGES/);
+  assert.throws(() => validateCreate({ ...direct, apply_textures: false }), /cannot preserve an authored appearance/);
+  // A GLB may carry bound texture bytes. The API inspects them after upload;
+  // the client cannot establish that from the file extension alone.
+  assert.doesNotThrow(() => validateCreate({ ...direct, mesh_path: '/part.glb', keep_existing_textures: true }));
+  assert.doesNotThrow(() => validateCreate({ ...direct, mesh_path: '/part.glb', physics_validation_only: true }));
+  assert.doesNotThrow(() => validateCreate({ ...direct, mesh_path: '/part.glb', apply_textures: false }));
+  // A direct mesh can remain untextured when there was no reference image,
+  // but the keep-existing flag still promises appearance the file cannot prove.
+  assert.doesNotThrow(() => validateCreate({ ...direct, image_path: undefined, apply_textures: false }));
+  assert.throws(() => validateCreate({ ...direct, image_path: undefined, physics_validation_only: true }), /cannot preserve an authored appearance/);
   // Shape reuse promises nothing about appearance, so it stays available.
   assert.doesNotThrow(() => validateCreate({ ...direct, keep_existing_shape: true }));
   // The formats that can carry an appearance keep all of it.
@@ -196,10 +250,21 @@ test('keeping a CAD appearance is refused on the formats that cannot carry one',
   assert.doesNotThrow(() => validateCreate({ ...direct, mesh_path: '/part.step', units: undefined, keep_existing_textures: true }));
 });
 
+test('CAD meters_per_unit is limited to direct meshes and conflicts are rejected', () => {
+  const direct = { ...basic, source: 'cad', mesh_path: '/part.glb', up_direction: 'z', meters_per_unit: 0.001 };
+  assert.doesNotThrow(() => validateCreate(direct));
+  assert.doesNotThrow(() => validateCreate({ ...direct, units: 'mm' }));
+  assert.throws(() => validateCreate({ ...direct, units: 'cm' }), /conflict/);
+  assert.throws(() => validateCreate({ ...direct, meters_per_unit: 0 }), /too_small|positive/);
+  assert.throws(() => validateCreate({ ...direct, mesh_path: '/part.step' }), /omit meters_per_unit/);
+  assert.throws(() => validateCreate({ ...direct, mesh_path: '/part.usdc' }), /omit units, meters_per_unit/);
+});
+
 test('every documented create parameter is reachable through the schema', () => {
   const documented = [
     'body_type', 'newton_solver', 'repair_mesh', 'replace_glass', 'auto_scale',
-    'regenerate_parts', 'keep_existing_textures', 'keep_existing_shape', 'physics_validation_only'
+    'regenerate_parts', 'keep_existing_textures', 'keep_existing_shape', 'physics_validation_only',
+    'effort', 'reconstruct', 'meters_per_unit'
   ];
   for (const field of documented) assert.ok(field in createSchema.shape, `${field} missing from createSchema`);
 });
