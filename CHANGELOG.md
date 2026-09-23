@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.3 — direct create route capabilities
 
 - `palatial_create_asset` now forwards `effort` for Parametric text and image
   builds (`low`, `medium`, `mad_max`) and `reconstruct` for image requests.
