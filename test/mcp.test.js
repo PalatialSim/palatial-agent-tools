@@ -43,7 +43,7 @@ test('create tool explains API options in its MCP schema', async t => {
   assert.match(tool.inputSchema.properties.shape_model.description, /better for articulation/);
   assert.deepEqual(tool.inputSchema.properties.shape_model.enum, ['auto', 'diffusion', 'parametric']);
   assert.deepEqual(tool.inputSchema.properties.effort.enum, ['low', 'medium', 'mad_max']);
-  assert.match(tool.inputSchema.properties.image_path.description, /optional PNG\/JPEG reference/);
+  assert.match(tool.inputSchema.properties.image_path.description, /optional PNG\/JPEG\/WebP reference/);
   assert.match(tool.inputSchema.properties.reconstruct.description, /multiview reconstruction/);
   assert.match(tool.inputSchema.properties.meters_per_unit.description, /Direct-mesh CAD/);
   assert.equal(tool.inputSchema.properties.agentic_articulation, undefined);
