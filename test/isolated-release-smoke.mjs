@@ -15,7 +15,7 @@ const scratch = await mkdtemp(path.join(tmpdir(), 'palatial-isolated-'));
 const zip = Buffer.from('504b0506000000000000000000000000000000000000', 'hex');
 const evidence = {
   environment: process.env.PALATIAL_TEST_ENVIRONMENT || 'fresh Node.js 22 Docker container',
-  application_source: 'public v0.1.3 release tarball; SHA-256 verified before execution',
+  application_source: 'public v0.1.4 release tarball; SHA-256 verified before execution',
   runtime_network: process.env.PALATIAL_TEST_NETWORK || 'none; loopback HTTPS fixtures only',
   real_palatial_api_calls: 0,
   paid_generations: 0,
@@ -32,7 +32,7 @@ const connect = async env => {
 };
 try {
   const version = spawnSync(process.execPath, [bin, '--version'], { encoding: 'utf8' });
-  assert.equal(version.status, 0); assert.equal(version.stdout.trim(), '0.1.3');
+  assert.equal(version.status, 0); assert.equal(version.stdout.trim(), '0.1.4');
   client = await connect({});
   assert.equal((await client.listTools()).tools.length, Number(process.env.EXPECTED_TOOL_COUNT || 12));
   const guide = await client.callTool({ name: 'palatial_guide', arguments: { topic: 'parameters' } });
@@ -69,7 +69,7 @@ try {
           const request = new Request('https://localhost' + req.url, { method: 'POST', headers: req.headers, body });
           const form = await request.formData();
           fields = { name: form.get('name'), engines: form.getAll('engine'), files: {} };
-          for (const [name, value] of form.entries()) if (typeof value !== 'string') fields.files[name] = { name: value.name, bytes: value.size };
+          for (const [name, value] of form.entries()) if (typeof value !== 'string') fields.files[name] = { name: value.name, bytes: value.size, type: value.type };
         } else fields = JSON.parse(body);
         if (fields.name === 'Fail fixture') { failedCreates++; return reply({ error: 'temporary fixture failure' }, 503); }
         const id = 'fixture-' + (submitted.length + 1);
@@ -96,7 +96,7 @@ try {
     return result.structuredContent;
   };
   assert.equal((await call('palatial_doctor')).authenticated, true);
-  const image = path.join(scratch, 'bin.jpg'), mesh = path.join(scratch, 'bin.step');
+  const image = path.join(scratch, 'bin.webp'), mesh = path.join(scratch, 'bin.step');
   await writeFile(image, 'fixture-reference'); await writeFile(mesh, 'fixture-CAD');
   const inputs = [
     { source: 'text', name: 'Text fixture', description: 'Rigid bin' },
@@ -112,6 +112,10 @@ try {
   }
   assert.deepEqual(submitted[2].fields.engines, ['isaac_sim', 'mujoco']);
   assert.deepEqual(Object.keys(submitted[2].fields.files).sort(), ['back', 'front']);
+  assert.equal(submitted[1].fields.files.file.type, 'image/webp');
+  assert.equal(submitted[2].fields.files.front.type, 'image/webp');
+  assert.equal(submitted[2].fields.files.back.type, 'image/webp');
+  assert.equal(submitted[3].fields.files.image.type, 'image/webp');
   assert.equal(submitted[3].fields.files.mesh.bytes, Buffer.byteLength('fixture-CAD'));
   evidence.results.text_image_multiview_and_cad_over_https = 'passed';
   const args = { asset_id: submitted[0].id, output_dir: path.join(scratch, 'exports') };
