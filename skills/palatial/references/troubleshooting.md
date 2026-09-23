@@ -37,6 +37,16 @@ anything already downloaded. A paused job is waiting on something; inspect it
 with `palatial_get_pipeline_progress` and show the user the stage rather than
 guessing at a cause.
 
+## The user wants another asset built the same way
+
+Read `generation_route` from `palatial_get_asset` (or `generationAgent` from
+the full record). `diffusion` and `parametric` map straight to `shape_model`.
+`mad_max` maps to `shape_model: parametric` plus `effort: mad_max`. Do not send
+the record's `parameters` block back as a create request: it contains
+server-owned progress fields (`madMaxBuild`, `madMaxBuildHistory`,
+`generationActualCost`) that the API rejects or ignores, and a `shape_model` of
+`mad_max` is refused by this client.
+
 ## The user wants a change to a finished asset
 
 Two different tools, and the difference matters.

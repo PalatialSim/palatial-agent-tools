@@ -78,6 +78,18 @@ For `shape_model: parametric`, `effort: low` uses the parametric pipeline.
 `medium` and `mad_max` research the described product and author the model;
 they cost more and take longer. They work with text and image inputs, not CAD.
 
+## Reading the route back
+
+A finished asset reports how it was built as `generationAgent`: `diffusion`,
+`parametric`, or `mad_max`. `palatial_get_asset` surfaces this as
+`generation_route`, and the full record from `palatial_get_asset_details`
+carries the field and any `madMaxBuild` progress block.
+
+That label is read-only. It is not a `shape_model` value, and copying it into a
+new request is refused: `mad_max` is requested with `shape_model: parametric`
+and `effort: mad_max`. To rebuild "the same way", read `generation_route` and
+translate it, do not paste the record's parameters into a create.
+
 ## Writing the rest of the request
 
 Most requests should set `source`, `name`, `description`, `engine`, and nothing

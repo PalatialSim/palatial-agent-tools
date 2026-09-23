@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile, stat, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { PalatialClient, validateCreate, createSchema } from '../src/client.js';
+import { PalatialClient, validateCreate, createSchema, generationRoute, createOptionsForRoute, PUBLIC_GENERATION_ROUTES } from '../src/client.js';
 import { credentialPath, getApiKey, saveApiKey, deleteApiKey } from '../src/auth.js';
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -88,6 +88,40 @@ test('status polling preserves processing and export phases without inferring co
   const result = await client.getAsset('asset-1');
   assert.equal(result.status, 'PROCESSING_IMPORT');
   assert.deepEqual(result.details, record);
+});
+
+test('asset reads surface the public generation route and how to request it again', async t => {
+  const madMax = { status: { status: 'READY' }, generationAgent: 'mad_max', parameters: { shape_model: 'parametric', madMaxBuild: { status: 'complete' } } };
+  const { client } = await fixture(t, async () => json(madMax));
+  const result = await client.getAsset('asset-1');
+  assert.equal(result.generation_route, 'mad_max');
+  assert.match(result.generation_route_means, /shape_model=parametric with effort=mad_max/);
+  assert.match(result.generation_route_means, /not a shape_model value/);
+  assert.deepEqual(result.details, madMax);
+
+  const { client: diffusionClient } = await fixture(t, async () => json({ status: { status: 'READY' }, generationAgent: 'diffusion' }));
+  const diffusion = await diffusionClient.getAsset('asset-2');
+  assert.equal(diffusion.generation_route, 'diffusion');
+
+  const { client: legacyClient } = await fixture(t, async () => json({ status: { status: 'READY' } }));
+  const legacy = await legacyClient.getAsset('asset-3');
+  assert.equal('generation_route' in legacy, false, 'records without the field are reported unchanged');
+
+  assert.equal(generationRoute({ generationAgent: 'not-a-route' }), null, 'unknown labels are not surfaced as routes');
+  assert.deepEqual(PUBLIC_GENERATION_ROUTES, ['diffusion', 'parametric', 'mad_max']);
+  assert.deepEqual(createOptionsForRoute('mad_max'), { shape_model: 'parametric', effort: 'mad_max' });
+  assert.deepEqual(createOptionsForRoute('parametric'), { shape_model: 'parametric' });
+  assert.deepEqual(createOptionsForRoute('diffusion'), { shape_model: 'diffusion' });
+  assert.deepEqual(createOptionsForRoute(null), {});
+});
+
+test('a route label copied into shape_model is refused before any request', async t => {
+  let calls = 0;
+  const { client } = await fixture(t, async () => { calls++; return json({ id: 'never' }); });
+  await assert.rejects(client.create({ ...basic, shape_model: 'mad_max' }), /shape_model=parametric with effort=mad_max/);
+  assert.throws(() => validateCreate({ ...basic, shape_model: 'MAD_MAX' }), /not a shape_model/);
+  assert.equal(calls, 0, 'nothing was submitted');
+  assert.doesNotThrow(() => validateCreate({ ...basic, shape_model: 'parametric', effort: 'mad_max' }));
 });
 
 test('multiview and CAD use actual multipart files and repeated engine fields', async t => {

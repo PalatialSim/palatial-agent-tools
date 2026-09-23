@@ -182,6 +182,9 @@ names the rule.
   `image_paths`, `views`, `reconstruct`, `mesh_quality`, `shape_model`, and `effort`. Source-frame fields
   then follow the file-format rules above.
 - `effort` requires `shape_model: parametric` on text or image requests.
+- `shape_model: mad_max` is refused. `mad_max` is the route label a finished
+  asset reports in `generationAgent`; request it with `shape_model: parametric`
+  and `effort: mad_max`.
 - The legacy `reconstruct` field is ignored by the current Queue. The client
   rejects it with `effort: medium` or `mad_max`; omit it on all new requests.
 - `apply_textures: true` on CAD requires `image_path`.
