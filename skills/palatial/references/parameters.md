@@ -25,15 +25,15 @@ and an omitted field is safer than a guessed one.
 
 | Field | Values | Default | Sources | Notes |
 | --- | --- | --- | --- | --- |
-| `image_path` | one PNG or JPEG path | none | `image`, `cad` | Required for a single-image request. Optional for CAD; provide it when asking to generate textures from a reference. |
-| `image_paths` | 2 to 50 PNG or JPEG paths | none | `image` | Photos of one object. Accepted **only** with `shape_model: parametric`. |
+| `image_path` | one PNG, JPEG, or WebP path | none | `image`, `cad` | Required for a single-image request. Optional for CAD; provide it when asking to generate textures from a reference. |
+| `image_paths` | 2 to 50 PNG, JPEG, or WebP paths | none | `image` | Photos of one object. Accepted **only** with `shape_model: parametric`. |
 | `views` | object with `front`, `left`, `back`, `right` | none | `image` | Named angles of one object. Give at least 2. `auto` and `diffusion` accept at most 4. |
-| `reconstruct` | boolean | `true` for multiview | `image` | Controls the image pipeline's multiview reconstruction step. Set `false` only when the views should not be fused. It has no effect on `medium` or `mad_max` effort and is rejected with those values. |
+| `reconstruct` | boolean | ignored | `image` | Legacy API field. The current Queue ignores it: one image does not trigger synthetic view generation, and supplied views are processed directly. Omit this field. The client rejects it with `medium` or `mad_max` effort. |
 | `mesh_path` | path to the mesh file | none | `cad` | Required for CAD. |
 | `datasheet_path` | path to a PDF | none | `cad` | Optional specification sheet. |
 
 Each local input must be a regular file of at most 256 MiB. References must be
-PNG or JPEG; datasheets must be PDF.
+PNG, JPEG, or WebP; datasheets must be PDF.
 
 ## What to build
 
@@ -182,8 +182,8 @@ names the rule.
   `image_paths`, `views`, `reconstruct`, `mesh_quality`, `shape_model`, and `effort`. Source-frame fields
   then follow the file-format rules above.
 - `effort` requires `shape_model: parametric` on text or image requests.
-- `reconstruct` is rejected with `effort: medium` or `mad_max` because those
-  routes do not use the image pipeline reconstruction step.
+- The legacy `reconstruct` field is ignored by the current Queue. The client
+  rejects it with `effort: medium` or `mad_max`; omit it on all new requests.
 - `apply_textures: true` on CAD requires `image_path`.
 - Strict decimation requires exactly one target. Any other mode accepts none.
 - The four CAD reuse flags are rejected for `text` and `image`.

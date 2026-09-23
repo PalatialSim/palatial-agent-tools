@@ -110,6 +110,29 @@ test('multiview and CAD use actual multipart files and repeated engine fields', 
   assert.equal(captured[1].body.get('units'), null);
 });
 
+test('WebP references keep their MIME type for single, multiview, parametric, and CAD creates', async t => {
+  const bodies = [];
+  const { dir, client } = await fixture(t, async (_url, init) => {
+    bodies.push(init.body);
+    return json({ id: 'webp-asset' }, 201);
+  });
+  const image = path.join(dir, 'reference.webp');
+  const mesh = path.join(dir, 'part.step');
+  await writeFile(image, 'webp fixture');
+  await writeFile(mesh, 'STEP fixture');
+
+  await client.create({ ...basic, source: 'image', image_path: image });
+  await client.create({ ...basic, source: 'image', views: { front: image, back: image } });
+  await client.create({ ...basic, source: 'image', image_paths: [image, image], shape_model: 'parametric' });
+  await client.create({ ...basic, source: 'cad', mesh_path: mesh, image_path: image, up_direction: 'z' });
+
+  assert.equal(bodies[0].get('file').type, 'image/webp');
+  assert.equal(bodies[1].get('front').type, 'image/webp');
+  assert.equal(bodies[1].get('back').type, 'image/webp');
+  assert.deepEqual(bodies[2].getAll('file').map(file => file.type), ['image/webp', 'image/webp']);
+  assert.equal(bodies[3].get('image').type, 'image/webp');
+});
+
 test('CAD with no reference image uploads only the mesh and preserves scale choices', async t => {
   const captured = [];
   const { dir, client } = await fixture(t, async (_url, init) => { captured.push(init.body); return json({ id: 'bare-cad' }, 201); });

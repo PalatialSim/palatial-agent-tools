@@ -15,10 +15,10 @@ export const createSchema = z.object({
   description: z.string().trim().min(1).max(500).describe('What to build, including dimensions, materials, articulation, and intended use when known.'),
   workspace: z.string().regex(/^[a-fA-F0-9]{24}$/, 'Workspace must be a 24-character MongoDB ObjectId.').describe('All sources: optional workspace ID; omit to use the API-key workspace.').optional(),
   engine: z.array(engine).min(1).max(3).default(['isaac_sim']).describe('All sources: simulator profiles; isaac_sim, mujoco, or newton; defaults to isaac_sim.').optional(),
-  image_path: z.string().describe('Image: one PNG/JPEG input; CAD: optional PNG/JPEG reference for texture generation; use instead of views.').optional(),
-  image_paths: z.array(z.string()).min(2).max(50).describe('Image with parametric shape_model: 2-50 PNG/JPEG inputs of the same object; each is uploaded as a file.').optional(),
-  views: z.object({ front: z.string().describe('Image multiview: front PNG/JPEG path.').optional(), left: z.string().describe('Image multiview: left PNG/JPEG path.').optional(), back: z.string().describe('Image multiview: back PNG/JPEG path.').optional(), right: z.string().describe('Image multiview: right PNG/JPEG path.').optional() }).strict().describe('Image only: named views of one object; provide at least two.').optional(),
-  reconstruct: z.boolean().describe('Image pipeline only: enable or disable multiview reconstruction; defaults to true when multiple views are uploaded.').optional(),
+  image_path: z.string().describe('Image: one PNG/JPEG/WebP input; CAD: optional PNG/JPEG/WebP reference for texture generation; use instead of views.').optional(),
+  image_paths: z.array(z.string()).min(2).max(50).describe('Image with parametric shape_model: 2-50 PNG/JPEG/WebP inputs of the same object; each is uploaded as a file.').optional(),
+  views: z.object({ front: z.string().describe('Image multiview: front PNG/JPEG/WebP path.').optional(), left: z.string().describe('Image multiview: left PNG/JPEG/WebP path.').optional(), back: z.string().describe('Image multiview: back PNG/JPEG/WebP path.').optional(), right: z.string().describe('Image multiview: right PNG/JPEG/WebP path.').optional() }).strict().describe('Image only: named views of one object; provide at least two.').optional(),
+  reconstruct: z.boolean().describe('Legacy image option accepted by the API but currently ignored by the Queue. It does not generate views from one image or change how supplied views are processed.').optional(),
   mesh_path: z.string().describe('CAD only: path to the mesh file.').optional(),
   datasheet_path: z.string().describe('CAD only: optional PDF datasheet.').optional(),
   create_articulation: z.boolean().describe('All sources: create joints for moving parts such as doors or wheels.').optional(),
@@ -85,7 +85,7 @@ export function validateCreate(input) {
   if (p.source === 'image' && views.length && views.length < 2) throw new Error('Multiview requires at least two views of the same object.');
   if (p.source === 'image' && p.image_paths && p.shape_model !== 'parametric') throw new Error('image_paths is supported only with shape_model=parametric.');
   if (p.source !== 'image' && p.reconstruct !== undefined) throw new Error('reconstruct is accepted only for image input.');
-  if (p.reconstruct !== undefined && ['medium', 'mad_max'].includes(p.effort)) throw new Error('reconstruct controls the image pipeline and is not used by medium or mad_max effort.');
+  if (p.reconstruct !== undefined && ['medium', 'mad_max'].includes(p.effort)) throw new Error('The legacy reconstruct option is not accepted with medium or mad_max effort.');
   if (p.source === 'image' && ['auto', 'diffusion'].includes(p.shape_model) && views.length > 4) throw new Error('auto and diffusion accept a single image or up to four named views.');
   if (p.source === 'image' && (p.mesh_path || p.datasheet_path)) throw new Error('mesh_path and datasheet_path are only accepted for CAD.');
   if (p.source === 'cad' && (!p.mesh_path || p.image_paths || views.length)) throw new Error('CAD requires mesh_path; image_path is optional, and image_paths and named views are not accepted.');
@@ -195,11 +195,11 @@ export class PalatialClient {
       const addFile = async (field, filename, kind) => {
         const absolute = path.resolve(filename);
         const ext = path.extname(absolute).toLowerCase();
-        if (kind === 'image' && !['.png', '.jpg', '.jpeg'].includes(ext)) throw new Error('Reference images must be PNG or JPEG.');
+        if (kind === 'image' && !['.png', '.jpg', '.jpeg', '.webp'].includes(ext)) throw new Error('Reference images must be PNG, JPEG, or WebP.');
         if (kind === 'pdf' && ext !== '.pdf') throw new Error('Datasheets must be PDF.');
         const info = await stat(absolute);
         if (!info.isFile() || info.size > 256 * 1024 ** 2) throw new Error('Input must be a regular file of at most 256 MiB.');
-        const type = ext === '.png' ? 'image/png' : ['.jpg', '.jpeg'].includes(ext) ? 'image/jpeg' : ext === '.pdf' ? 'application/pdf' : 'application/octet-stream';
+        const type = ext === '.png' ? 'image/png' : ['.jpg', '.jpeg'].includes(ext) ? 'image/jpeg' : ext === '.webp' ? 'image/webp' : ext === '.pdf' ? 'application/pdf' : 'application/octet-stream';
         body.append(field, new Blob([await readFile(absolute)], { type }), path.basename(absolute));
       };
       if (source === 'image') {
