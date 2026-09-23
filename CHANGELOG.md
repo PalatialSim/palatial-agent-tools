@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.4 — WebP reference images
+
+- `palatial_create_asset` accepts WebP reference images for single-image,
+  named multiview, Parametric multi-image, and CAD reference requests, and
+  uploads them as `image/webp` multipart parts. Its schema and packaged
+  guidance now match the external create contract.
+
 ## 0.1.3 — direct create route capabilities
 
 - `palatial_create_asset` now forwards `effort` for Parametric text and image
