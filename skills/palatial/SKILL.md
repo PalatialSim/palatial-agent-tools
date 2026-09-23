@@ -56,7 +56,7 @@ which stage it is on.
 | Only a description | `text` | No files at all |
 | One photo or render | `image` | `image_path` |
 | Several angles of one object | `image` | `views` (2 to 4 named views) or `image_paths` |
-| A CAD or mesh file | `cad` | `mesh_path` plus `image_path` |
+| A CAD or mesh file | `cad` | `mesh_path`; `image_path` is optional |
 
 Put real dimensions, materials, articulation, and intended use in
 `description`. It is the single most important field, and for `source: image`
@@ -73,6 +73,10 @@ it is the only place dimensions can go.
 - `parametric` is more controllable and better for articulated objects. It is
   the only model that accepts `image_paths`, which takes 2 to 50 photos of the
   same object.
+
+For `shape_model: parametric`, `effort: low` uses the parametric pipeline.
+`medium` and `mad_max` research the described product and author the model;
+they cost more and take longer. They work with text and image inputs, not CAD.
 
 ## Writing the rest of the request
 

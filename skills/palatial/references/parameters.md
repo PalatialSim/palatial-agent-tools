@@ -25,9 +25,10 @@ and an omitted field is safer than a guessed one.
 
 | Field | Values | Default | Sources | Notes |
 | --- | --- | --- | --- | --- |
-| `image_path` | one PNG or JPEG path | none | `image`, `cad` | The single reference for `image`. Required, and required alongside the mesh, for `cad`. |
+| `image_path` | one PNG or JPEG path | none | `image`, `cad` | Required for a single-image request. Optional for CAD; provide it when asking to generate textures from a reference. |
 | `image_paths` | 2 to 50 PNG or JPEG paths | none | `image` | Photos of one object. Accepted **only** with `shape_model: parametric`. |
 | `views` | object with `front`, `left`, `back`, `right` | none | `image` | Named angles of one object. Give at least 2. `auto` and `diffusion` accept at most 4. |
+| `reconstruct` | boolean | `true` for multiview | `image` | Controls the image pipeline's multiview reconstruction step. Set `false` only when the views should not be fused. It has no effect on `medium` or `mad_max` effort and is rejected with those values. |
 | `mesh_path` | path to the mesh file | none | `cad` | Required for CAD. |
 | `datasheet_path` | path to a PDF | none | `cad` | Optional specification sheet. |
 
@@ -69,8 +70,9 @@ a swivel chair with rolling wheels is `rigid_bodies` with
 | Field | Values | Default | Sources | Notes |
 | --- | --- | --- | --- | --- |
 | `shape_model` | `auto`, `diffusion`, `parametric` | `auto` | `text`, `image` | `auto` lets Palatial select a supported route. `diffusion` is faster, cheaper, and better at organic shapes; it takes one image or up to 4 named views. `parametric` is more controllable and better for articulation; it is the only model that accepts `image_paths`. **Rejected for CAD.** |
+| `effort` | `low`, `medium`, `mad_max` | `low` when parametric | `text`, `image` | Requires `shape_model: parametric`. `low` runs the parametric pipeline. `medium` and `mad_max` research the described product and author the model; they cost more and take longer. **Rejected for CAD.** |
 | `texture_model` | `auto` | `auto` | all | Selects the supported texture model. There is no other public value, so omit it. |
-| `apply_textures` | boolean | `true` | `cad` | Generate textures from the reference image. CAD only. When it is off, `texture_model` has nothing to run. |
+| `apply_textures` | boolean | `true` with a CAD reference image, `false` without one | `cad` | Generate textures from the reference image. `true` requires `image_path`. When it is off, `texture_model` has nothing to run. |
 
 ## Texture output
 
@@ -118,9 +120,9 @@ Do not mix the legacy fields with the explicit ones in one request.
 
 ## Reusing what a CAD file already has
 
-By default a CAD request rebuilds appearance and parts from the mesh the user
-supplied. These four flags say what to keep instead, which is how you run
-physics and validation on a model that is already correct.
+By default a CAD request generates appearance when a reference image is supplied
+and keeps authored parts. With no reference image, texture generation is off.
+These four flags say what to keep or regenerate explicitly.
 
 | Field | Values | Default | Sources | Notes |
 | --- | --- | --- | --- | --- |
@@ -133,24 +135,29 @@ Use `physics_validation_only` when the user says the model is already right and
 they only want it simulation-ready. Use the two narrower flags when only one
 half should be kept.
 
-**Keeping the appearance needs a format that can carry one.** A direct mesh
-upload is a single file, so it cannot prove the material and texture sidecars an
-authored appearance lives in, and the API refuses the request. On OBJ, GLB,
-GLTF, STL, PLY, and FBX, `keep_existing_textures`, `physics_validation_only`,
-and `apply_textures: false` are all rejected. Supply the model as USD, STEP, or
-IGES to keep its appearance, or let textures be generated. `keep_existing_shape`
-is unaffected and works on every format.
+**Keeping the appearance needs a format that can carry one.** A GLB can contain
+bound texture images; the API inspects the uploaded bytes when texture generation
+is off. If the GLB lacks a usable embedded texture, a request to preserve its
+appearance with a reference image is rejected. Other direct mesh uploads
+(OBJ, GLTF, STL, PLY, FBX) cannot prove their external texture sidecars from the
+single uploaded file. With a reference image, their appearance-preservation
+requests are rejected. Without a reference image, these formats may remain
+untextured by leaving `apply_textures` off, but explicit keep-existing flags
+still need appearance evidence. USD, STEP, and IGES may keep their authored
+appearance.
 
 ## Scale and orientation
 
 | Field | Values | Default | Sources | Notes |
 | --- | --- | --- | --- | --- |
-| `units` | `m`, `cm`, `mm`, `inch`, `feet` | `m` for text; format-dependent for CAD | `text`, `cad` | Required for OBJ, GLB, GLTF, STL, PLY, and FBX. Omit for STEP/IGES and USD-family files. |
+| `units` | `m`, `cm`, `mm`, `inch`, `feet` | `m` for text; format-dependent for CAD | `text`, `cad` | One scale option for OBJ, GLB, GLTF, STL, PLY, and FBX; alternatively provide `meters_per_unit`. Omit for STEP/IGES and USD-family files. |
+| `meters_per_unit` | positive finite number | none | `cad` | Exact scale for a direct mesh, as an alternative to `units`; if both are set they must agree. Omit for STEP/IGES and USD-family files. |
 | `up_direction` | `x`, `y`, `z` | `y` for text; format-dependent for CAD | `text`, `cad` | Required for OBJ, GLB, GLTF, STL, PLY, FBX, STEP, and IGES. Omit for USD-family files. |
 
 CAD source-frame rules come from the file format:
 
-- OBJ, GLB, GLTF, STL, PLY, and FBX require both `units` and `up_direction`.
+- OBJ, GLB, GLTF, STL, PLY, and FBX require `up_direction` plus `units` or
+  `meters_per_unit`.
 - STEP, STP, IGES, and IGS require `up_direction`; their converted scale is
   canonical, so `units` is rejected.
 - USD, USDA, USDC, and USDZ use authored stage metadata, so both fields are
@@ -169,11 +176,15 @@ names the rule.
 - `image` requires exactly one of `image_path`, `image_paths`, or `views`.
 - `views` needs at least 2 entries, and at most 4 under `auto` or `diffusion`.
 - `image_paths` requires `shape_model: parametric`.
-- `image` rejects `mesh_path`, `datasheet_path`, `units`, `up_direction`, and
+- `image` rejects `mesh_path`, `datasheet_path`, `units`, `meters_per_unit`, `up_direction`, and
   `apply_textures`.
-- `cad` requires both `mesh_path` and one `image_path`, and rejects
-  `image_paths`, `views`, `mesh_quality`, and `shape_model`. Source-frame fields
+- `cad` requires `mesh_path`, accepts an optional `image_path`, and rejects
+  `image_paths`, `views`, `reconstruct`, `mesh_quality`, `shape_model`, and `effort`. Source-frame fields
   then follow the file-format rules above.
+- `effort` requires `shape_model: parametric` on text or image requests.
+- `reconstruct` is rejected with `effort: medium` or `mad_max` because those
+  routes do not use the image pipeline reconstruction step.
+- `apply_textures: true` on CAD requires `image_path`.
 - Strict decimation requires exactly one target. Any other mode accepts none.
 - The four CAD reuse flags are rejected for `text` and `image`.
 - `keep_existing_shape` and `physics_validation_only` are rejected alongside
@@ -182,6 +193,7 @@ names the rule.
   `apply_textures: true`, for the same reason.
 - `body_type: soft_bodies` accepts only `newton_solver: vbd`, and
   `body_type: rigid_bodies` rejects `vbd`.
-- A direct mesh (OBJ, GLB, GLTF, STL, PLY, FBX) rejects `keep_existing_textures`,
-  `physics_validation_only`, and `apply_textures: false`, because that format
-  cannot carry the appearance they promise to keep.
+- OBJ, GLTF, STL, PLY, and FBX reject explicit requests to keep authored
+  appearance. With a reference image, they also reject `apply_textures: false`.
+  GLB is accepted for inspection; the API may reject it if no bound embedded
+  texture survives the upload.

@@ -79,6 +79,11 @@ A phone walkaround of one object. `image_paths` works only with `parametric`.
 }
 ```
 
+For a research-and-authoring build instead of the low-effort parametric pipeline,
+add `"effort": "medium"` or `"effort": "mad_max"` to a text or image
+request with `"shape_model": "parametric"`. Those routes cost more and take
+longer. Omit `effort` for the pipeline default.
+
 ## CAD
 
 A mesh the user already has, plus a reference image so textures have something
@@ -115,7 +120,6 @@ The user supplied a mesh they are happy with and only wants it simulation-ready.
   "description": "A powered conveyor roller already modelled to spec. Keep the geometry and the appearance exactly as supplied; the roller spins on its axle.",
   "engine": ["isaac_sim"],
   "mesh_path": "./cad/roller.usdc",
-  "image_path": "./references/roller.png",
   "create_articulation": true,
   "physics_validation_only": true
 }
@@ -127,9 +131,11 @@ collision, physics and validation on what was supplied. Do not add
 is rejected. USD-family files carry their own units and up axis, so neither is
 given.
 
-The USD file is not incidental. Keeping an appearance needs a format that can
-carry material and texture sidecars, so this request would be rejected with the
-same model supplied as OBJ, GLB, GLTF, STL, PLY, or FBX.
+The USD file carries its authored material and texture references. A GLB with
+embedded textures can also preserve its appearance if the API confirms a bound
+texture inside the uploaded bytes. Other direct mesh formats cannot prove
+external texture sidecars from one uploaded file. With no reference image,
+they can instead stay untextured.
 
 ## A soft object
 

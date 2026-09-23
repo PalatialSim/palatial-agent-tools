@@ -10,14 +10,15 @@ const engine = z.enum(['isaac_sim', 'mujoco', 'newton']);
 const assetName = z.string().trim().min(4).max(50).regex(/^[a-zA-Z\d_\-.\s]+$/, 'Asset name may contain only letters, digits, spaces, underscores, hyphens, and periods.');
 export const assetIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/, 'Invalid asset ID.');
 export const createSchema = z.object({
-  source: z.enum(['text', 'image', 'cad']).describe('Input type: text prompt, one or more reference images, or CAD mesh plus a reference image.'),
+  source: z.enum(['text', 'image', 'cad']).describe('Input type: text prompt, one or more reference images, or a CAD mesh with an optional reference image.'),
   name: assetName.describe('Asset name, 4-50 characters: letters, digits, spaces, underscores, hyphens, and periods.'),
   description: z.string().trim().min(1).max(500).describe('What to build, including dimensions, materials, articulation, and intended use when known.'),
   workspace: z.string().regex(/^[a-fA-F0-9]{24}$/, 'Workspace must be a 24-character MongoDB ObjectId.').describe('All sources: optional workspace ID; omit to use the API-key workspace.').optional(),
   engine: z.array(engine).min(1).max(3).default(['isaac_sim']).describe('All sources: simulator profiles; isaac_sim, mujoco, or newton; defaults to isaac_sim.').optional(),
-  image_path: z.string().describe('Image: one PNG/JPEG input; CAD: required PNG/JPEG reference; use instead of views.').optional(),
+  image_path: z.string().describe('Image: one PNG/JPEG input; CAD: optional PNG/JPEG reference for texture generation; use instead of views.').optional(),
   image_paths: z.array(z.string()).min(2).max(50).describe('Image with parametric shape_model: 2-50 PNG/JPEG inputs of the same object; each is uploaded as a file.').optional(),
   views: z.object({ front: z.string().describe('Image multiview: front PNG/JPEG path.').optional(), left: z.string().describe('Image multiview: left PNG/JPEG path.').optional(), back: z.string().describe('Image multiview: back PNG/JPEG path.').optional(), right: z.string().describe('Image multiview: right PNG/JPEG path.').optional() }).strict().describe('Image only: named views of one object; provide at least two.').optional(),
+  reconstruct: z.boolean().describe('Image pipeline only: enable or disable multiview reconstruction; defaults to true when multiple views are uploaded.').optional(),
   mesh_path: z.string().describe('CAD only: path to the mesh file.').optional(),
   datasheet_path: z.string().describe('CAD only: optional PDF datasheet.').optional(),
   create_articulation: z.boolean().describe('All sources: create joints for moving parts such as doors or wheels.').optional(),
@@ -31,6 +32,7 @@ export const createSchema = z.object({
   mesh_quality: z.enum(['low', 'medium', 'high']).describe('Image and text only: mesh quality preset; not used for CAD.').optional(),
   collision_quality: z.enum(['low', 'medium', 'high', 'x_high', 'sdf']).describe('Image, text, and CAD: collision quality; sdf means signed-distance-field collision.').optional(),
   shape_model: z.enum(['auto', 'diffusion', 'parametric']).describe('Image and text only: auto lets Palatial select a supported generation route; diffusion is faster, cheaper, and better for organic shapes and accepts one image or named multiview inputs; parametric is controllable, better for articulation, and accepts N images (up to 50).').optional(),
+  effort: z.enum(['low', 'medium', 'mad_max']).describe('Text and image with shape_model=parametric only: low uses the parametric pipeline; medium and mad_max use the research and authoring route, cost more, and take longer. CAD does not support them.').optional(),
   texture_model: z.literal('auto').describe('Image, text, and CAD: auto selects the supported texture model.').optional(),
   decimation: z.boolean().describe('Image, text, and CAD: legacy adaptive reduction switch; prefer decimation_mode.').optional(),
   optimize_textures: z.boolean().describe('Image, text, and CAD: downscale oversized maps without upscaling smaller maps.').optional(),
@@ -43,6 +45,7 @@ export const createSchema = z.object({
   keep_existing_shape: z.boolean().describe('CAD only: keep the shape and parts the mesh already has. Incompatible with regenerate_parts=true.').optional(),
   physics_validation_only: z.boolean().describe('CAD only: keep both the existing shape and the existing textures and run only collision, physics and validation. Incompatible with regenerate_parts=true and with apply_textures=true.').optional(),
   units: z.enum(['m', 'cm', 'mm', 'inch', 'feet']).describe('Text and direct-mesh CAD: source units; convert them once rather than guessing scale.').optional(),
+  meters_per_unit: z.number().positive().finite().describe('Direct-mesh CAD only: exact meters represented by one source unit; alternative to named units.').optional(),
   up_direction: z.enum(['x', 'y', 'z']).describe('Text and non-USD CAD: source up axis.').optional(),
   texture_size: z.union([z.literal(2048), z.literal(4096), z.literal(8192)]).describe('Image, text, and CAD: texture size; 2048, 4096, or 8192.').optional(),
   decimation_mode: z.enum(['auto', 'strict']).describe('Image, text, and CAD: auto is quality-driven; strict requires exactly one explicit target.').optional(),
@@ -81,31 +84,37 @@ export function validateCreate(input) {
   if (p.source === 'image' && imageInputs !== 1) throw new Error('Image generation requires image_path, image_paths, or named views.');
   if (p.source === 'image' && views.length && views.length < 2) throw new Error('Multiview requires at least two views of the same object.');
   if (p.source === 'image' && p.image_paths && p.shape_model !== 'parametric') throw new Error('image_paths is supported only with shape_model=parametric.');
+  if (p.source !== 'image' && p.reconstruct !== undefined) throw new Error('reconstruct is accepted only for image input.');
+  if (p.reconstruct !== undefined && ['medium', 'mad_max'].includes(p.effort)) throw new Error('reconstruct controls the image pipeline and is not used by medium or mad_max effort.');
   if (p.source === 'image' && ['auto', 'diffusion'].includes(p.shape_model) && views.length > 4) throw new Error('auto and diffusion accept a single image or up to four named views.');
   if (p.source === 'image' && (p.mesh_path || p.datasheet_path)) throw new Error('mesh_path and datasheet_path are only accepted for CAD.');
-  if (p.source === 'cad' && (!p.mesh_path || !p.image_path || p.image_paths || views.length)) throw new Error('CAD requires mesh_path and one reference image_path; image_paths and named views are not accepted.');
-  if (p.source === 'cad' && (p.mesh_quality || p.shape_model)) throw new Error('mesh_quality and shape_model are not used for CAD input.');
+  if (p.source === 'cad' && (!p.mesh_path || p.image_paths || views.length)) throw new Error('CAD requires mesh_path; image_path is optional, and image_paths and named views are not accepted.');
+  if (p.source === 'cad' && (p.mesh_quality || p.shape_model || p.effort)) throw new Error('mesh_quality, shape_model, and effort are not used for CAD input.');
+  if (p.effort && p.shape_model !== 'parametric') throw new Error('effort applies to shape_model=parametric only.');
+  if (p.source !== 'cad' && p.meters_per_unit !== undefined) throw new Error('meters_per_unit is accepted only for direct-mesh CAD input.');
   if (p.source === 'image' && (p.units || p.up_direction)) throw new Error('units and up_direction are not accepted for image input; include requested dimensions and orientation in the description.');
+  if (p.source === 'cad' && !p.image_path && p.apply_textures === true) throw new Error('apply_textures=true requires a CAD reference image_path.');
   if (p.source === 'cad') {
     const extension = path.extname(p.mesh_path).toLowerCase();
-    // Verified against the live API: a direct mesh is one uploaded file, so it
-    // cannot prove the material and texture sidecars an authored appearance
-    // needs, and the API refuses the request rather than quietly generating
-    // over it. Anything that turns texture generation off trips it, so name the
-    // formats that can keep an appearance instead of letting the caller meet
-    // CAD_AUTHORED_APPEARANCE_UNAVAILABLE with no idea which field caused it.
-    if (DIRECT_MESH_EXTENSIONS.has(extension)) {
-      const keeping = ['apply_textures', 'keep_existing_textures', 'physics_validation_only']
-        .filter((field) => (field === 'apply_textures' ? p[field] === false : p[field] === true));
-      if (keeping.length) throw new Error(`${keeping.join(' and ')} keeps the appearance the file was uploaded with, and a direct mesh upload cannot carry one. Let textures be generated, or supply the model as USD, STEP, or IGES.`);
+    // A direct mesh without a reference image can stay untextured, but an
+    // explicit keep-existing promise still needs authored appearance evidence.
+    // Only GLB can carry embedded texture bytes that the API will inspect.
+    if (DIRECT_MESH_EXTENSIONS.has(extension) && extension !== '.glb') {
+      const keeping = (p.image_path && p.apply_textures === false) || p.keep_existing_textures === true || p.physics_validation_only === true;
+      if (keeping) throw new Error('This direct mesh cannot preserve an authored appearance from a single upload. Use a GLB with embedded textures, supply USD/STEP/IGES, or let textures be generated.');
     }
     if (DIRECT_MESH_EXTENSIONS.has(extension)) {
-      if (!p.units || !p.up_direction) throw new Error('OBJ, GLB, GLTF, STL, PLY, and FBX inputs require both units and up_direction.');
+      if ((!p.units && p.meters_per_unit === undefined) || !p.up_direction) throw new Error('OBJ, GLB, GLTF, STL, PLY, and FBX inputs require up_direction and either units or meters_per_unit.');
+      if (p.units && p.meters_per_unit !== undefined) {
+        const namedScale = { m: 1, cm: 0.01, mm: 0.001, inch: 0.0254, feet: 0.3048 }[p.units];
+        if (namedScale !== p.meters_per_unit) throw new Error('units and meters_per_unit conflict; choose one source scale.');
+      }
     } else if (AXIS_ONLY_CAD_EXTENSIONS.has(extension)) {
       if (!p.up_direction) throw new Error('STEP and IGES inputs require up_direction.');
       if (p.units) throw new Error('STEP and IGES inputs carry canonical scale through conversion; omit units and provide up_direction only.');
+      if (p.meters_per_unit !== undefined) throw new Error('STEP and IGES inputs carry canonical scale; omit meters_per_unit.');
     } else if (SOURCE_AUTHORED_CAD_EXTENSIONS.has(extension)) {
-      if (p.units || p.up_direction) throw new Error('USD inputs use authored stage units and up-axis metadata; omit units and up_direction.');
+      if (p.units || p.up_direction || p.meters_per_unit !== undefined) throw new Error('USD inputs use authored stage units and up-axis metadata; omit units, meters_per_unit, and up_direction.');
     } else {
       throw new Error('Unsupported CAD format. Use OBJ, GLB, GLTF, STL, PLY, FBX, STEP, STP, IGES, IGS, USD, USDA, USDC, or USDZ.');
     }
@@ -199,7 +208,7 @@ export class PalatialClient {
         else for (const [view, file] of Object.entries(views)) if (file) await addFile(view, file, 'image');
       } else {
         await addFile('mesh', mesh_path, 'mesh');
-        await addFile('image', image_path, 'image');
+        if (image_path) await addFile('image', image_path, 'image');
         if (datasheet_path) await addFile('datasheet', datasheet_path, 'pdf');
       }
     }

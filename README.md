@@ -13,7 +13,7 @@ You need Node.js 22 or newer, a Palatial workspace API key, and Codex CLI or Cla
 Install the versioned package from the official GitHub Release:
 
 ```sh
-npm install --global https://github.com/PalatialSim/palatial-agent-tools/releases/download/v0.1.2/palatial-agent-tools-0.1.2.tgz
+npm install --global https://github.com/PalatialSim/palatial-agent-tools/releases/download/v0.1.3/palatial-agent-tools-0.1.3.tgz
 palatial-agent --version
 palatial-agent login
 palatial-agent doctor
@@ -61,7 +61,7 @@ For CAD:
 
 > Convert ./cad/gripper.step using ./references/gripper.png with Palatial. Its up axis is Z. Target Isaac Sim and keep the export in ./assets/gripper.
 
-Specify the target simulator, dimensions, and articulation requirements when known. Direct mesh CAD inputs require their source units and up axis; STEP/IGES require only the up axis, and USD-family files use authored stage metadata. Supported engine request values are `isaac_sim`, `mujoco`, and `newton`. Verify the output for your selected simulator; format and runtime capabilities depend on the pipeline.
+Specify the target simulator, dimensions, and articulation requirements when known. Direct mesh CAD inputs require their source scale (`units` or `meters_per_unit`) and up axis; STEP/IGES require only the up axis, and USD-family files use authored stage metadata. Supported engine request values are `isaac_sim`, `mujoco`, and `newton`. Verify the output for your selected simulator; format and runtime capabilities depend on the pipeline.
 
 ## How your agent learns to use this
 
@@ -117,7 +117,7 @@ This preference is inspectable and editable. It does not guarantee that every na
 | `palatial_download_asset` | Save a READY export ZIP and SHA-256 receipt | Writes local files; export may consume a credit. A failed asset requires user confirmation plus `allow_failed_export: true` |
 | `palatial_cancel_asset` | Cancel a specific asset's processing | Stops a job; does not imply a refund |
 
-The client accepts PNG/JPEG references and PDF datasheets. CAD requests require both a mesh file and reference image. Each local input is limited to 256 MiB; downloads are limited to 2 GiB in this preview. ZIP files are saved without automatic extraction or simulator import.
+The client accepts PNG/JPEG references and PDF datasheets. CAD requests require a mesh file; the reference image is optional and needed when generating textures from a photo. A GLB with embedded textures can retain its appearance when the server inspection confirms them. Each local input is limited to 256 MiB; downloads are limited to 2 GiB in this preview. ZIP files are saved without automatic extraction or simulator import.
 
 ## Use the CLI directly
 

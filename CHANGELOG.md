@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.3 — direct create route capabilities
+
+- `palatial_create_asset` now forwards `effort` for Parametric text and image
+  builds (`low`, `medium`, `mad_max`) and `reconstruct` for image requests.
+- CAD reference images are optional. Without one, the client uploads only the
+  mesh and leaves texture generation off by default. Direct meshes may specify
+  an exact `meters_per_unit` instead of named `units`.
+- A GLB that contains bound embedded textures can request appearance preservation;
+  the API inspects the bytes before accepting it. Other direct mesh formats
+  still cannot prove external texture sidecars from one upload.
+- The MCP schema, packaged guidance, and transport tests reflect these routes.
+
 ## 0.1.2 — create parameter parity
 
 ### Create parameter parity
