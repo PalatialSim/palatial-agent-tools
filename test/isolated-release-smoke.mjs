@@ -15,7 +15,7 @@ const scratch = await mkdtemp(path.join(tmpdir(), 'palatial-isolated-'));
 const zip = Buffer.from('504b0506000000000000000000000000000000000000', 'hex');
 const evidence = {
   environment: process.env.PALATIAL_TEST_ENVIRONMENT || 'fresh Node.js 22 Docker container',
-  application_source: 'public v0.1.2 release tarball; SHA-256 verified before execution',
+  application_source: 'public v0.1.3 release tarball; SHA-256 verified before execution',
   runtime_network: process.env.PALATIAL_TEST_NETWORK || 'none; loopback HTTPS fixtures only',
   real_palatial_api_calls: 0,
   paid_generations: 0,
@@ -32,7 +32,7 @@ const connect = async env => {
 };
 try {
   const version = spawnSync(process.execPath, [bin, '--version'], { encoding: 'utf8' });
-  assert.equal(version.status, 0); assert.equal(version.stdout.trim(), '0.1.2');
+  assert.equal(version.status, 0); assert.equal(version.stdout.trim(), '0.1.3');
   client = await connect({});
   assert.equal((await client.listTools()).tools.length, Number(process.env.EXPECTED_TOOL_COUNT || 12));
   const guide = await client.callTool({ name: 'palatial_guide', arguments: { topic: 'parameters' } });
