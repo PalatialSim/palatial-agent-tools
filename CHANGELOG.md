@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.5 — public generation route on asset reads
+
+- The API now publishes how an asset was built as `generationAgent`
+  (`diffusion`, `parametric`, or `mad_max`) and names the Mad Max progress
+  blocks `madMaxBuild`, `madMaxBuildHistory`, and `madMaxSimulation`.
+  `palatial_get_asset` surfaces the label as `generation_route` with a note on
+  how to request that route again; records without the field are unchanged.
+- `mad_max` is a route label, not a `shape_model` value. A request that copies
+  it into `shape_model` is refused before anything is sent, with the correct
+  form (`shape_model: parametric`, `effort: mad_max`) in the message.
+- `generationRoute()` and `createOptionsForRoute()` are exported from the client
+  for integrations that translate a finished asset into a new request.
+- Packaged guidance covers reading the route back and warns against replaying a
+  record's `parameters` block as a create.
+
 ## 0.1.4 — WebP reference images
 
 - `palatial_create_asset` accepts WebP reference images for single-image,

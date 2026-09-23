@@ -58,6 +58,9 @@ const AXIS_ONLY_CAD_EXTENSIONS = new Set(['.step', '.stp', '.iges', '.igs']);
 const SOURCE_AUTHORED_CAD_EXTENSIONS = new Set(['.usd', '.usda', '.usdc', '.usdz']);
 
 export function validateCreate(input) {
+  if (input && typeof input === 'object' && String(input.shape_model).toLowerCase() === 'mad_max') {
+    throw new Error('mad_max is a generation route reported on finished assets (generationAgent), not a shape_model. To request it, send shape_model=parametric with effort=mad_max.');
+  }
   const p = createSchema.parse(input);
   const views = Object.entries(p.views || {}).filter(([, file]) => file);
   if (p.source === 'text' && (p.image_path || p.image_paths || views.length || p.mesh_path || p.datasheet_path)) throw new Error('Text generation does not accept input files.');
@@ -126,6 +129,24 @@ export function validateCreate(input) {
 
 export function statusValue(record) {
   return typeof record?.status === 'string' ? record.status : record?.status?.status;
+}
+
+/**
+ * Public generation route published on asset reads. The API reports how a
+ * finished asset was built as `generationAgent`: `diffusion`, `parametric`,
+ * or `mad_max`. It is a read-side label. It is not a `shape_model` value:
+ * `shape_model` accepts `auto`, `diffusion`, or `parametric`, and a Mad Max
+ * build is requested with `shape_model: parametric` plus `effort: mad_max`.
+ */
+export const PUBLIC_GENERATION_ROUTES = Object.freeze(['diffusion', 'parametric', 'mad_max']);
+export function generationRoute(record) {
+  const value = record?.generationAgent ?? record?.generation_agent;
+  return typeof value === 'string' && PUBLIC_GENERATION_ROUTES.includes(value) ? value : null;
+}
+export function createOptionsForRoute(route) {
+  if (route === 'mad_max') return { shape_model: 'parametric', effort: 'mad_max' };
+  if (route === 'parametric' || route === 'diffusion') return { shape_model: route };
+  return {};
 }
 
 function safeMessage(error, secret) {
@@ -238,6 +259,13 @@ export class PalatialClient {
     const record = await this.request(`assets/${assetId}/status`);
     const status = statusValue(record) || 'UNKNOWN';
     const result = { asset_id: assetId, status, details: record };
+    const route = generationRoute(record);
+    if (route) {
+      result.generation_route = route;
+      result.generation_route_means = route === 'mad_max'
+        ? 'Built by the Mad Max research and authoring route. To request the same route on a new asset use shape_model=parametric with effort=mad_max; mad_max is not a shape_model value.'
+        : `Built with the ${route} shape model.`;
+    }
     if (status === 'READY') result.ready_means = 'Outputs are available; inspect validation evidence and test in your target simulator.';
     if (status === 'PROCESSING_FAILED') result.failure_guidance = {
       message: 'Processing failed. Preserve this asset ID and inspect the dashboard or available validation evidence.',
