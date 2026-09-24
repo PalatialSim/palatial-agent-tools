@@ -25,7 +25,8 @@ in conversation and never put one in a tool argument.
    only handle to the job.
 3. `palatial_get_asset` polls it. Generation takes minutes, not seconds.
 4. When status is `READY`, `palatial_download_asset` saves the export ZIP and a
-   SHA-256 receipt into a directory the user chose.
+   SHA-256 receipt into a directory the user chose. An existing export also
+   remains downloadable while a later run is paused.
 
 For several assets at once, poll with `palatial_batch_get_statuses` instead of
 one call per asset. For a stuck job, `palatial_get_pipeline_progress` shows
@@ -33,8 +34,21 @@ which stage it is on.
 
 ## Rules that cost the user money when broken
 
-- `palatial_create_asset`, `palatial_create_variant`, `palatial_reprocess_asset`
-  and `palatial_download_asset` all spend workspace credits. Reads do not.
+- Generation uses the shared organization/workspace net token balance.
+  `palatial_create_asset`, `palatial_create_variant`, and
+  `palatial_reprocess_asset` charge only for successfully completed stages.
+  Reads and export itself do not consume tokens.
+- A net balance **above zero** admits generation; the estimated total is not
+  prepaid. A `low_recommended_balance` warning recommending 10 or 20 tokens is
+  advisory. Report the warning and proceed with an authorized generation.
+- At zero or negative balance, new jobs are blocked and next stages wait. Already running
+  stages finish and can leave debt. For `insufficient_credits`, show
+  `billing_guidance` and keep polling the same asset ID. Posted credit covers
+  debt first; once the net balance is positive, processing resumes automatically.
+  Do not start checkout, reprocess, or create a replacement to resume it.
+- A first export requires a positive net balance. An existing server export
+  remains downloadable at zero or negative balance. Let the server check
+  eligibility; do not block a requested download from a balance snapshot.
 - **Never call create again to check on a job.** A second create is a second
   paid asset. Poll the ID you already have.
 - **Never retry a create whose outcome is unclear.** If a create errors with a
@@ -42,9 +56,8 @@ which stage it is on.
   check the Palatial dashboard before submitting anything else.
 - Confirm with the user before reprocessing, creating a variant, or generating
   a batch of assets from one request.
-- A failed asset may have a partial export, but requesting it still uses export
-  credits. Ask first, then pass `allow_failed_export: true` and label the result
-  partial or unvalidated.
+- A failed asset may have a partial export. Ask first, then pass
+  `allow_failed_export: true` and label the result partial or unvalidated.
 - `READY` means the outputs exist. It does not mean the asset behaves correctly
   in the user's simulator. Report generation and validation separately, and do
   not claim a simulator accepted an asset unless the user tested it.
