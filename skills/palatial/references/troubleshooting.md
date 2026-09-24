@@ -2,10 +2,16 @@
 
 ## A create call errored
 
-For `insufficient_tokens` or `insufficient_credits`, report the supplied net
-`tokens.balance` and top-up guidance. The shared organization/workspace balance
+For a postpaid credit rejection (`billingMode: postpaid_stage_v1` or
+`reason: insufficient_credits`), report the supplied net `tokens.balance` and
+top-up guidance. The shared organization/workspace balance
 must be above zero; an estimated whole-job price or recommended balance is not
 an admission requirement. Do not start checkout or retry generation automatically.
+
+Historical prepaid `insufficient_tokens` errors can require more than a positive
+balance. Preserve `tokens.required` and `tokens.shortfall` when supplied and
+follow the returned `billing_guidance`. Do not promise automatic resume for
+these errors; inspect the asset before the user requests a retry.
 
 If a submission times out or its outcome is unclear, it may still have been
 accepted. The error carries the path of a local recovery receipt holding the
@@ -101,7 +107,8 @@ file without downloading it again.
 | --- | --- |
 | Not authenticated | No key. The user runs `palatial-agent login` in a terminal, or sets `PALATIAL_API_KEY` in the environment that starts the coding agent. |
 | Invalid or expired API key | The key was rejected. The user checks it in the Palatial dashboard. |
-| `insufficient_tokens` or `insufficient_credits` | The shared organization/workspace net balance must be above zero. Report the numeric balance when returned. Credit-paused jobs resume on the same asset after enough credit posts to cover debt and leave a positive balance. |
+| Postpaid `insufficient_tokens` or `insufficient_credits` | The shared organization/workspace net balance must be above zero. Report the numeric balance when returned. Credit-paused jobs resume on the same asset after enough credit posts to cover debt and leave a positive balance. |
+| Legacy prepaid `insufficient_tokens` | Report the balance, required credits and shortfall when supplied. Follow `billing_guidance`; a positive balance alone may not meet the requirement, and automatic resume is not promised. |
 | Access denied or insufficient credits | A legacy response without a specific billing code. The user checks workspace permissions and balance in the dashboard. |
 | Asset or workspace not found | Usually a mistyped asset ID, or a key scoped to a different workspace. |
 | Request conflicts with asset state | The asset is not in a state that allows this, for example requesting a first export before outputs are ready. |

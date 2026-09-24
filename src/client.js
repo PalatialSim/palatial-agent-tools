@@ -192,6 +192,18 @@ function creditGuidance(dashboardUrl, assetId) {
   };
 }
 
+function rejectedCreditGuidance(record, dashboardUrl) {
+  const mode = record.billingMode ?? record.billing?.mode;
+  const postpaid = mode ? mode === 'postpaid_stage_v1'
+    : record.reason === 'insufficient_credits' || record.code === 'insufficient_credits';
+  if (postpaid) return creditGuidance(dashboardUrl);
+  return {
+    reason: 'insufficient_tokens',
+    message: 'Check the required credits and shortfall returned by the server, and replenish the balance in the Palatial dashboard to meet that requirement. Inspect the asset before requesting a retry; do not retry generation automatically.',
+    dashboard_url: dashboardUrl
+  };
+}
+
 function billingPause(record, dashboardUrl, assetId) {
   const reason = record?.billing?.pauseReason ?? record?.pauseReason ?? record?.status?.pauseReason;
   return reason === 'insufficient_credits' ? { billing_guidance: creditGuidance(dashboardUrl, assetId) } : {};
@@ -256,11 +268,14 @@ export class PalatialClient {
         const record = { ...payload, ...payload?.error, ...payload?.error?.details };
         if (['insufficient_tokens', 'insufficient_credits'].includes(record.code)) {
           const metadata = safeBillingValue(billingMetadata(record), this.apiKey);
-          const guidance = creditGuidance(this.base.origin);
+          const guidance = rejectedCreditGuidance(record, this.base.origin);
+          const tokens = Object.fromEntries(['balance', 'required', 'shortfall']
+            .filter(key => Number.isFinite(record.tokens?.[key]) && (key === 'balance' || record.tokens[key] >= 0))
+            .map(key => [key, record.tokens[key]]));
           throw new PalatialApiError(`Insufficient credits (HTTP ${response.status}). ${guidance.message}`, {
-            http_status: response.status, code: record.code, reason: 'insufficient_credits',
+            http_status: response.status, code: record.code, reason: guidance.reason,
             ...(typeof record.billingMode === 'string' ? { billingMode: safeBillingValue(record.billingMode, this.apiKey) } : {}),
-            ...(Number.isFinite(record.tokens?.balance) ? { tokens: { balance: record.tokens.balance } } : {}),
+            ...(Object.keys(tokens).length ? { tokens } : {}),
             ...metadata, billing_guidance: guidance
           });
         }

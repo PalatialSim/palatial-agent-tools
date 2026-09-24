@@ -49,6 +49,10 @@ which stage it is on.
 - A first export requires a positive net balance. An existing server export
   remains downloadable at zero or negative balance. Let the server check
   eligibility; do not block a requested download from a balance snapshot.
+- Historical prepaid attempts keep their original admission requirement. An
+  `insufficient_tokens` error without postpaid billing metadata can include
+  `tokens.required` and `tokens.shortfall` even when the balance is positive.
+  Follow its `billing_guidance`; do not promise automatic resume for that error.
 - **Never call create again to check on a job.** A second create is a second
   paid asset. Poll the ID you already have.
 - **Never retry a create whose outcome is unclear.** If a create errors with a
