@@ -380,7 +380,7 @@ test('export strips API credentials on storage redirect, streams ZIP, and caches
   assert.ok(!stored.includes(secret));
 });
 
-test('failed export requires explicit confirmation before any billable request', async t => {
+test('failed export requires explicit confirmation before requesting a partial package', async t => {
   const calls = [];
   const zip = Buffer.from('504b0506000000000000000000000000000000000000', 'hex');
   const { dir, client } = await fixture(t, async url => {

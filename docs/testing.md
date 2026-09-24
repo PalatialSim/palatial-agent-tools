@@ -81,7 +81,7 @@ a real version rather than a path, and remove any stale
 
 ## 3. Live Palatial canary
 
-Use a dedicated test workspace and its API key. Confirm that generation and export spend is authorized before this stage. Prefer a Palatial-provided staging environment when available; this repository does not invent a staging URL or provide free test credits.
+Use a dedicated test workspace and its API key. Confirm that generation spend is authorized before this stage. Generation charges as stages complete; export itself does not consume tokens, but the first export requires a positive net balance. Prefer a Palatial-provided staging environment when available; this repository does not invent a staging URL or provide free test credits.
 
 1. Install the exact release in the fresh environment.
 2. Run `palatial-agent login` and `palatial-agent doctor`.
