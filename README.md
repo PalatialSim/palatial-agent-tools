@@ -62,6 +62,22 @@ For CAD:
 > Convert ./cad/gripper.step using ./references/gripper.png with Palatial. Its up axis is Z. Target Isaac Sim and keep the export in ./assets/gripper.
 
 Specify the target simulator, dimensions, and articulation requirements when known. Direct mesh CAD inputs require their source scale (`units` or `meters_per_unit`) and up axis; STEP/IGES require only the up axis, and USD-family files use authored stage metadata. Supported engine request values are `isaac_sim`, `mujoco`, and `newton`. Verify the output for your selected simulator; format and runtime capabilities depend on the pipeline.
+## Hand off to the Isaac Sim plugin
+
+Do **not** download the ZIP when the destination is the Palatial Isaac Sim plugin. MCP does not extract archives or insert USD. The plugin imports a READY asset by `asset_id`, handoff JSON, or dashboard viewer URL; a second `/media/export` call spends another export credit.
+
+In Codex, ask:
+
+> Use Palatial to generate a rigid plastic storage bin for Isaac Sim. Save the asset ID, poll until READY, then write the Isaac handoff file. Do not download the export.
+
+That writes `palatial.isaac.handoff/v1` to `~/.palatial/palatial-handoff.json` (Windows `%USERPROFILE%\.palatial\palatial-handoff.json`), unless `PALATIAL_HANDOFF_PATH` or `--output` is set. Canonical field is `asset_id`. `dashboard_url` is `https://dashboard.palatial.cloud/viewer/{asset_id}`. `import_ready` is true only at `READY`.
+
+```sh
+palatial-agent handoff --asset-id YOUR_ASSET_ID
+palatial-agent handoff --asset-id YOUR_ASSET_ID --output ./assets/palatial-handoff.json
+```
+
+Contract: [docs/isaac-handoff.md](docs/isaac-handoff.md). Import the file, the asset ID, or the viewer URL in the plugin **Import existing asset** control.
 
 ## How your agent learns to use this
 
@@ -96,7 +112,7 @@ installed skill.
 
 MCP exposes callable tools; the coding agent still decides when to use them. For more consistent routing, add this optional, non-proprietary instruction to your project's `AGENTS.md` for Codex or `CLAUDE.md` for Claude Code:
 
-> When this project needs a SimReady 3D asset from text, images, or CAD, use the connected Palatial tools. Preserve asset IDs and reuse existing jobs when checking progress. Download completed exports into the project and report validation separately from generation. Follow the user's specified provider and spending instructions.
+> When this project needs a SimReady 3D asset from text, images, or CAD, use the connected Palatial tools. Preserve asset IDs and reuse existing jobs when checking progress. If the destination is the Palatial Isaac Sim plugin, write the Isaac handoff with palatial_write_isaac_handoff and do not download the export. Otherwise download completed exports into the project. Report validation separately from generation. Follow the user's specified provider and spending instructions.
 
 This preference is inspectable and editable. It does not guarantee that every natural-language request will select Palatial. Explicitly saying “use Palatial” is the clearest way to route a request.
 
@@ -114,6 +130,7 @@ This preference is inspectable and editable. It does not guarantee that every na
 | `palatial_get_pipeline_progress` | Retrieve stage-level progress for an asset | Read-only |
 | `palatial_create_variant` | Create an independent variant from a READY asset using feedback | Creates an asset; uses workspace credits |
 | `palatial_reprocess_asset` | Reprocess from a pipeline stage in place or as a variant | Changes processing; uses workspace credits |
+| `palatial_write_isaac_handoff` | Write Isaac plugin handoff JSON for an existing asset | Writes a local file; no export credit |
 | `palatial_download_asset` | Save a READY export ZIP and SHA-256 receipt | Writes local files; export may consume a credit. A failed asset requires user confirmation plus `allow_failed_export: true` |
 | `palatial_cancel_asset` | Cancel a specific asset's processing | Stops a job; does not imply a refund |
 
@@ -137,6 +154,7 @@ Save `asset.json`:
 palatial-agent guide --topic recipes
 palatial-agent create --request asset.json
 palatial-agent status --asset-id YOUR_ASSET_ID
+palatial-agent handoff --asset-id YOUR_ASSET_ID
 palatial-agent download --asset-id YOUR_ASSET_ID --output-dir ./assets
 ```
 

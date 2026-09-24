@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { mkdir, open, readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
+import { buildHandoff, detailsFields, isaacPluginGuidance, writeHandoffFile } from './handoff.js';
 
 export const DEFAULT_API_URL = 'https://dashboard.palatial.cloud/api/v1/external/';
 const engine = z.enum(['isaac_sim', 'mujoco', 'newton']);
@@ -228,6 +229,7 @@ export class PalatialClient {
     const assetId = result?.id;
     if (typeof assetId !== 'string' || !assetIdSchema.safeParse(assetId).success) throw new Error(`Create response did not contain a valid asset ID. The job may exist: inspect the Palatial dashboard before submitting again. Recovery receipt: ${requestReceipt}`);
     const created = { asset_id: assetId, status: statusValue(result) || 'SUBMITTED', dashboard_url: this.base.origin, request_id: requestId, receipt_file: requestReceipt, message: 'Save this asset ID. Use palatial_get_asset to track it; do not submit again to poll.' };
+    if ((p.engine || ['isaac_sim']).includes('isaac_sim')) created.isaac_plugin = isaacPluginGuidance(assetId, this.base.origin);
     try { await writeFile(requestReceipt, JSON.stringify({ ...intent, ...created }, null, 2) + '\n', { mode: 0o600 }); }
     catch { created.receipt_warning = 'Asset was submitted successfully, but the local receipt could not be updated. Save asset_id from this response.'; }
     return created;
@@ -238,7 +240,10 @@ export class PalatialClient {
     const record = await this.request(`assets/${assetId}/status`);
     const status = statusValue(record) || 'UNKNOWN';
     const result = { asset_id: assetId, status, details: record };
-    if (status === 'READY') result.ready_means = 'Outputs are available; inspect validation evidence and test in your target simulator.';
+    if (status === 'READY') {
+      result.ready_means = 'Outputs are available; inspect validation evidence and test in your target simulator.';
+      result.isaac_plugin = isaacPluginGuidance(assetId, this.base.origin, { ready: true });
+    }
     if (status === 'PROCESSING_FAILED') result.failure_guidance = {
       message: 'Processing failed. Preserve this asset ID and inspect the dashboard or available validation evidence.',
       failed_stage: record.failedStageKey || record.failed_stage || record.stage || null,
@@ -276,14 +281,33 @@ export class PalatialClient {
     if (typeof variantId !== 'string' || !assetIdSchema.safeParse(variantId).success) {
       throw new Error('Variant response did not contain a valid asset ID. Inspect the Palatial dashboard before retrying.');
     }
-    return { asset_id: variantId, parent_asset_id: assetId, status: statusValue(result) || 'SUBMITTED', details: result, message: 'Variant created as an independent asset. Use palatial_get_asset to track it; do not submit again to poll.' };
+    return { asset_id: variantId, parent_asset_id: assetId, status: statusValue(result) || 'SUBMITTED', details: result, isaac_plugin: isaacPluginGuidance(variantId, this.base.origin), message: 'Variant created as an independent asset. Use palatial_get_asset to track it; do not submit again to poll.' };
   }
 
   async cancel(assetId) {
     assetIdSchema.parse(assetId);
     return this.request(`assets/${assetId}/cancel-processing`, { method: 'DELETE' });
   }
-
+  async writeIsaacHandoff(assetId, outputPath) {
+    const current = await this.getAsset(assetId);
+    let extras = {};
+    try { extras = detailsFields(await this.getAssetDetails(assetId)); }
+    catch { extras = {}; }
+    const payload = buildHandoff({
+      asset_id: assetId,
+      status: current.status,
+      api_origin: this.base.origin,
+      ...extras
+    });
+    const handoff_file = await writeHandoffFile(payload, outputPath);
+    return {
+      ...payload,
+      handoff_file,
+      message: payload.import_ready
+        ? 'Handoff written. Do not download this asset; import the JSON file in the Palatial Isaac Sim plugin so the plugin spends the export credit.'
+        : 'Handoff written, but the asset is not READY. Poll with palatial_get_asset and rewrite the handoff when READY. Do not download.'
+    };
+  }
   async download(assetId, outputDir, { allowFailedExport = false } = {}) {
     assetIdSchema.parse(assetId);
     const directory = path.resolve(outputDir);

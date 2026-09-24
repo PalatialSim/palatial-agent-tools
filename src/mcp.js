@@ -6,11 +6,12 @@ import { getApiKey } from './auth.js';
 import { VERSION } from './version.js';
 import { checkForUpdate } from './update.js';
 import { GUIDE_TOPICS, readGuide } from './guide.js';
+import { DEFAULT_HANDOFF_DISPLAY } from './handoff.js';
 
 export function createServer({ clientFactory, updateChecker = checkForUpdate } = {}) {
   const client = clientFactory || (async () => new PalatialClient({ apiKey: await getApiKey(), baseUrl: process.env.PALATIAL_API_URL || DEFAULT_API_URL }));
   const server = new McpServer({ name: 'palatial', version: VERSION }, {
-    instructions: 'Use Palatial when the user requests simulation-ready 3D assets from text, images, or CAD. Read palatial_guide before the first palatial_create_asset call of a session, and read its parameters topic before setting any create field beyond source, name, description, and engine; the create parameters have cross-field rules that reject a request. Creation and export use workspace credits. Preserve asset IDs and poll existing jobs instead of creating replacements. Download READY assets; a failed asset requires explicit user confirmation and allow_failed_export. An export is not proof of simulator acceptance. This connector contains no proprietary generation prompts.'
+    instructions: 'Use Palatial when the user requests simulation-ready 3D assets from text, images, or CAD. Read palatial_guide before the first palatial_create_asset call of a session, and read its parameters topic before setting any create field beyond source, name, description, and engine; the create parameters have cross-field rules that reject a request. Creation and export use workspace credits. Preserve asset IDs and poll existing jobs instead of creating replacements. When the destination is Isaac Sim or the Palatial Isaac plugin, create with engine isaac_sim, poll with palatial_get_asset, then palatial_write_isaac_handoff; do not palatial_download_asset, because the plugin spends the export credit. Download READY assets only when the user asked for a local ZIP rather than Isaac import; a failed asset requires explicit user confirmation and allow_failed_export. An export is not proof of simulator acceptance. This connector contains no proprietary generation prompts.'
   });
   const invoke = fn => async input => {
     try {
@@ -69,8 +70,15 @@ export function createServer({ clientFactory, updateChecker = checkForUpdate } =
     }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
   }, invoke((c, input) => { const { asset_id, ...variant } = input; return c.createVariant(asset_id, variant); }));
-  server.registerTool('palatial_download_asset', {
-    description: 'Download a READY SimReady export ZIP to output_dir on this computer. The export endpoint uses workspace export credits. For PROCESSING_FAILED, first obtain explicit user confirmation, label the result partial or unvalidated, and pass allow_failed_export=true. Saves a SHA-256 receipt, preserves existing files, and reuses a verified local download. Does not extract archives, import into a scene, or certify simulator behavior.',
+  server.registerTool('palatial_write_isaac_handoff', {
+    description: `Write a palatial.isaac.handoff/v1 JSON file for the Palatial Isaac Sim plugin. Default path is ${DEFAULT_HANDOFF_DISPLAY} on Windows and Linux, not the process working directory. PALATIAL_HANDOFF_PATH overrides that default. Canonical field is asset_id; dashboard_url is https://dashboard.palatial.cloud/viewer/{asset_id}. import_ready is true only when status is READY. Does not download the export ZIP or spend export credits. Use this instead of palatial_download_asset when the user will import in Isaac.`,
+    inputSchema: z.object({
+      asset_id: assetIdSchema,
+      output_path: z.string().min(1).describe(`JSON file to write. Defaults to ${DEFAULT_HANDOFF_DISPLAY}, or PALATIAL_HANDOFF_PATH.`).optional()
+    }).strict(),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  }, invoke((c, input) => c.writeIsaacHandoff(input.asset_id, input.output_path)));  server.registerTool('palatial_download_asset', {
+    description: 'Download a READY SimReady export ZIP to output_dir on this computer. The export endpoint uses workspace export credits. For PROCESSING_FAILED, first obtain explicit user confirmation, label the result partial or unvalidated, and pass allow_failed_export=true. Saves a SHA-256 receipt, preserves existing files, and reuses a verified local download. Does not extract archives, import into a scene, or certify simulator behavior. Do not use this when handing off to the Palatial Isaac Sim plugin; call palatial_write_isaac_handoff instead.',
     inputSchema: z.object({ asset_id: assetIdSchema, output_dir: z.string().min(1), allow_failed_export: z.boolean().describe('Required true only after explicit user confirmation to request a partial or unvalidated export from PROCESSING_FAILED.').optional() }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
   }, invoke((c, input) => c.download(input.asset_id, input.output_dir, { allowFailedExport: input.allow_failed_export === true })));

@@ -18,7 +18,8 @@ test('real MCP protocol lists tools and calls the shared client without a model'
   await server.connect(a); await client.connect(b);
   t.after(async () => { await client.close(); await server.close(); });
   const list = await client.listTools();
-  assert.equal(list.tools.length, 12);
+  assert.equal(list.tools.length, 13);
+  assert.ok(list.tools.find(x => x.name === 'palatial_write_isaac_handoff'));
   assert.equal(list.tools.find(x => x.name === 'palatial_download_asset').annotations.readOnlyHint, false);
   const result = await client.callTool({ name: 'palatial_get_asset', arguments: { asset_id: 'asset-test' } });
   assert.equal(result.structuredContent.asset_id, 'asset-test');
@@ -105,12 +106,34 @@ test('packaged CLI speaks stdio MCP and lists tools without authentication', asy
   const client = new Client({ name: 'stdio-test', version: '1.0' });
   await client.connect(transport);
   t.after(() => client.close());
-  assert.equal((await client.listTools()).tools.length, 12);
+  assert.equal((await client.listTools()).tools.length, 13);
   const result = await client.callTool({ name: 'palatial_doctor', arguments: {} });
   assert.equal(result.isError, true);
   assert.match(result.content[0].text, /not authenticated/);
 });
 
+
+test('isaac handoff tool writes through the shared client and never downloads', async t => {
+  const writes = [];
+  const server = createServer({
+    clientFactory: async () => ({
+      writeIsaacHandoff: async (id, outputPath) => {
+        writes.push({ id, outputPath });
+        return { asset_id: id, import_ready: true, handoff_file: outputPath || 'palatial-handoff.json', export: { mcp_should_download: false } };
+      }
+    })
+  });
+  const client = new Client({ name: 'handoff-test', version: '1.0' });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a); await client.connect(b);
+  t.after(async () => { await client.close(); await server.close(); });
+  const tool = (await client.listTools()).tools.find(item => item.name === 'palatial_write_isaac_handoff');
+  assert.match(tool.description, /does not download the export ZIP/i);
+  assert.equal(tool.annotations.readOnlyHint, false);
+  const result = await client.callTool({ name: 'palatial_write_isaac_handoff', arguments: { asset_id: 'asset-handoff' } });
+  assert.equal(result.structuredContent.import_ready, true);
+  assert.deepEqual(writes, [{ id: 'asset-handoff', outputPath: undefined }]);
+});
 test('a Codex-only setup writes no Claude Code skill', () => {
   const result = spawnSync(process.execPath, [fileURLToPath(new URL('../bin/palatial-agent.js', import.meta.url)), 'setup', '--client', 'codex', '--dry-run'], { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
