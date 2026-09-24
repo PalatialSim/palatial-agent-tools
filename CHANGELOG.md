@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Preserve sanitized billing metadata, advisory balance warnings, and financial
+  error codes through the client, submission receipts, and MCP responses.
+- Explain postpaid stage charges and same-asset resumption after a posted top-up
+  leaves the shared net balance positive. Export itself does not consume tokens;
+  existing exports remain downloadable during a later paused run.
+
 ## 0.1.5 — public generation route on asset reads
 
 - The API now publishes how an asset was built as `generationAgent`

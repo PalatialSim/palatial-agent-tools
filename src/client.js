@@ -157,6 +157,77 @@ function safeMessage(error, secret) {
   });
 }
 
+function safeBillingValue(value, secret) {
+  if (typeof value === 'string') return safeMessage(new Error(value), secret);
+  if (Array.isArray(value)) return value.map(item => safeBillingValue(item, secret));
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+    key, /api.?key|authorization|password|secret|cookie|signature|access.?token|refresh.?token|credential/i.test(key) ? '[REDACTED]' : safeBillingValue(item, secret)
+  ]));
+  return value;
+}
+
+// Keep additive billing fields, including in batch/detail responses, without
+// altering unrelated media URLs that callers may need to access their asset.
+function sanitizeBillingFields(value, secret) {
+  if (Array.isArray(value)) return value.map(item => sanitizeBillingFields(item, secret));
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key,
+    ['billing', 'warnings'].includes(key) ? safeBillingValue(item, secret) : sanitizeBillingFields(item, secret)
+  ]));
+}
+
+function billingMetadata(record) {
+  return {
+    ...(record?.billing && typeof record.billing === 'object' && !Array.isArray(record.billing) ? { billing: record.billing } : {}),
+    ...(Array.isArray(record?.warnings) ? { warnings: record.warnings } : {})
+  };
+}
+
+function creditGuidance(dashboardUrl, assetId) {
+  return {
+    reason: 'insufficient_credits',
+    message: 'Top up the shared organization/workspace balance in the Palatial dashboard so the net balance is above zero. Posted credits cover debt first; a credit-paused job resumes automatically on the same asset once its net balance is positive. Keep its asset ID and poll it; do not create a replacement or retry generation automatically.',
+    dashboard_url: dashboardUrl,
+    ...(assetId ? { resume_asset_id: assetId } : {})
+  };
+}
+
+function rejectedCreditGuidance(record, dashboardUrl) {
+  const mode = record.billingMode ?? record.billing?.mode;
+  const postpaid = mode ? mode === 'postpaid_stage_v1'
+    : record.reason === 'insufficient_credits' || record.code === 'insufficient_credits';
+  if (postpaid) return creditGuidance(dashboardUrl);
+  return {
+    reason: 'insufficient_tokens',
+    message: 'Check the required credits and shortfall returned by the server, and replenish the balance in the Palatial dashboard to meet that requirement. Inspect the asset before requesting a retry; do not retry generation automatically.',
+    dashboard_url: dashboardUrl
+  };
+}
+
+function billingPause(record, dashboardUrl, assetId) {
+  const reason = record?.billing?.pauseReason ?? record?.pauseReason ?? record?.status?.pauseReason;
+  return reason === 'insufficient_credits' ? { billing_guidance: creditGuidance(dashboardUrl, assetId) } : {};
+}
+
+export class PalatialApiError extends Error {
+  constructor(message, details) {
+    super(message);
+    this.name = 'PalatialApiError';
+    Object.assign(this, details);
+  }
+
+  toJSON() {
+    const fields = ['http_status', 'code', 'reason', 'billingMode', 'tokens', 'billing', 'warnings', 'billing_guidance'];
+    return { message: this.message, ...Object.fromEntries(fields.filter(key => this[key] !== undefined).map(key => [key, this[key]])) };
+  }
+}
+
+function errorWithContext(error, context, secret) {
+  const message = safeMessage(error, secret) + context;
+  if (error instanceof PalatialApiError) { error.message = message; return error; }
+  return new Error(message);
+}
+
 async function sha256File(filename) {
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(filename)) hash.update(chunk);
@@ -191,10 +262,28 @@ export class PalatialClient {
     if (raw && response.status >= 300 && response.status < 400) return response;
     if (!response.ok) {
       const reason = { 400: 'Invalid request', 401: 'Invalid or expired API key', 403: 'Access denied or insufficient credits', 404: 'Asset or workspace not found', 409: 'Request conflicts with asset state', 429: 'Rate limit reached' }[response.status] || 'Service request failed';
+      if ([402, 403, 409].includes(response.status)) {
+        let payload;
+        try { payload = await response.json(); } catch { /* Legacy non-JSON errors use the generic fallback. */ }
+        const record = { ...payload, ...payload?.error, ...payload?.error?.details };
+        if (['insufficient_tokens', 'insufficient_credits'].includes(record.code)) {
+          const metadata = safeBillingValue(billingMetadata(record), this.apiKey);
+          const guidance = rejectedCreditGuidance(record, this.base.origin);
+          const tokens = Object.fromEntries(['balance', 'required', 'shortfall']
+            .filter(key => Number.isFinite(record.tokens?.[key]) && (key === 'balance' || record.tokens[key] >= 0))
+            .map(key => [key, record.tokens[key]]));
+          throw new PalatialApiError(`Insufficient credits (HTTP ${response.status}). ${guidance.message}`, {
+            http_status: response.status, code: record.code, reason: guidance.reason,
+            ...(typeof record.billingMode === 'string' ? { billingMode: safeBillingValue(record.billingMode, this.apiKey) } : {}),
+            ...(Object.keys(tokens).length ? { tokens } : {}),
+            ...metadata, billing_guidance: guidance
+          });
+        }
+      }
       throw new Error(`${reason} (HTTP ${response.status}).${method !== 'GET' && response.status >= 500 ? ' Submission outcome is uncertain; inspect your workspace before retrying.' : ''}`);
     }
     if (raw) return response;
-    try { return await response.json(); } catch { throw new Error('Palatial returned an invalid JSON response. For a create request, inspect your workspace before submitting again.'); }
+    try { return sanitizeBillingFields(await response.json(), this.apiKey); } catch { throw new Error('Palatial returned an invalid JSON response. For a create request, inspect your workspace before submitting again.'); }
   }
 
   async doctor() {
@@ -244,11 +333,11 @@ export class PalatialClient {
     try {
       result = await this.request(`assets/create/${{ text: 'texttosim', image: 'imagetosim', cad: 'cadtosim' }[source]}`, { method: 'POST', body });
     } catch (error) {
-      throw new Error(`${safeMessage(error, this.apiKey)} Recovery receipt: ${requestReceipt}`);
+      throw errorWithContext(error, ` Recovery receipt: ${requestReceipt}`, this.apiKey);
     }
     const assetId = result?.id;
     if (typeof assetId !== 'string' || !assetIdSchema.safeParse(assetId).success) throw new Error(`Create response did not contain a valid asset ID. The job may exist: inspect the Palatial dashboard before submitting again. Recovery receipt: ${requestReceipt}`);
-    const created = { asset_id: assetId, status: statusValue(result) || 'SUBMITTED', dashboard_url: this.base.origin, request_id: requestId, receipt_file: requestReceipt, message: 'Save this asset ID. Use palatial_get_asset to track it; do not submit again to poll.' };
+    const created = { asset_id: assetId, status: statusValue(result) || 'SUBMITTED', ...billingMetadata(result), ...billingPause(result, this.base.origin, assetId), dashboard_url: this.base.origin, request_id: requestId, receipt_file: requestReceipt, message: 'Save this asset ID. Use palatial_get_asset to track it; do not submit again to poll.' };
     try { await writeFile(requestReceipt, JSON.stringify({ ...intent, ...created }, null, 2) + '\n', { mode: 0o600 }); }
     catch { created.receipt_warning = 'Asset was submitted successfully, but the local receipt could not be updated. Save asset_id from this response.'; }
     return created;
@@ -258,7 +347,7 @@ export class PalatialClient {
     assetIdSchema.parse(assetId);
     const record = await this.request(`assets/${assetId}/status`);
     const status = statusValue(record) || 'UNKNOWN';
-    const result = { asset_id: assetId, status, details: record };
+    const result = { asset_id: assetId, status, details: record, ...billingMetadata(record), ...billingPause(record, this.base.origin, assetId) };
     const route = generationRoute(record);
     if (route) {
       result.generation_route = route;
@@ -270,9 +359,9 @@ export class PalatialClient {
     if (status === 'PROCESSING_FAILED') result.failure_guidance = {
       message: 'Processing failed. Preserve this asset ID and inspect the dashboard or available validation evidence.',
       failed_stage: record.failedStageKey || record.failed_stage || record.stage || null,
-      refund: 'Charges for failed stages are refunded.',
-      reprocessing: 'Reprocessing charges only for the remaining stages. Confirm before starting it.',
-      next_steps: ['Open the asset in the Palatial dashboard.', 'Ask the user before requesting a partial or unvalidated export, because export uses credits.', 'Contact support with this asset ID if the failure is unclear.']
+      billing: 'Only successfully completed stages are charged. Failed stages are not charged.',
+      reprocessing: 'Reprocessing uses per-stage completion billing. Confirm before starting it.',
+      next_steps: ['Open the asset in the Palatial dashboard.', 'Ask the user before requesting a partial or unvalidated export.', 'Contact support with this asset ID if the failure is unclear.']
     };
     return result;
   }
@@ -304,7 +393,7 @@ export class PalatialClient {
     if (typeof variantId !== 'string' || !assetIdSchema.safeParse(variantId).success) {
       throw new Error('Variant response did not contain a valid asset ID. Inspect the Palatial dashboard before retrying.');
     }
-    return { asset_id: variantId, parent_asset_id: assetId, status: statusValue(result) || 'SUBMITTED', details: result, message: 'Variant created as an independent asset. Use palatial_get_asset to track it; do not submit again to poll.' };
+    return { asset_id: variantId, parent_asset_id: assetId, status: statusValue(result) || 'SUBMITTED', details: result, ...billingMetadata(result), ...billingPause(result, this.base.origin, variantId), message: 'Variant created as an independent asset. Use palatial_get_asset to track it; do not submit again to poll.' };
   }
 
   async cancel(assetId) {
@@ -317,7 +406,7 @@ export class PalatialClient {
     const directory = path.resolve(outputDir);
     const destination = path.join(directory, `${assetId}-export.zip`);
     const receiptPath = path.join(directory, `${assetId}-receipt.json`);
-    // A matching receipt avoids a second billable export request after success.
+    // A matching receipt avoids downloading the same export again after success.
     try {
       const receipt = JSON.parse(await readFile(receiptPath, 'utf8'));
       if (receipt.asset_id === assetId && receipt.file === destination) {
@@ -331,10 +420,11 @@ export class PalatialClient {
       catch (error) { if (error.code !== 'ENOENT') throw error; }
     }
     const current = await this.getAsset(assetId);
-    if (current.status === 'PROCESSING_FAILED' && !allowFailedExport) throw new Error('Asset processing failed. A partial or unvalidated export may exist, but requesting it uses export credits. Ask the user first, then retry with allow_failed_export=true.');
-    if (current.status !== 'READY' && current.status !== 'PROCESSING_FAILED') throw new Error(`Asset is ${current.status}; wait until processing completes before exporting.`);
+    if (current.status === 'PROCESSING_FAILED' && !allowFailedExport) throw new Error('Asset processing failed. A partial or unvalidated export may exist. Ask the user first, then retry with allow_failed_export=true.');
+    const existingExport = current.details?.export?.status === 'READY' || Boolean(current.details?.export?.key);
+    if (current.status !== 'READY' && current.status !== 'PROCESSING_FAILED' && !existingExport) throw new Error(`Asset is ${current.status}; ${current.billing_guidance?.message || 'wait until processing completes before exporting.'}`);
     await mkdir(directory, { recursive: true });
-    // Reserve the destination before asking for a billable export.
+    // Reserve the destination before requesting an export.
     const file = await open(destination, 'wx', 0o600);
     let complete = false;
     try {
@@ -368,7 +458,7 @@ export class PalatialClient {
       complete = true;
       return { ...receipt, receipt_file: receiptPath, cached: false };
     } catch (error) {
-      throw new Error(safeMessage(error, this.apiKey) + (current.status === 'PROCESSING_FAILED' ? ' No export package was available for this failed job; failed-stage charges are refunded. Reprocessing charges only for remaining stages and requires confirmation.' : ' No automatic export retry was made; an export credit may already have been consumed.'));
+      throw errorWithContext(error, ' No automatic export retry was made. Export itself does not consume tokens.' + (current.status === 'PROCESSING_FAILED' ? ' Any available export may be partial or unvalidated. Reprocessing uses per-stage completion billing and requires confirmation.' : ''), this.apiKey);
     } finally {
       await file.close();
       if (!complete) await unlink(destination).catch(() => {});
