@@ -98,12 +98,14 @@ test('a credit pause keeps the same asset and clears guidance when the server re
   const { client } = await fixture(t, async (url, init) => {
     calls.push({ path: url.pathname, method: init.method });
     return json(calls.length === 1
-      ? { status: 'PROCESSING_PAUSED', billing: { mode: 'postpaid_stage_v1', paused: true, pauseReason: 'insufficient_credits', autoResume: true, balance: { tokens: -1 } } }
+      ? { status: 'PROCESSING_PAUSED', billing: { mode: 'postpaid_stage_v1', paused: true, pauseReason: 'insufficient_credits', autoResume: true, balance: { tokens: -1 },
+        stages: [{ stageKey: 'shape-generation', tokenCost: 45, chargedAt: '2026-09-24T12:00:00.000Z' }] } }
       : { status: 'PROCESSING_GEOMETRY', billing: { mode: 'postpaid_stage_v1', paused: false, pauseReason: null, balance: { tokens: 2 } } });
   });
   const paused = await client.getAsset('asset-existing');
   assert.equal(paused.status, 'PROCESSING_PAUSED');
   assert.equal(paused.billing?.paused, true);
+  assert.deepEqual(paused.billing.stages, [{ stageKey: 'shape-generation', tokenCost: 45, chargedAt: '2026-09-24T12:00:00.000Z' }]);
   assert.equal(paused.billing_guidance.reason, 'insufficient_credits');
   assert.equal(paused.billing_guidance.resume_asset_id, 'asset-existing');
   assert.match(paused.billing_guidance.message, /automatically/i);
@@ -139,6 +141,19 @@ test('a continuation credit conflict keeps the reported code and balance without
     return true;
   });
   assert.equal(calls, 1);
+});
+
+test('legacy prepaid credit rejection preserves the full-price shortfall without promising automatic resume', async t => {
+  const { client } = await fixture(t, async () => json({ code: 'insufficient_tokens',
+    tokens: { balance: 37, required: 37.5, shortfall: 0.5, secret } }, 403));
+  await assert.rejects(client.create(basic), error => {
+    assert.deepEqual(error.tokens, { balance: 37, required: 37.5, shortfall: 0.5 });
+    assert.doesNotMatch(error.message, /resumes automatically|above zero/i);
+    assert.match(error.message, /required|requirement/i);
+    assert.equal(error.billing_guidance.reason, 'insufficient_tokens');
+    assert.ok(!JSON.stringify(error).includes(secret));
+    return true;
+  });
 });
 
 test('an export credit rejection survives cleanup and never claims an export charge', async t => {
