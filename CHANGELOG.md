@@ -7,6 +7,9 @@
 - Explain postpaid stage charges and same-asset resumption after a posted top-up
   leaves the shared net balance positive. Export itself does not consume tokens;
   existing exports remain downloadable during a later paused run.
+- Wrap array-valued list and batch results in MCP `structuredContent` records
+  while keeping their raw JSON in the text response, as required by the MCP
+  result schema.
 
 ## 0.1.7 — stop and retry researching jobs
 

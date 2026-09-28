@@ -117,6 +117,11 @@ This preference is inspectable and editable. It does not guarantee that every na
 | `palatial_download_asset` | Save an available export ZIP and SHA-256 receipt | Writes local files; export itself is free. A failed asset requires user confirmation plus `allow_failed_export: true` |
 | `palatial_cancel_asset` | Cancel a specific asset's processing | Stops a job; does not imply a refund |
 
+MCP `structuredContent` is always an object as required by the protocol. When
+an API response is an array, `palatial_list_assets` exposes it as `data` and
+`palatial_batch_get_statuses` exposes it as `statuses`; the text response keeps
+the original JSON array for clients that read text only.
+
 The client accepts PNG/JPEG/WebP references and PDF datasheets. CAD requests require a mesh file; the reference image is optional and needed when generating textures from a photo. A GLB with embedded textures can retain its appearance when the server inspection confirms them. Each local input is limited to 256 MiB; downloads are limited to 2 GiB in this preview. ZIP files are saved without automatic extraction or simulator import.
 
 ## Billing and paused jobs
