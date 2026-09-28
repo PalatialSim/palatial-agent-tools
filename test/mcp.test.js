@@ -26,6 +26,29 @@ test('real MCP protocol lists tools and calls the shared client without a model'
   assert.equal(invalid.isError, true);
 });
 
+test('array-valued list and batch tools return MCP-valid structured records', async t => {
+  const listedAssets = [{ asset_id: 'asset-list', status: 'READY' }];
+  const batchedStatuses = [{ asset_id: 'asset-batch', status: 'PROCESSING' }];
+  const server = createServer({ clientFactory: async () => ({
+    listAssets: async () => listedAssets,
+    batchStatus: async () => batchedStatuses
+  }) });
+  const client = new Client({ name: 'array-result-test', version: '1.0' });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a); await client.connect(b);
+  t.after(async () => { await client.close(); await server.close(); });
+
+  const listed = await client.callTool({ name: 'palatial_list_assets', arguments: {} });
+  assert.notEqual(listed.isError, true);
+  assert.deepEqual(listed.structuredContent, { data: listedAssets });
+  assert.deepEqual(JSON.parse(listed.content[0].text), listedAssets);
+
+  const statuses = await client.callTool({ name: 'palatial_batch_get_statuses', arguments: { asset_ids: ['asset-batch'] } });
+  assert.notEqual(statuses.isError, true);
+  assert.deepEqual(statuses.structuredContent, { statuses: batchedStatuses });
+  assert.deepEqual(JSON.parse(statuses.content[0].text), batchedStatuses);
+});
+
 test('create tool explains API options in its MCP schema', async t => {
   const server = createServer({ clientFactory: async () => ({}) });
   const client = new Client({ name: 'schema-test', version: '1.0' });
