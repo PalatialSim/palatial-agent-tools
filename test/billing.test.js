@@ -119,6 +119,33 @@ test('a credit pause keeps the same asset and clears guidance when the server re
   ]);
 });
 
+test('all asset read and continuation responses expose the same credit-pause guidance', async t => {
+  const { client } = await fixture(t, async url => {
+    const path = url.pathname;
+    const billing = { mode: 'postpaid_stage_v1', paused: true, pauseReason: 'insufficient_credits', autoResume: true, balance: { tokens: -1 } };
+    if (path.endsWith('/statuses')) return json([{ id: 'asset-batch', status: 'PROCESSING_PAUSED', billing }]);
+    if (path.endsWith('/assets')) return json({ data: [{ id: 'asset-list', status: 'PROCESSING_PAUSED', billing }] });
+    if (path.endsWith('/pipeline-runs/current')) return json({ run: { status: 'paused', billingPauseReason: 'insufficient_credits' } });
+    if (path.endsWith('/reprocess')) return json({ id: 'asset-reprocess', status: 'PROCESSING_PAUSED', billing });
+    return json({ id: 'asset-detail', status: 'PROCESSING_PAUSED', billing });
+  });
+
+  const details = await client.getAssetDetails('asset-detail');
+  assert.equal(details.billing_guidance.resume_asset_id, 'asset-detail');
+
+  const statuses = await client.batchStatus(['asset-batch']);
+  assert.equal(statuses[0].billing_guidance.resume_asset_id, 'asset-batch');
+
+  const listed = await client.listAssets();
+  assert.equal(listed.data[0].billing_guidance.resume_asset_id, 'asset-list');
+
+  const progress = await client.pipelineProgress('asset-progress');
+  assert.equal(progress.billing_guidance.resume_asset_id, 'asset-progress');
+
+  const continuation = await client.reprocess('asset-reprocess', { from: 'geometry' });
+  assert.equal(continuation.billing_guidance.resume_asset_id, 'asset-reprocess');
+});
+
 test('a nonpositive balance does not turn an in-flight stage into a client-invented pause', async t => {
   const { client } = await fixture(t, async () => json({ status: 'PROCESSING_GEOMETRY', billing: { mode: 'postpaid_stage_v1', paused: false, balance: { tokens: -2 } } }));
   const result = await client.getAsset('asset-running');
