@@ -33,7 +33,7 @@ try {
   const client = new Client({ name: 'current-package-smoke', version: '1.0' });
   await client.connect(transport);
   try {
-    assert.equal((await client.listTools()).tools.length, 12);
+    assert.equal((await client.listTools()).tools.length, 13);
     const result = await client.callTool({ name: 'palatial_guide', arguments: { topic: 'parameters' } });
     assert.match(result.content[0].text, /collision_quality/);
     const resource = await client.readResource({ uri: 'palatial://guide/parameters' });
