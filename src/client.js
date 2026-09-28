@@ -205,8 +205,28 @@ function rejectedCreditGuidance(record, dashboardUrl) {
 }
 
 function billingPause(record, dashboardUrl, assetId) {
-  const reason = record?.billing?.pauseReason ?? record?.pauseReason ?? record?.status?.pauseReason;
+  if (record?.billing_guidance !== undefined) return {};
+  const reason = record?.billing?.pauseReason
+    ?? record?.pauseReason
+    ?? record?.status?.pauseReason
+    ?? record?.status?.billing?.pauseReason
+    ?? record?.run?.billing?.pauseReason
+    ?? record?.run?.pauseReason
+    ?? record?.run?.billingPauseReason;
   return reason === 'insufficient_credits' ? { billing_guidance: creditGuidance(dashboardUrl, assetId) } : {};
+}
+
+function addBillingGuidance(value, dashboardUrl, assetId) {
+  if (Array.isArray(value)) {
+    return value.map(item => addBillingGuidance(item, dashboardUrl, item?.id ?? item?.asset_id ?? assetId));
+  }
+  if (!value || typeof value !== 'object') return value;
+  const guidance = billingPause(value, dashboardUrl, assetId);
+  let result = guidance.billing_guidance ? { ...value, ...guidance } : value;
+  if (Array.isArray(value.data) || Array.isArray(value.statuses)) result = { ...result };
+  if (Array.isArray(value.data)) result.data = value.data.map(item => addBillingGuidance(item, dashboardUrl, item?.id ?? item?.asset_id ?? assetId));
+  if (Array.isArray(value.statuses)) result.statuses = value.statuses.map(item => addBillingGuidance(item, dashboardUrl, item?.id ?? item?.asset_id ?? assetId));
+  return result;
 }
 
 export class PalatialApiError extends Error {
@@ -366,18 +386,27 @@ export class PalatialClient {
     return result;
   }
 
-  async getAssetDetails(assetId) { assetIdSchema.parse(assetId); return this.request(`assets/${assetId}`); }
+  async getAssetDetails(assetId) {
+    assetIdSchema.parse(assetId);
+    return addBillingGuidance(await this.request(`assets/${assetId}`), this.base.origin, assetId);
+  }
   async listAssets({ search, status, limit = 20, skip = 0 } = {}) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100 || !Number.isInteger(skip) || skip < 0) throw new Error('limit must be 1-100 and skip must be non-negative.');
     const filter = { limit, skip, where: { ...(search ? { search } : {}), ...(status ? { 'status.status': status } : {}) } };
-    return this.request(`assets?filter=${encodeURIComponent(JSON.stringify(filter))}`);
+    return addBillingGuidance(await this.request(`assets?filter=${encodeURIComponent(JSON.stringify(filter))}`), this.base.origin);
   }
-  async batchStatus(assetIds) { return this.request('assets/statuses', { method: 'POST', body: { ids: z.array(assetIdSchema).min(1).max(100).parse(assetIds) } }); }
-  async pipelineProgress(assetId) { assetIdSchema.parse(assetId); return this.request(`assets/${assetId}/pipeline-runs/current`); }
+  async batchStatus(assetIds) {
+    const ids = z.array(assetIdSchema).min(1).max(100).parse(assetIds);
+    return addBillingGuidance(await this.request('assets/statuses', { method: 'POST', body: { ids } }), this.base.origin);
+  }
+  async pipelineProgress(assetId) {
+    assetIdSchema.parse(assetId);
+    return addBillingGuidance(await this.request(`assets/${assetId}/pipeline-runs/current`), this.base.origin, assetId);
+  }
   async reprocess(assetId, input) {
     assetIdSchema.parse(assetId);
     const body = z.object({ from: z.string().min(1).max(100), mode: z.enum(['step', 'auto']).optional(), stopAfter: z.string().min(1).max(100).optional(), sourceRunId: z.string().min(1).max(128).optional(), destination: z.enum(['overwrite', 'variant']).optional(), feedback: z.string().max(4000).optional() }).strict().parse(input);
-    return this.request(`assets/${assetId}/reprocess`, { method: 'POST', body });
+    return addBillingGuidance(await this.request(`assets/${assetId}/reprocess`, { method: 'POST', body }), this.base.origin, assetId);
   }
 
   async createVariant(assetId, input) {
