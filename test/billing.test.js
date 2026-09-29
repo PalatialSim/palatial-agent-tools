@@ -201,6 +201,41 @@ test('a normal between-stage checkpoint tells callers to keep polling for automa
   assert.doesNotMatch(result.billing_guidance.message, /top up/i);
 });
 
+test('automatic-resume guidance requires an explicit postpaid checkpoint', async t => {
+  const records = [
+    ['legacy paused response', { status: 'PROCESSING_PAUSED' }],
+    ['postpaid pause without awaiting continue', { status: 'PROCESSING_PAUSED', billing: { mode: 'postpaid_stage_v1', paused: false } }],
+    ['explicitly not awaiting continue', { status: 'PROCESSING_PAUSED', run: { awaitingContinue: false }, billing: { mode: 'postpaid_stage_v1', paused: false } }],
+    ['billing-less awaiting response', { status: 'PROCESSING_PAUSED', run: { awaitingContinue: true } }],
+    ['prepaid awaiting response', { status: 'PROCESSING_PAUSED', run: { awaitingContinue: true }, billing: { mode: 'prepaid', paused: false } }],
+    ['user confirmation pause', { status: 'PROCESSING_PAUSED', run: { awaitingContinue: true, pauseReason: 'user_confirmation' }, billing: { mode: 'postpaid_stage_v1', paused: false } }],
+    ['explicitly paused billing', { status: 'PROCESSING_PAUSED', run: { awaitingContinue: true }, billing: { mode: 'postpaid_stage_v1', paused: true } }]
+  ];
+  for (const [name, record] of records) {
+    const { client } = await fixture(t, async () => json(record));
+    const result = await client.getAsset(`asset-${name.replace(/[^a-z]+/g, '-')}`);
+    assert.equal(result.billing_guidance, undefined, name);
+  }
+});
+
+test('pipeline progress exposes a checkpoint only for the current postpaid run', async t => {
+  const { client } = await fixture(t, async url => {
+    assert.match(url.pathname, /pipeline-runs\/current$/);
+    return json({
+      assetId: 'asset-pipeline-checkpoint',
+      assetStatus: 'PROCESSING_PAUSED',
+      run: {
+        status: 'paused',
+        awaitingContinue: true,
+        billing: { mode: 'postpaid_stage_v1', paused: false, pauseReason: null }
+      }
+    });
+  });
+  const result = await client.pipelineProgress('asset-pipeline-checkpoint');
+  assert.equal(result.billing_guidance.reason, 'stage_checkpoint');
+  assert.equal(result.billing_guidance.resume_asset_id, 'asset-pipeline-checkpoint');
+});
+
 test('failure guidance prefers the queue processing summary stage key', async t => {
   const { client } = await fixture(t, async () => json({
     status: 'PROCESSING_FAILED',

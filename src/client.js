@@ -244,10 +244,13 @@ function billingPause(record, dashboardUrl, assetId) {
     ?? record?.run?.pauseReason
     ?? record?.run?.billingPauseReason;
   if (reason === 'insufficient_credits') return { billing_guidance: creditGuidance(dashboardUrl, assetId) };
-  const status = statusValue(record);
-  const awaitingContinue = record?.run?.awaitingContinue === true || record?.awaitingContinue === true;
-  const explicitlyCreditPaused = record?.billing?.paused === true || record?.status?.billing?.paused === true;
-  return (status === 'PROCESSING_PAUSED' || awaitingContinue) && !explicitlyCreditPaused
+  const billing = record?.billing ?? record?.status?.billing ?? record?.run?.billing;
+  const awaitingContinue = record?.run?.awaitingContinue === true;
+  const isPostpaidCheckpoint = awaitingContinue
+    && billing?.mode === 'postpaid_stage_v1'
+    && billing?.paused === false
+    && reason == null;
+  return isPostpaidCheckpoint
     ? { billing_guidance: checkpointGuidance(dashboardUrl, assetId) }
     : {};
 }
