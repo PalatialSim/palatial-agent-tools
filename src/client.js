@@ -157,6 +157,18 @@ function safeMessage(error, secret) {
   });
 }
 
+// Only the API's structured `{ code, message }` error is surfaced, bounded and
+// redacted; any other response body stays out of the error.
+async function apiErrorDetail(response, secret) {
+  let body;
+  try { body = JSON.parse(await response.text()); } catch { return ''; }
+  if (!body || typeof body !== 'object') return '';
+  const message = Array.isArray(body.message) ? body.message.join('; ') : body.message;
+  if (typeof message !== 'string' || !message.trim()) return '';
+  const code = typeof body.code === 'string' && /^[A-Z0-9_]{1,64}$/.test(body.code) ? `${body.code}: ` : '';
+  return ` ${safeMessage(new Error(code + message.replace(/\s+/g, ' ').trim().slice(0, 500)), secret)}`;
+}
+
 async function sha256File(filename) {
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(filename)) hash.update(chunk);
@@ -191,7 +203,10 @@ export class PalatialClient {
     if (raw && response.status >= 300 && response.status < 400) return response;
     if (!response.ok) {
       const reason = { 400: 'Invalid request', 401: 'Invalid or expired API key', 403: 'Access denied or insufficient credits', 404: 'Asset or workspace not found', 409: 'Request conflicts with asset state', 429: 'Rate limit reached' }[response.status] || 'Service request failed';
-      throw new Error(`${reason} (HTTP ${response.status}).${method !== 'GET' && response.status >= 500 ? ' Submission outcome is uncertain; inspect your workspace before retrying.' : ''}`);
+      const detail = response.status < 500 ? await apiErrorDetail(response, this.apiKey) : '';
+      const error = new Error(`${reason} (HTTP ${response.status}).${detail}${method !== 'GET' && response.status >= 500 ? ' Submission outcome is uncertain; inspect your workspace before retrying.' : ''}`);
+      error.status = response.status;
+      throw error;
     }
     if (raw) return response;
     try { return await response.json(); } catch { throw new Error('Palatial returned an invalid JSON response. For a create request, inspect your workspace before submitting again.'); }
@@ -244,7 +259,12 @@ export class PalatialClient {
     try {
       result = await this.request(`assets/create/${{ text: 'texttosim', image: 'imagetosim', cad: 'cadtosim' }[source]}`, { method: 'POST', body });
     } catch (error) {
-      throw new Error(`${safeMessage(error, this.apiKey)} Recovery receipt: ${requestReceipt}`);
+      const message = safeMessage(error, this.apiKey);
+      // A 4xx is a definite rejection: nothing was created.
+      if (error.status >= 400 && error.status < 500) {
+        try { await writeFile(requestReceipt, JSON.stringify({ ...intent, status: 'rejected', http_status: error.status, error: message }, null, 2) + '\n', { mode: 0o600 }); } catch {}
+      }
+      throw new Error(`${message} Recovery receipt: ${requestReceipt}`);
     }
     const assetId = result?.id;
     if (typeof assetId !== 'string' || !assetIdSchema.safeParse(assetId).success) throw new Error(`Create response did not contain a valid asset ID. The job may exist: inspect the Palatial dashboard before submitting again. Recovery receipt: ${requestReceipt}`);
