@@ -4,9 +4,12 @@
 
 - Preserve sanitized billing metadata, advisory balance warnings, and financial
   error codes through the client, submission receipts, and MCP responses.
-- Explain postpaid stage charges and same-asset resumption after a posted top-up
-  leaves the shared net balance positive. Export itself does not consume tokens;
-  existing exports remain downloadable during a later paused run.
+- Explain route start minimums, postpaid stage charges, normal checkpoint
+  auto-resume, and same-asset resumption after a posted top-up leaves the
+  shared net balance positive. Export itself does not consume tokens; a later
+  paused run can use an earlier export only while the server exposes its key.
+- Retire the public Parametric `medium` effort; new requests use `low` or
+  `mad_max`.
 - Wrap array-valued list and batch results in MCP `structuredContent` records
   while keeping their raw JSON in the text response, as required by the MCP
   result schema.
