@@ -41,11 +41,12 @@ test('creation forwards documented shape and pipeline options', async t => {
   assert.equal(body.texture_max_resolution, 2048);
 });
 
-test('parametric effort reaches text and image creates and rejects unsupported routes', async t => {
+test('parametric effort reaches text and image creates and rejects the retired Medium route', async t => {
   const bodies = [];
   const { dir, client } = await fixture(t, async (_url, init) => { bodies.push(init.body); return json({ id: 'effort-asset' }, 201); });
-  await client.create({ ...basic, shape_model: 'parametric', effort: 'medium' });
-  assert.equal(JSON.parse(bodies[0]).effort, 'medium');
+  assert.throws(() => validateCreate({ ...basic, shape_model: 'parametric', effort: 'medium' }), /Invalid option|mad_max/);
+  await client.create({ ...basic, shape_model: 'parametric', effort: 'mad_max' });
+  assert.equal(JSON.parse(bodies[0]).effort, 'mad_max');
   const image = path.join(dir, 'photo.jpg');
   await writeFile(image, 'photo fixture');
   await client.create({ ...basic, source: 'image', image_path: image, shape_model: 'parametric', effort: 'mad_max' });
@@ -53,11 +54,10 @@ test('parametric effort reaches text and image creates and rejects unsupported r
   await client.create({ ...basic, source: 'image', image_path: image, shape_model: 'parametric', reconstruct: false });
   assert.equal(bodies[2].get('reconstruct'), 'false');
   for (const input of [
-    { ...basic, effort: 'medium' },
     { ...basic, shape_model: 'diffusion', effort: 'low' },
     { ...basic, source: 'cad', mesh_path: '/part.usd', effort: 'mad_max' },
     { ...basic, reconstruct: true },
-    { ...basic, source: 'image', image_path: image, shape_model: 'parametric', effort: 'medium', reconstruct: false }
+    { ...basic, source: 'image', image_path: image, shape_model: 'parametric', effort: 'mad_max', reconstruct: false }
   ]) assert.throws(() => validateCreate(input));
   assert.equal(bodies.length, 3);
 });
