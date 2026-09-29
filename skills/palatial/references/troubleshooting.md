@@ -2,16 +2,16 @@
 
 ## A create call errored
 
+For a generation-start rejection, look for `tokens.required`. Report the route
+minimum, `tokens.balance`, and `tokens.shortfall`; nothing was created. Tell the
+user to add enough tokens to meet that minimum, then submit once. Do not retry
+or promise automatic resume for a rejected create.
+
 For a postpaid credit rejection (`billingMode: postpaid_stage_v1` or
 `reason: insufficient_credits`), report the supplied net `tokens.balance` and
-top-up guidance. The shared organization/workspace balance
-must be above zero; an estimated whole-job price or recommended balance is not
-an admission requirement. Do not start checkout or retry generation automatically.
-
-Historical prepaid `insufficient_tokens` errors can require more than a positive
-balance. Preserve `tokens.required` and `tokens.shortfall` when supplied and
-follow the returned `billing_guidance`. Do not promise automatic resume for
-these errors; inspect the asset before the user requests a retry.
+top-up guidance. The shared organization/workspace balance must be above zero
+for the paused run to resume. Do not start checkout or retry generation
+automatically.
 
 If a submission times out or its outcome is unclear, it may still have been
 accepted. The error carries the path of a local recovery receipt holding the
@@ -48,7 +48,11 @@ support path. Ask before doing anything that spends more.
 Canceling stops the work. It does not imply a refund and it does not delete
 anything already downloaded.
 
-For `PROCESSING_PAUSED` or `paused` with `pauseReason: insufficient_credits`,
+For `PROCESSING_PAUSED`, first distinguish the checkpoint type. When
+`billing.paused: false` and `run.awaitingContinue: true`, it is a normal pause
+between stages: Palatial resumes automatically in about a minute while the
+balance is above zero. Keep polling the same asset and do not reprocess or
+create. When `billing.paused: true` with `pauseReason: insufficient_credits`,
 report `billing_guidance`, the shared balance, and the asset ID. Running stages
 can complete after the balance reaches zero and leave debt. A payment started
 is not yet a posted credit. When credit posts, it offsets debt first; once the
@@ -68,8 +72,7 @@ Read `generation_route` from `palatial_get_asset` (or `generationAgent` from
 the full record). `diffusion` and `parametric` map straight to `shape_model`.
 `mad_max` maps to `shape_model: parametric` plus `effort: mad_max`. Do not send
 the record's `parameters` block back as a create request: it contains
-server-owned progress fields (`madMaxBuild`, `madMaxBuildHistory`,
-`generationActualCost`) that the API rejects or ignores, and a `shape_model` of
+server-owned progress fields that the API rejects or ignores, and a `shape_model` of
 `mad_max` is refused by this client.
 
 ## The user wants a change to a finished asset
@@ -92,9 +95,10 @@ either, and say out loud when `overwrite` will replace existing outputs.
 Export itself does not consume tokens, and the client does not automatically
 retry a failed download. Tell the user what happened and let them decide.
 A first export requires a positive shared net balance. A previous server export
-remains downloadable at zero or negative balance, including while a later run
-is paused. `export.status: READY` or an existing `export.key` identifies an
-available export; let `palatial_download_asset` reach the server to check it.
+remains downloadable at zero or negative balance only while the server exposes
+an `export.key`, including during a later paused run. `export.status: READY`
+alone is not sufficient; let `palatial_download_asset` reach the server to
+check it.
 
 If the output directory already holds a file for that asset, the client refuses
 rather than overwriting. Use a new directory. When a previous download and its
@@ -107,8 +111,8 @@ file without downloading it again.
 | --- | --- |
 | Not authenticated | No key. The user runs `palatial-agent login` in a terminal, or sets `PALATIAL_API_KEY` in the environment that starts the coding agent. |
 | Invalid or expired API key | The key was rejected. The user checks it in the Palatial dashboard. |
-| Postpaid `insufficient_tokens` or `insufficient_credits` | The shared organization/workspace net balance must be above zero. Report the numeric balance when returned. Credit-paused jobs resume on the same asset after enough credit posts to cover debt and leave a positive balance. |
-| Legacy prepaid `insufficient_tokens` | Report the balance, required credits and shortfall when supplied. Follow `billing_guidance`; a positive balance alone may not meet the requirement, and automatic resume is not promised. |
+| Generation-start `insufficient_tokens` | Read `tokens.required`, `tokens.balance` and `tokens.shortfall`. Nothing was created; add enough tokens to meet the route minimum, then submit once. |
+| Paused-run `insufficient_credits` | The shared organization/workspace net balance must be above zero. Report the numeric balance when returned. Credit-paused jobs resume on the same asset after enough credit posts to cover debt and leave a positive balance. |
 | Access denied or insufficient credits | A legacy response without a specific billing code. The user checks workspace permissions and balance in the dashboard. |
 | Asset or workspace not found | Usually a mistyped asset ID, or a key scoped to a different workspace. |
 | Request conflicts with asset state | The asset is not in a state that allows this, for example requesting a first export before outputs are ready. |
