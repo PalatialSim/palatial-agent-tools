@@ -25,8 +25,8 @@ in conversation and never put one in a tool argument.
    only handle to the job.
 3. `palatial_get_asset` polls it. Generation takes minutes, not seconds.
 4. When status is `READY`, `palatial_download_asset` saves the export ZIP and a
-   SHA-256 receipt into a directory the user chose. An existing export also
-   remains downloadable while a later run is paused.
+   SHA-256 receipt into a directory the user chose. A later paused run can use
+   an earlier export only while the server exposes its materialized `export.key`.
 
 For several assets at once, poll with `palatial_batch_get_statuses` instead of
 one call per asset. For a stuck job, `palatial_get_pipeline_progress` shows
@@ -38,21 +38,26 @@ which stage it is on.
   `palatial_create_asset`, `palatial_create_variant`, and
   `palatial_reprocess_asset` charge only for successfully completed stages.
   Reads and export itself do not consume tokens.
-- A net balance **above zero** admits generation; the estimated total is not
-  prepaid. A `low_recommended_balance` warning recommending 10 or 20 tokens is
-  advisory. Report the warning and proceed with an authorized generation.
-- At zero or negative balance, new jobs are blocked and next stages wait. Already running
-  stages finish and can leave debt. For `insufficient_credits`, show
+- New generations need a route start minimum: Diffusion 20, Parametric Low 40,
+  Mad Max 80, or CAD to Sim 4 tokens. The minimum admits the run; the estimate
+  is not prepaid. A `low_recommended_balance` warning recommending 10 or 20
+  tokens is advisory.
+- At zero or negative balance, new jobs are blocked and the next stage waits.
+  An already-running stage can finish and leave debt. A normal
+  `PROCESSING_PAUSED` checkpoint has `billing.paused: false` and
+  `run.awaitingContinue: true`; Palatial continues automatically in about a
+  minute while the balance is above zero, so keep polling. For
+  `billing.paused: true` with `pauseReason: insufficient_credits`, show
   `billing_guidance` and keep polling the same asset ID. Posted credit covers
   debt first; once the net balance is positive, processing resumes automatically.
   Do not start checkout, reprocess, or create a replacement to resume it.
-- A first export requires a positive net balance. An existing server export
-  remains downloadable at zero or negative balance. Let the server check
-  eligibility; do not block a requested download from a balance snapshot.
-- Historical prepaid attempts keep their original admission requirement. An
-  `insufficient_tokens` error without postpaid billing metadata can include
-  `tokens.required` and `tokens.shortfall` even when the balance is positive.
-  Follow its `billing_guidance`; do not promise automatic resume for that error.
+- A first export requires a positive net balance. An earlier export remains
+  downloadable during a later run only when the server exposes `export.key`.
+  Let the server check eligibility; do not infer it from `export.status` alone.
+- A generation-start `insufficient_tokens` error is identified by
+  `tokens.required`. It includes the route minimum, balance, and shortfall and
+  means that nothing was created; add tokens and submit once. Do not promise
+  automatic resume for a rejected create.
 - **Never call create again to check on a job.** A second create is a second
   paid asset. Poll the ID you already have.
 - **Never retry a create whose outcome is unclear.** If a create errors with a
@@ -104,7 +109,7 @@ nothing up.
 A finished asset reports how it was built as `generationAgent`: `diffusion`,
 `parametric`, or `mad_max`. `palatial_get_asset` surfaces this as
 `generation_route`, and the full record from `palatial_get_asset_details`
-carries the field and any `madMaxBuild` progress block.
+carries the route field and its server-owned progress metadata.
 
 That label is read-only. It is not a `shape_model` value, and copying it into a
 new request is refused: `mad_max` is requested with `shape_model: parametric`

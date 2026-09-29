@@ -200,7 +200,29 @@ function creditGuidance(dashboardUrl, assetId) {
   };
 }
 
+function checkpointGuidance(dashboardUrl, assetId) {
+  return {
+    reason: 'stage_checkpoint',
+    message: 'Paused between stages; Palatial continues automatically within about a minute while the balance is above 0. Keep polling the same asset; do not reprocess or create.',
+    dashboard_url: dashboardUrl,
+    ...(assetId ? { resume_asset_id: assetId } : {})
+  };
+}
+
 function rejectedCreditGuidance(record, dashboardUrl) {
+  const required = record?.tokens?.required;
+  if (Number.isFinite(required)) {
+    const balance = Number.isFinite(record?.tokens?.balance) ? record.tokens.balance : undefined;
+    const shortfall = Number.isFinite(record?.tokens?.shortfall)
+      ? record.tokens.shortfall
+      : Number.isFinite(balance) ? Math.max(0, required - balance) : undefined;
+    const requirement = `the route minimum of ${required} tokens${Number.isFinite(shortfall) ? ` (${shortfall} short)` : ''}`;
+    return {
+      reason: 'insufficient_tokens',
+      message: `Nothing was created. Add tokens so the balance meets ${requirement}, then submit once.`,
+      dashboard_url: dashboardUrl
+    };
+  }
   const mode = record.billingMode ?? record.billing?.mode;
   const postpaid = mode ? mode === 'postpaid_stage_v1'
     : record.reason === 'insufficient_credits' || record.code === 'insufficient_credits';
@@ -221,7 +243,13 @@ function billingPause(record, dashboardUrl, assetId) {
     ?? record?.run?.billing?.pauseReason
     ?? record?.run?.pauseReason
     ?? record?.run?.billingPauseReason;
-  return reason === 'insufficient_credits' ? { billing_guidance: creditGuidance(dashboardUrl, assetId) } : {};
+  if (reason === 'insufficient_credits') return { billing_guidance: creditGuidance(dashboardUrl, assetId) };
+  const status = statusValue(record);
+  const awaitingContinue = record?.run?.awaitingContinue === true || record?.awaitingContinue === true;
+  const explicitlyCreditPaused = record?.billing?.paused === true || record?.status?.billing?.paused === true;
+  return (status === 'PROCESSING_PAUSED' || awaitingContinue) && !explicitlyCreditPaused
+    ? { billing_guidance: checkpointGuidance(dashboardUrl, assetId) }
+    : {};
 }
 
 function addBillingGuidance(value, dashboardUrl, assetId) {
@@ -293,7 +321,10 @@ export class PalatialClient {
       if ([402, 403, 409].includes(response.status)) {
         let payload;
         try { payload = await response.json(); } catch { /* Legacy non-JSON errors use the generic fallback. */ }
-        const record = { ...payload, ...payload?.error, ...payload?.error?.details };
+        const body = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
+        const errorDetails = body.error && typeof body.error === 'object' && !Array.isArray(body.error) ? body.error : {};
+        const nestedDetails = errorDetails.details && typeof errorDetails.details === 'object' && !Array.isArray(errorDetails.details) ? errorDetails.details : {};
+        const record = { ...body, ...errorDetails, ...nestedDetails };
         if (['insufficient_tokens', 'insufficient_credits'].includes(record.code)) {
           const metadata = safeBillingValue(billingMetadata(record), this.apiKey);
           const guidance = rejectedCreditGuidance(record, this.base.origin);
@@ -386,7 +417,7 @@ export class PalatialClient {
     if (status === 'READY') result.ready_means = 'Outputs are available; inspect validation evidence and test in your target simulator.';
     if (status === 'PROCESSING_FAILED') result.failure_guidance = {
       message: 'Processing failed. Preserve this asset ID and inspect the dashboard or available validation evidence.',
-      failed_stage: record.failedStageKey || record.failed_stage || record.stage || null,
+      failed_stage: record.processingSummary?.failedStageKey || record.failedStageKey || record.failed_stage || record.stage || null,
       billing: 'Only successfully completed stages are charged. Failed stages are not charged.',
       reprocessing: 'Reprocessing uses per-stage completion billing. Confirm before starting it.',
       next_steps: ['Open the asset in the Palatial dashboard.', 'Ask the user before requesting a partial or unvalidated export.', 'Contact support with this asset ID if the failure is unclear.']
@@ -446,11 +477,11 @@ export class PalatialClient {
     // A matching receipt avoids downloading the same export again after success.
     try {
       const receipt = JSON.parse(await readFile(receiptPath, 'utf8'));
-      if (receipt.asset_id === assetId && receipt.file === destination) {
+      if (receipt.asset_id === assetId && receipt.file === destination && receipt.source_status === 'READY') {
         const checksum = await sha256File(destination);
         if (checksum === receipt.sha256) return { ...receipt, receipt_file: receiptPath, cached: true };
       }
-      throw new Error('Existing download receipt is invalid. Choose a new output directory.');
+      if (receipt.source_status === 'READY') throw new Error('Existing download receipt is invalid. Choose a new output directory.');
     } catch (error) { if (error.code !== 'ENOENT') throw error; }
     for (const file of [destination, receiptPath]) {
       try { await stat(file); throw new Error('Output already exists. Choose a new output directory; no export was requested.'); }
@@ -458,7 +489,7 @@ export class PalatialClient {
     }
     const current = await this.getAsset(assetId);
     if (current.status === 'PROCESSING_FAILED' && !allowFailedExport) throw new Error('Asset processing failed. A partial or unvalidated export may exist. Ask the user first, then retry with allow_failed_export=true.');
-    const existingExport = current.details?.export?.status === 'READY' || Boolean(current.details?.export?.key);
+    const existingExport = Boolean(current.details?.export?.key);
     if (current.status !== 'READY' && current.status !== 'PROCESSING_FAILED' && !existingExport) throw new Error(`Asset is ${current.status}; ${current.billing_guidance?.message || 'wait until processing completes before exporting.'}`);
     await mkdir(directory, { recursive: true });
     // Reserve the destination before requesting an export.

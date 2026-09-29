@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -27,7 +27,7 @@ test('an accepted low-balance create preserves billing and warnings in its recei
       id: 'asset-credit', status: 'SUBMITTED',
       billing: {
         mode: 'postpaid_stage_v1', balance: { tokens: 0.5, planTokens: 0.5, purchasedTokens: 0, debtTokens: 0, ownerType: 'organization', ownerId: 'org-shared' },
-        paused: false, pauseReason: null, stages: [{ stageKey: 'geometry', tokenCost: 10, chargedAt: null }],
+        paused: false, pauseReason: null, stages: [{ stageKey: 'shape-generation', tokenCost: 10, chargedAt: null }],
         warnings: [{ code: 'low_recommended_balance', recommendedTokens: 20, balance: 0.5, message: 'The recommended balance is advisory.' }],
         futureField: { value: 1 }
       }
@@ -37,7 +37,7 @@ test('an accepted low-balance create preserves billing and warnings in its recei
   assert.equal(result.asset_id, 'asset-credit');
   assert.deepEqual(result.billing, {
     mode: 'postpaid_stage_v1', balance: { tokens: 0.5, planTokens: 0.5, purchasedTokens: 0, debtTokens: 0, ownerType: 'organization', ownerId: 'org-shared' },
-    paused: false, pauseReason: null, stages: [{ stageKey: 'geometry', tokenCost: 10, chargedAt: null }],
+    paused: false, pauseReason: null, stages: [{ stageKey: 'shape-generation', tokenCost: 10, chargedAt: null }],
     warnings: [{ code: 'low_recommended_balance', recommendedTokens: 20, balance: 0.5, message: 'The recommended balance is advisory.' }],
     futureField: { value: 1 }
   });
@@ -93,25 +93,46 @@ test('MCP keeps a structured insufficient-token create rejection and actionable 
   assert.deepEqual(calls, [{ path: '/api/v1/external/assets/create/texttosim', method: 'POST' }]);
 });
 
+test('a new-generation start gate explains the route minimum and confirms that nothing was created', async t => {
+  const { client } = await fixture(t, async () => json({
+    statusCode: 403,
+    code: 'insufficient_tokens',
+    error: 'Insufficient tokens',
+    message: 'Generation start requires at least 40 tokens; balance is 12 (28 short).',
+    tokens: { required: 40, balance: 12, shortfall: 28 }
+  }, 403));
+  await assert.rejects(client.create(basic), error => {
+    assert.equal(error.code, 'insufficient_tokens');
+    assert.equal(error.reason, 'insufficient_tokens');
+    assert.deepEqual(error.tokens, { required: 40, balance: 12, shortfall: 28 });
+    assert.equal(error.billing_guidance.resume_asset_id, undefined);
+    assert.match(error.billing_guidance.message, /Nothing was created/i);
+    assert.match(error.billing_guidance.message, /40/);
+    assert.match(error.billing_guidance.message, /28/);
+    assert.doesNotMatch(error.billing_guidance.message, /same asset|poll/i);
+    return true;
+  });
+});
+
 test('a credit pause keeps the same asset and clears guidance when the server resumes it', async t => {
   const calls = [];
   const { client } = await fixture(t, async (url, init) => {
     calls.push({ path: url.pathname, method: init.method });
     return json(calls.length === 1
       ? { status: 'PROCESSING_PAUSED', billing: { mode: 'postpaid_stage_v1', paused: true, pauseReason: 'insufficient_credits', autoResume: true, balance: { tokens: -1 },
-        stages: [{ stageKey: 'shape-generation', tokenCost: 45, chargedAt: '2026-09-24T12:00:00.000Z' }] } }
-      : { status: 'PROCESSING_GEOMETRY', billing: { mode: 'postpaid_stage_v1', paused: false, pauseReason: null, balance: { tokens: 2 } } });
+        stages: [{ stageKey: 'shape-generation', tokenCost: 10, chargedAt: '2026-09-24T12:00:00.000Z' }] } }
+      : { status: 'PROCESSING_IMPORT', billing: { mode: 'postpaid_stage_v1', paused: false, pauseReason: null, balance: { tokens: 2 } } });
   });
   const paused = await client.getAsset('asset-existing');
   assert.equal(paused.status, 'PROCESSING_PAUSED');
   assert.equal(paused.billing?.paused, true);
-  assert.deepEqual(paused.billing.stages, [{ stageKey: 'shape-generation', tokenCost: 45, chargedAt: '2026-09-24T12:00:00.000Z' }]);
+  assert.deepEqual(paused.billing.stages, [{ stageKey: 'shape-generation', tokenCost: 10, chargedAt: '2026-09-24T12:00:00.000Z' }]);
   assert.equal(paused.billing_guidance.reason, 'insufficient_credits');
   assert.equal(paused.billing_guidance.resume_asset_id, 'asset-existing');
   assert.match(paused.billing_guidance.message, /automatically/i);
   assert.match(paused.billing_guidance.message, /same asset/i);
   const resumed = await client.getAsset('asset-existing');
-  assert.equal(resumed.status, 'PROCESSING_GEOMETRY');
+  assert.equal(resumed.status, 'PROCESSING_IMPORT');
   assert.equal(resumed.billing_guidance, undefined);
   assert.deepEqual(calls, [
     { path: '/api/v1/external/assets/asset-existing/status', method: 'GET' },
@@ -142,16 +163,43 @@ test('all asset read and continuation responses expose the same credit-pause gui
   const progress = await client.pipelineProgress('asset-progress');
   assert.equal(progress.billing_guidance.resume_asset_id, 'asset-progress');
 
-  const continuation = await client.reprocess('asset-reprocess', { from: 'geometry' });
+  const continuation = await client.reprocess('asset-reprocess', { from: 'shape-generation' });
   assert.equal(continuation.billing_guidance.resume_asset_id, 'asset-reprocess');
 });
 
 test('a nonpositive balance does not turn an in-flight stage into a client-invented pause', async t => {
-  const { client } = await fixture(t, async () => json({ status: 'PROCESSING_GEOMETRY', billing: { mode: 'postpaid_stage_v1', paused: false, balance: { tokens: -2 } } }));
+  const { client } = await fixture(t, async () => json({ status: 'PROCESSING_IMPORT', billing: { mode: 'postpaid_stage_v1', paused: false, balance: { tokens: -2 } } }));
   const result = await client.getAsset('asset-running');
-  assert.equal(result.status, 'PROCESSING_GEOMETRY');
+  assert.equal(result.status, 'PROCESSING_IMPORT');
   assert.equal(result.billing?.balance.tokens, -2);
   assert.equal(result.billing_guidance, undefined);
+});
+
+test('a normal between-stage checkpoint tells callers to keep polling for automatic resume', async t => {
+  const { client } = await fixture(t, async () => json({
+    status: 'PROCESSING_PAUSED',
+    run: { awaitingContinue: true },
+    billing: { mode: 'postpaid_stage_v1', paused: false, pauseReason: null, balance: { tokens: 4 } }
+  }));
+  const result = await client.getAsset('asset-checkpoint');
+  assert.equal(result.status, 'PROCESSING_PAUSED');
+  assert.equal(result.billing_guidance.reason, 'stage_checkpoint');
+  assert.equal(result.billing_guidance.resume_asset_id, 'asset-checkpoint');
+  assert.match(result.billing_guidance.message, /automatically/i);
+  assert.match(result.billing_guidance.message, /about a minute/i);
+  assert.match(result.billing_guidance.message, /keep polling/i);
+  assert.doesNotMatch(result.billing_guidance.message, /top up/i);
+});
+
+test('failure guidance prefers the queue processing summary stage key', async t => {
+  const { client } = await fixture(t, async () => json({
+    status: 'PROCESSING_FAILED',
+    processingSummary: { failedStageKey: 'texture' },
+    failedStageKey: 'shape-generation',
+    failed_stage: 'legacy-stage'
+  }));
+  const result = await client.getAsset('asset-failed');
+  assert.equal(result.failure_guidance.failed_stage, 'texture');
 });
 
 test('a continuation credit conflict keeps the reported code and balance without retrying', async t => {
@@ -160,7 +208,7 @@ test('a continuation credit conflict keeps the reported code and balance without
     calls++;
     return json({ statusCode: 409, code: 'insufficient_credits', reason: 'insufficient_credits', billingMode: 'postpaid_stage_v1', tokens: { balance: 0 } }, 409);
   });
-  await assert.rejects(client.reprocess('asset-existing', { from: 'geometry' }), error => {
+  await assert.rejects(client.reprocess('asset-existing', { from: 'shape-generation' }), error => {
     assert.equal(error.code, 'insufficient_credits');
     assert.equal(error.http_status, 409);
     assert.deepEqual(error.tokens, { balance: 0 });
@@ -176,7 +224,7 @@ test('legacy prepaid credit rejection preserves the full-price shortfall without
   await assert.rejects(client.create(basic), error => {
     assert.deepEqual(error.tokens, { balance: 37, required: 37.5, shortfall: 0.5 });
     assert.doesNotMatch(error.message, /resumes automatically|above zero/i);
-    assert.match(error.message, /required|requirement/i);
+    assert.match(error.message, /minimum|requirement/i);
     assert.equal(error.billing_guidance.reason, 'insufficient_tokens');
     assert.ok(!JSON.stringify(error).includes(secret));
     return true;
@@ -243,6 +291,30 @@ test('a paused job without an existing export gives top-up guidance without requ
   });
   await assert.rejects(client.download('asset-paused', dir), /top up/i);
   assert.equal(calls, 1);
+});
+
+test('export status without a server export key does not bypass a credit pause', async t => {
+  let calls = 0;
+  const { dir, client } = await fixture(t, async () => {
+    calls++;
+    return json({ status: 'PROCESSING_PAUSED', export: { status: 'READY' }, billing: { paused: true, pauseReason: 'insufficient_credits', balance: { tokens: 0 } } });
+  });
+  await assert.rejects(client.download('asset-unmaterialized-export', dir), /top up/i);
+  assert.equal(calls, 1);
+});
+
+test('a receipt from a paused run is not reused after a later run can invalidate its export', async t => {
+  const { dir, client } = await fixture(t, async () => {
+    throw new Error('stale receipt must be rejected before any API call');
+  });
+  const destination = path.join(dir, 'asset-stale-export-export.zip');
+  const receiptPath = path.join(dir, 'asset-stale-export-receipt.json');
+  await writeFile(destination, Buffer.from('504b0506000000000000000000000000000000000000', 'hex'));
+  await writeFile(receiptPath, JSON.stringify({
+    asset_id: 'asset-stale-export', file: destination, source_status: 'PROCESSING_PAUSED',
+    sha256: 'not-used', bytes: 22
+  }));
+  await assert.rejects(client.download('asset-stale-export', dir), /already exists/i);
 });
 
 test('legacy creates and unknown forbidden responses retain their fallback behavior', async t => {
