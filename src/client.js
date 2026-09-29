@@ -32,7 +32,7 @@ export const createSchema = z.object({
   mesh_quality: z.enum(['low', 'medium', 'high']).describe('Image and text only: mesh quality preset; not used for CAD.').optional(),
   collision_quality: z.enum(['low', 'medium', 'high', 'x_high', 'sdf']).describe('Image, text, and CAD: collision quality; sdf means signed-distance-field collision.').optional(),
   shape_model: z.enum(['auto', 'diffusion', 'parametric']).describe('Image and text only: auto lets Palatial select a supported generation route; diffusion is faster, cheaper, and better for organic shapes and accepts one image or named multiview inputs; parametric is controllable, better for articulation, and accepts N images (up to 50).').optional(),
-  effort: z.enum(['low', 'medium', 'mad_max']).describe('Text and image with shape_model=parametric only: low uses the parametric pipeline; medium and mad_max use the research and authoring route, cost more, and take longer. CAD does not support them.').optional(),
+  effort: z.enum(['low', 'mad_max']).describe('Text and image with shape_model=parametric only: low uses the parametric pipeline; mad_max uses the research and authoring route, costs more, and takes longer. The retired medium effort is rejected for new requests. CAD does not support effort.').optional(),
   texture_model: z.literal('auto').describe('Image, text, and CAD: auto selects the supported texture model.').optional(),
   decimation: z.boolean().describe('Image, text, and CAD: legacy adaptive reduction switch; prefer decimation_mode.').optional(),
   optimize_textures: z.boolean().describe('Image, text, and CAD: downscale oversized maps without upscaling smaller maps.').optional(),
@@ -88,7 +88,7 @@ export function validateCreate(input) {
   if (p.source === 'image' && views.length && views.length < 2) throw new Error('Multiview requires at least two views of the same object.');
   if (p.source === 'image' && p.image_paths && p.shape_model !== 'parametric') throw new Error('image_paths is supported only with shape_model=parametric.');
   if (p.source !== 'image' && p.reconstruct !== undefined) throw new Error('reconstruct is accepted only for image input.');
-  if (p.reconstruct !== undefined && ['medium', 'mad_max'].includes(p.effort)) throw new Error('The legacy reconstruct option is not accepted with medium or mad_max effort.');
+  if (p.reconstruct !== undefined && p.effort === 'mad_max') throw new Error('The legacy reconstruct option is not accepted with mad_max effort.');
   if (p.source === 'image' && ['auto', 'diffusion'].includes(p.shape_model) && views.length > 4) throw new Error('auto and diffusion accept a single image or up to four named views.');
   if (p.source === 'image' && (p.mesh_path || p.datasheet_path)) throw new Error('mesh_path and datasheet_path are only accepted for CAD.');
   if (p.source === 'cad' && (!p.mesh_path || p.image_paths || views.length)) throw new Error('CAD requires mesh_path; image_path is optional, and image_paths and named views are not accepted.');
