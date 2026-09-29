@@ -41,7 +41,7 @@ test('creation forwards documented shape and pipeline options', async t => {
   assert.equal(body.texture_max_resolution, 2048);
 });
 
-test('parametric effort reaches text and image creates and rejects the retired Medium route', async t => {
+test('parametric effort supports Low and Mad Max for text and image creates', async t => {
   const bodies = [];
   const { dir, client } = await fixture(t, async (_url, init) => { bodies.push(init.body); return json({ id: 'effort-asset' }, 201); });
   assert.throws(() => validateCreate({ ...basic, shape_model: 'parametric', effort: 'medium' }), /Invalid option|mad_max/);

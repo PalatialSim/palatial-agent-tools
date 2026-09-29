@@ -66,7 +66,7 @@ test('create tool explains API options in its MCP schema', async t => {
   assert.match(tool.inputSchema.properties.shape_model.description, /better for articulation/);
   assert.deepEqual(tool.inputSchema.properties.shape_model.enum, ['auto', 'diffusion', 'parametric']);
   assert.deepEqual(tool.inputSchema.properties.effort.enum, ['low', 'mad_max']);
-  assert.match(tool.inputSchema.properties.effort.description, /retired medium effort is rejected/);
+  assert.doesNotMatch(tool.inputSchema.properties.effort.description, /medium/i);
   assert.match(tool.inputSchema.properties.image_path.description, /optional PNG\/JPEG\/WebP reference/);
   assert.match(tool.inputSchema.properties.reconstruct.description, /currently ignored by the Queue/);
   assert.match(tool.inputSchema.properties.meters_per_unit.description, /Direct-mesh CAD/);

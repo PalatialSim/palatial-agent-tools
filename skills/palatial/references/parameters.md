@@ -70,7 +70,7 @@ a swivel chair with rolling wheels is `rigid_bodies` with
 | Field | Values | Default | Sources | Notes |
 | --- | --- | --- | --- | --- |
 | `shape_model` | `auto`, `diffusion`, `parametric` | `auto` | `text`, `image` | `auto` lets Palatial select a supported route. `diffusion` is faster, cheaper, and better at organic shapes; it takes one image or up to 4 named views. `parametric` is more controllable and better for articulation; it is the only model that accepts `image_paths`. **Rejected for CAD.** |
-| `effort` | `low`, `mad_max` | `low` when parametric | `text`, `image` | Requires `shape_model: parametric`. `low` runs the parametric pipeline. `mad_max` researches the described product and authors the model; it costs more and takes longer. The retired `medium` value is rejected for new requests. **Rejected for CAD.** |
+| `effort` | `low`, `mad_max` | `low` when parametric | `text`, `image` | Requires `shape_model: parametric`. `low` runs the parametric pipeline. `mad_max` researches the described product and authors the model; it costs more and takes longer. **Rejected for CAD.** |
 | `texture_model` | `auto` | `auto` | all | Selects the supported texture model. There is no other public value, so omit it. |
 | `apply_textures` | boolean | `true` with a CAD reference image, `false` without one | `cad` | Generate textures from the reference image. `true` requires `image_path`. When it is off, `texture_model` has nothing to run. |
 

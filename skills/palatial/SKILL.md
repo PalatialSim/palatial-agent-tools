@@ -93,8 +93,7 @@ it is the only place dimensions can go.
 
 For `shape_model: parametric`, `effort: low` uses the parametric pipeline.
 `mad_max` researches the described product and authors the model; it costs more
-and takes longer. The retired `medium` effort is rejected for new requests.
-These choices work with text and image inputs, not CAD.
+and takes longer. These choices work with text and image inputs, not CAD.
 
 ## Reading the route back
 

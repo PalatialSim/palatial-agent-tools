@@ -32,7 +32,7 @@ export const createSchema = z.object({
   mesh_quality: z.enum(['low', 'medium', 'high']).describe('Image and text only: mesh quality preset; not used for CAD.').optional(),
   collision_quality: z.enum(['low', 'medium', 'high', 'x_high', 'sdf']).describe('Image, text, and CAD: collision quality; sdf means signed-distance-field collision.').optional(),
   shape_model: z.enum(['auto', 'diffusion', 'parametric']).describe('Image and text only: auto lets Palatial select a supported generation route; diffusion is faster, cheaper, and better for organic shapes and accepts one image or named multiview inputs; parametric is controllable, better for articulation, and accepts N images (up to 50).').optional(),
-  effort: z.enum(['low', 'mad_max']).describe('Text and image with shape_model=parametric only: low uses the parametric pipeline; mad_max uses the research and authoring route, costs more, and takes longer. The retired medium effort is rejected for new requests. CAD does not support effort.').optional(),
+  effort: z.enum(['low', 'mad_max']).describe('Text and image with shape_model=parametric only: low uses the parametric pipeline; mad_max uses the research and authoring route, costs more, and takes longer. CAD does not support effort.').optional(),
   texture_model: z.literal('auto').describe('Image, text, and CAD: auto selects the supported texture model.').optional(),
   decimation: z.boolean().describe('Image, text, and CAD: legacy adaptive reduction switch; prefer decimation_mode.').optional(),
   optimize_textures: z.boolean().describe('Image, text, and CAD: downscale oversized maps without upscaling smaller maps.').optional(),
