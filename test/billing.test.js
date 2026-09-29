@@ -167,6 +167,16 @@ test('all asset read and continuation responses expose the same credit-pause gui
   assert.equal(continuation.billing_guidance.resume_asset_id, 'asset-reprocess');
 });
 
+test('a bare asset list remains an array in the JavaScript client', async t => {
+  const { client } = await fixture(t, async url => {
+    assert.match(url.pathname, /\/assets$/);
+    return json([{ id: 'asset-list', status: 'READY', billing: { balance: { tokens: 12 } } }]);
+  });
+  const result = await client.listAssets();
+  assert.ok(Array.isArray(result));
+  assert.equal(result[0].id, 'asset-list');
+});
+
 test('a nonpositive balance does not turn an in-flight stage into a client-invented pause', async t => {
   const { client } = await fixture(t, async () => json({ status: 'PROCESSING_IMPORT', billing: { mode: 'postpaid_stage_v1', paused: false, balance: { tokens: -2 } } }));
   const result = await client.getAsset('asset-running');
