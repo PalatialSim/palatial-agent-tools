@@ -317,11 +317,31 @@ test('CAD meters_per_unit is limited to direct meshes and conflicts are rejected
   assert.throws(() => validateCreate({ ...direct, mesh_path: '/part.usdc' }), /omit units, meters_per_unit/);
 });
 
+test('product_research reaches an image Mad Max create and is refused where it would do nothing', async t => {
+  const bodies = [];
+  const { dir, client } = await fixture(t, async (_url, init) => { bodies.push(init.body); return json({ id: 'research-asset' }, 201); });
+  const image = path.join(dir, 'unit.png');
+  await writeFile(image, 'png');
+  for (const mode of ['on', 'specs_only', 'off']) {
+    await client.create({ ...basic, source: 'image', image_path: image, shape_model: 'parametric', effort: 'mad_max', product_research: mode });
+    assert.equal(bodies.at(-1).get('product_research'), mode);
+  }
+  for (const [request, message] of [
+    [{ ...basic, shape_model: 'parametric', effort: 'mad_max', product_research: 'specs_only' }, /needs source=image/],
+    [{ ...basic, source: 'image', image_path: image, shape_model: 'parametric', effort: 'low', product_research: 'off' }, /effort=mad_max only/],
+    [{ ...basic, source: 'image', image_path: image, product_research: 'off' }, /effort=mad_max only/]
+  ]) {
+    await assert.rejects(client.create(request), message);
+  }
+  assert.throws(() => validateCreate({ ...basic, source: 'image', image_path: image, shape_model: 'parametric', effort: 'mad_max', product_research: 'images' }));
+  assert.equal(bodies.length, 3, 'a refused request sends nothing');
+});
+
 test('every documented create parameter is reachable through the schema', () => {
   const documented = [
     'body_type', 'newton_solver', 'repair_mesh', 'replace_glass', 'auto_scale',
     'regenerate_parts', 'keep_existing_textures', 'keep_existing_shape', 'physics_validation_only',
-    'effort', 'reconstruct', 'meters_per_unit'
+    'effort', 'product_research', 'reconstruct', 'meters_per_unit'
   ];
   for (const field of documented) assert.ok(field in createSchema.shape, `${field} missing from createSchema`);
 });
