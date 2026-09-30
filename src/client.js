@@ -295,7 +295,7 @@ export class PalatialClient {
   async pipelineProgress(assetId) { assetIdSchema.parse(assetId); return this.request(`assets/${assetId}/pipeline-runs/current`); }
   async reprocess(assetId, input) {
     assetIdSchema.parse(assetId);
-    const body = z.object({ from: z.string().min(1).max(100), mode: z.enum(['step', 'auto']).optional(), stopAfter: z.string().min(1).max(100).optional(), sourceRunId: z.string().min(1).max(128).optional(), destination: z.enum(['overwrite', 'variant']).optional(), feedback: z.string().max(4000).optional() }).strict().parse(input);
+    const body = z.object({ from: z.string().min(1).max(100).optional(), mode: z.enum(['step', 'auto']).optional(), stopAfter: z.string().min(1).max(100).optional(), sourceRunId: z.string().min(1).max(128).optional(), destination: z.enum(['overwrite', 'variant']).optional(), feedback: z.string().max(4000).optional() }).strict().parse(input);
     return this.request(`assets/${assetId}/reprocess`, { method: 'POST', body });
   }
 
