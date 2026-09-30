@@ -41,11 +41,12 @@ test('creation forwards documented shape and pipeline options', async t => {
   assert.equal(body.texture_max_resolution, 2048);
 });
 
-test('parametric effort reaches text and image creates and rejects unsupported routes', async t => {
+test('parametric effort supports Low and Mad Max for text and image creates', async t => {
   const bodies = [];
   const { dir, client } = await fixture(t, async (_url, init) => { bodies.push(init.body); return json({ id: 'effort-asset' }, 201); });
-  await client.create({ ...basic, shape_model: 'parametric', effort: 'medium' });
-  assert.equal(JSON.parse(bodies[0]).effort, 'medium');
+  assert.throws(() => validateCreate({ ...basic, shape_model: 'parametric', effort: 'medium' }), /Invalid option|mad_max/);
+  await client.create({ ...basic, shape_model: 'parametric', effort: 'mad_max' });
+  assert.equal(JSON.parse(bodies[0]).effort, 'mad_max');
   const image = path.join(dir, 'photo.jpg');
   await writeFile(image, 'photo fixture');
   await client.create({ ...basic, source: 'image', image_path: image, shape_model: 'parametric', effort: 'mad_max' });
@@ -53,11 +54,10 @@ test('parametric effort reaches text and image creates and rejects unsupported r
   await client.create({ ...basic, source: 'image', image_path: image, shape_model: 'parametric', reconstruct: false });
   assert.equal(bodies[2].get('reconstruct'), 'false');
   for (const input of [
-    { ...basic, effort: 'medium' },
     { ...basic, shape_model: 'diffusion', effort: 'low' },
     { ...basic, source: 'cad', mesh_path: '/part.usd', effort: 'mad_max' },
     { ...basic, reconstruct: true },
-    { ...basic, source: 'image', image_path: image, shape_model: 'parametric', effort: 'medium', reconstruct: false }
+    { ...basic, source: 'image', image_path: image, shape_model: 'parametric', effort: 'mad_max', reconstruct: false }
   ]) assert.throws(() => validateCreate(input));
   assert.equal(bodies.length, 3);
 });
@@ -400,7 +400,7 @@ test('export strips API credentials on storage redirect, streams ZIP, and caches
   assert.ok(!stored.includes(secret));
 });
 
-test('failed export requires explicit confirmation before any billable request', async t => {
+test('failed export requires explicit confirmation before requesting a partial package', async t => {
   const calls = [];
   const zip = Buffer.from('504b0506000000000000000000000000000000000000', 'hex');
   const { dir, client } = await fixture(t, async url => {
@@ -442,7 +442,7 @@ test('API rejection redacts secrets before the message limit can split them', as
   await assert.rejects(client.create(basic), error => {
     assert.ok(!error.message.includes(secret.slice(0, 5)));
     assert.ok(!error.message.includes('token=1'));
-    receipt = error.message.match(/Recovery receipt: (\S+)$/)[1];
+    receipt = error.message.match(/(?:Recovery receipt|Rejected submission receipt): (\S+)$/)[1];
     return true;
   });
   const saved = await readFile(receipt, 'utf8');
@@ -456,7 +456,7 @@ test('a rejected create surfaces the API reason and records the rejection in its
     assert.match(error.message, /Invalid request \(HTTP 400\)\. BAD_REQUEST: effort requires a plan/);
     assert.ok(!error.message.includes(secret));
     assert.ok(!error.message.includes('token=1'));
-    receipt = error.message.match(/Recovery receipt: (\S+)$/)[1];
+    receipt = error.message.match(/(?:Recovery receipt|Rejected submission receipt): (\S+)$/)[1];
     return true;
   });
   const saved = JSON.parse(await readFile(receipt, 'utf8'));

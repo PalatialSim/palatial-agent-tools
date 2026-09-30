@@ -1,6 +1,20 @@
 # Changelog
 
-## Unreleased — API rejection reasons
+## Unreleased
+
+- Preserve sanitized billing metadata, advisory balance warnings, and financial
+  error codes through the client, submission receipts, and MCP responses.
+- Record definite generation-start rejections as `rejected`, with consistent
+  top-up guidance in MCP. Keep recovery guidance for uncertain submissions.
+- Explain route start minimums, postpaid stage charges, normal checkpoint
+  auto-resume, and same-asset resumption after a posted top-up leaves the
+  shared net balance positive. Export itself does not consume tokens; a later
+  paused run can use an earlier export only while the server exposes its key.
+- Retire the public Parametric `medium` effort; new requests use `low` or
+  `mad_max`.
+- Wrap array-valued list and batch results in MCP `structuredContent` records
+  while keeping their raw JSON in the text response, as required by the MCP
+  result schema.
 
 - A 4xx response now carries the API's own reason, for example
   `Invalid request (HTTP 400). BAD_REQUEST: <message>`. Only the structured
@@ -41,7 +55,6 @@
   nothing up and builds from the uploaded images and description alone.
 - A narrowed mode on any other route, or without images, is refused before
   anything is sent, because the API would accept it and do nothing.
-
 ## 0.1.5 — public generation route on asset reads
 
 - The API now publishes how an asset was built as `generationAgent`

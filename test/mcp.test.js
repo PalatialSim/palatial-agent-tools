@@ -26,6 +26,29 @@ test('real MCP protocol lists tools and calls the shared client without a model'
   assert.equal(invalid.isError, true);
 });
 
+test('array-valued list and batch tools return MCP-valid structured records', async t => {
+  const listedAssets = [{ asset_id: 'asset-list', status: 'READY' }];
+  const batchedStatuses = [{ asset_id: 'asset-batch', status: 'PROCESSING' }];
+  const server = createServer({ clientFactory: async () => ({
+    listAssets: async () => listedAssets,
+    batchStatus: async () => batchedStatuses
+  }) });
+  const client = new Client({ name: 'array-result-test', version: '1.0' });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a); await client.connect(b);
+  t.after(async () => { await client.close(); await server.close(); });
+
+  const listed = await client.callTool({ name: 'palatial_list_assets', arguments: {} });
+  assert.notEqual(listed.isError, true);
+  assert.deepEqual(listed.structuredContent, { data: listedAssets });
+  assert.deepEqual(JSON.parse(listed.content[0].text), listedAssets);
+
+  const statuses = await client.callTool({ name: 'palatial_batch_get_statuses', arguments: { asset_ids: ['asset-batch'] } });
+  assert.notEqual(statuses.isError, true);
+  assert.deepEqual(statuses.structuredContent, { statuses: batchedStatuses });
+  assert.deepEqual(JSON.parse(statuses.content[0].text), batchedStatuses);
+});
+
 test('create tool explains API options in its MCP schema', async t => {
   const server = createServer({ clientFactory: async () => ({}) });
   const client = new Client({ name: 'schema-test', version: '1.0' });
@@ -42,7 +65,8 @@ test('create tool explains API options in its MCP schema', async t => {
   assert.match(tool.inputSchema.properties.shape_model.description, /faster, cheaper/);
   assert.match(tool.inputSchema.properties.shape_model.description, /better for articulation/);
   assert.deepEqual(tool.inputSchema.properties.shape_model.enum, ['auto', 'diffusion', 'parametric']);
-  assert.deepEqual(tool.inputSchema.properties.effort.enum, ['low', 'medium', 'mad_max']);
+  assert.deepEqual(tool.inputSchema.properties.effort.enum, ['low', 'mad_max']);
+  assert.doesNotMatch(tool.inputSchema.properties.effort.description, /medium/i);
   assert.match(tool.inputSchema.properties.image_path.description, /optional PNG\/JPEG\/WebP reference/);
   assert.match(tool.inputSchema.properties.reconstruct.description, /currently ignored by the Queue/);
   assert.match(tool.inputSchema.properties.meters_per_unit.description, /Direct-mesh CAD/);

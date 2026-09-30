@@ -32,7 +32,7 @@ export const createSchema = z.object({
   mesh_quality: z.enum(['low', 'medium', 'high']).describe('Image and text only: mesh quality preset; not used for CAD.').optional(),
   collision_quality: z.enum(['low', 'medium', 'high', 'x_high', 'sdf']).describe('Image, text, and CAD: collision quality; sdf means signed-distance-field collision.').optional(),
   shape_model: z.enum(['auto', 'diffusion', 'parametric']).describe('Image and text only: auto lets Palatial select a supported generation route; diffusion is faster, cheaper, and better for organic shapes and accepts one image or named multiview inputs; parametric is controllable, better for articulation, and accepts N images (up to 50).').optional(),
-  effort: z.enum(['low', 'medium', 'mad_max']).describe('Text and image with shape_model=parametric only: low uses the parametric pipeline; medium and mad_max use the research and authoring route, cost more, and take longer. CAD does not support them.').optional(),
+  effort: z.enum(['low', 'mad_max']).describe('Text and image with shape_model=parametric only: low uses the parametric pipeline; mad_max uses the research and authoring route, costs more, and takes longer. CAD does not support effort.').optional(),
   product_research: z.enum(['on', 'specs_only', 'off']).describe('Image with effort=mad_max: how much Product Research the build does first. on (default) researches the real product on the web, its pages and its product photos. specs_only reads the web for identity and specifications but uses no web images, so the model is built only from your images. off looks nothing up and builds from your images and description alone.').optional(),
   texture_model: z.literal('auto').describe('Image, text, and CAD: auto selects the supported texture model.').optional(),
   decimation: z.boolean().describe('Image, text, and CAD: legacy adaptive reduction switch; prefer decimation_mode.').optional(),
@@ -89,7 +89,7 @@ export function validateCreate(input) {
   if (p.source === 'image' && views.length && views.length < 2) throw new Error('Multiview requires at least two views of the same object.');
   if (p.source === 'image' && p.image_paths && p.shape_model !== 'parametric') throw new Error('image_paths is supported only with shape_model=parametric.');
   if (p.source !== 'image' && p.reconstruct !== undefined) throw new Error('reconstruct is accepted only for image input.');
-  if (p.reconstruct !== undefined && ['medium', 'mad_max'].includes(p.effort)) throw new Error('The legacy reconstruct option is not accepted with medium or mad_max effort.');
+  if (p.reconstruct !== undefined && p.effort === 'mad_max') throw new Error('The legacy reconstruct option is not accepted with mad_max effort.');
   if (p.source === 'image' && ['auto', 'diffusion'].includes(p.shape_model) && views.length > 4) throw new Error('auto and diffusion accept a single image or up to four named views.');
   if (p.source === 'image' && (p.mesh_path || p.datasheet_path)) throw new Error('mesh_path and datasheet_path are only accepted for CAD.');
   if (p.source === 'cad' && (!p.mesh_path || p.image_paths || views.length)) throw new Error('CAD requires mesh_path; image_path is optional, and image_paths and named views are not accepted.');
@@ -167,14 +167,141 @@ function safeMessage(error, secret) {
 
 // Only the API's structured `{ code, message }` error is surfaced, bounded and
 // redacted; any other response body stays out of the error.
-async function apiErrorDetail(response, secret) {
-  let body;
-  try { body = JSON.parse(await response.text()); } catch { return ''; }
+function apiErrorDetail(body, secret) {
   if (!body || typeof body !== 'object') return '';
   const message = Array.isArray(body.message) ? body.message.join('; ') : body.message;
   if (typeof message !== 'string' || !message.trim()) return '';
   const code = typeof body.code === 'string' && /^[A-Z0-9_]{1,64}$/.test(body.code) ? `${body.code}: ` : '';
   return ` ${safeMessage(new Error(code + message), secret).replace(/\s+/g, ' ').trim().slice(0, 500)}`;
+}
+
+function safeBillingValue(value, secret) {
+  if (typeof value === 'string') return safeMessage(new Error(value), secret);
+  if (Array.isArray(value)) return value.map(item => safeBillingValue(item, secret));
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+    key, /api.?key|authorization|password|secret|cookie|signature|access.?token|refresh.?token|credential/i.test(key) ? '[REDACTED]' : safeBillingValue(item, secret)
+  ]));
+  return value;
+}
+
+// Keep additive billing fields, including in batch/detail responses, without
+// altering unrelated media URLs that callers may need to access their asset.
+function sanitizeBillingFields(value, secret) {
+  if (Array.isArray(value)) return value.map(item => sanitizeBillingFields(item, secret));
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key,
+    ['billing', 'warnings'].includes(key) ? safeBillingValue(item, secret) : sanitizeBillingFields(item, secret)
+  ]));
+}
+
+function billingMetadata(record) {
+  return {
+    ...(record?.billing && typeof record.billing === 'object' && !Array.isArray(record.billing) ? { billing: record.billing } : {}),
+    ...(Array.isArray(record?.warnings) ? { warnings: record.warnings } : {})
+  };
+}
+
+function creditGuidance(dashboardUrl, assetId) {
+  return {
+    reason: 'insufficient_credits',
+    message: 'Top up the shared organization/workspace balance in the Palatial dashboard so the net balance is above zero. Posted credits cover debt first; a credit-paused job resumes automatically on the same asset once its net balance is positive. Keep its asset ID and poll it; do not create a replacement or retry generation automatically.',
+    dashboard_url: dashboardUrl,
+    ...(assetId ? { resume_asset_id: assetId } : {})
+  };
+}
+
+function checkpointGuidance(dashboardUrl, assetId) {
+  return {
+    reason: 'stage_checkpoint',
+    message: 'Paused between stages; Palatial continues automatically within about a minute while the balance is above 0. Keep polling the same asset; do not reprocess or create.',
+    dashboard_url: dashboardUrl,
+    ...(assetId ? { resume_asset_id: assetId } : {})
+  };
+}
+
+function rejectedCreditGuidance(record, dashboardUrl, isCreate) {
+  const required = record?.tokens?.required;
+  if (Number.isFinite(required)) {
+    const balance = Number.isFinite(record?.tokens?.balance) ? record.tokens.balance : undefined;
+    const shortfall = Number.isFinite(record?.tokens?.shortfall)
+      ? record.tokens.shortfall
+      : Number.isFinite(balance) ? Math.max(0, required - balance) : undefined;
+    const requirement = `the route minimum of ${required} tokens${Number.isFinite(shortfall) ? ` (${shortfall} short)` : ''}`;
+    return {
+      reason: 'insufficient_tokens',
+      message: `Nothing was created. Add tokens so the balance meets ${requirement}, then submit once.`,
+      dashboard_url: dashboardUrl
+    };
+  }
+  const mode = record.billingMode ?? record.billing?.mode;
+  const postpaid = mode ? mode === 'postpaid_stage_v1'
+    : record.reason === 'insufficient_credits' || record.code === 'insufficient_credits';
+  if (postpaid && !isCreate) return creditGuidance(dashboardUrl);
+  if (isCreate) return {
+    reason: postpaid ? 'insufficient_credits' : 'insufficient_tokens',
+    message: 'Nothing was created. Top up the shared organization/workspace balance in the Palatial dashboard so the net balance is above zero and meets the server admission requirement, then submit once. Do not retry generation automatically.',
+    dashboard_url: dashboardUrl
+  };
+  return {
+    reason: 'insufficient_tokens',
+    message: 'Check the required credits and shortfall returned by the server, and replenish the balance in the Palatial dashboard to meet that requirement. Inspect the asset before requesting a retry; do not retry generation automatically.',
+    dashboard_url: dashboardUrl
+  };
+}
+
+function billingPause(record, dashboardUrl, assetId) {
+  if (record?.billing_guidance !== undefined) return {};
+  const reason = record?.billing?.pauseReason
+    ?? record?.pauseReason
+    ?? record?.status?.pauseReason
+    ?? record?.status?.billing?.pauseReason
+    ?? record?.run?.billing?.pauseReason
+    ?? record?.run?.pauseReason
+    ?? record?.run?.billingPauseReason;
+  if (reason === 'insufficient_credits') return { billing_guidance: creditGuidance(dashboardUrl, assetId) };
+  const billing = record?.billing ?? record?.status?.billing ?? record?.run?.billing;
+  const awaitingContinue = record?.run?.awaitingContinue === true;
+  const isPostpaidCheckpoint = awaitingContinue
+    && billing?.mode === 'postpaid_stage_v1'
+    && billing?.paused === false
+    && reason == null;
+  return isPostpaidCheckpoint
+    ? { billing_guidance: checkpointGuidance(dashboardUrl, assetId) }
+    : {};
+}
+
+function addBillingGuidance(value, dashboardUrl, assetId) {
+  if (Array.isArray(value)) {
+    return value.map(item => addBillingGuidance(item, dashboardUrl, item?.id ?? item?.asset_id ?? assetId));
+  }
+  if (!value || typeof value !== 'object') return value;
+  const guidance = billingPause(value, dashboardUrl, assetId);
+  let result = guidance.billing_guidance ? { ...value, ...guidance } : value;
+  if (Array.isArray(value.data) || Array.isArray(value.statuses)) result = { ...result };
+  if (Array.isArray(value.data)) result.data = value.data.map(item => addBillingGuidance(item, dashboardUrl, item?.id ?? item?.asset_id ?? assetId));
+  if (Array.isArray(value.statuses)) result.statuses = value.statuses.map(item => addBillingGuidance(item, dashboardUrl, item?.id ?? item?.asset_id ?? assetId));
+  return result;
+}
+
+export class PalatialApiError extends Error {
+  constructor(message, details) {
+    super(message);
+    this.name = 'PalatialApiError';
+    Object.assign(this, details);
+  }
+
+  toJSON() {
+    const fields = ['http_status', 'code', 'reason', 'billingMode', 'tokens', 'billing', 'warnings', 'billing_guidance'];
+    return { message: this.message, ...Object.fromEntries(fields.filter(key => this[key] !== undefined).map(key => [key, this[key]])) };
+  }
+}
+
+function errorWithContext(error, context, secret) {
+  const message = safeMessage(error, secret) + context;
+  if (error instanceof PalatialApiError) { error.message = message; return error; }
+  const result = new Error(message);
+  if (error.status !== undefined) result.status = error.status;
+  return result;
 }
 
 async function sha256File(filename) {
@@ -211,13 +338,36 @@ export class PalatialClient {
     if (raw && response.status >= 300 && response.status < 400) return response;
     if (!response.ok) {
       const reason = { 400: 'Invalid request', 401: 'Invalid or expired API key', 403: 'Access denied or insufficient credits', 404: 'Asset or workspace not found', 409: 'Request conflicts with asset state', 429: 'Rate limit reached' }[response.status] || 'Service request failed';
-      const detail = response.status < 500 ? await apiErrorDetail(response, this.apiKey) : '';
+      let payload;
+      if (response.status < 500) {
+        try { payload = await response.json(); } catch { /* Non-JSON errors use the generic fallback. */ }
+      }
+      if ([402, 403, 409].includes(response.status)) {
+        const body = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
+        const errorDetails = body.error && typeof body.error === 'object' && !Array.isArray(body.error) ? body.error : {};
+        const nestedDetails = errorDetails.details && typeof errorDetails.details === 'object' && !Array.isArray(errorDetails.details) ? errorDetails.details : {};
+        const record = { ...body, ...errorDetails, ...nestedDetails };
+        if (['insufficient_tokens', 'insufficient_credits'].includes(record.code)) {
+          const metadata = safeBillingValue(billingMetadata(record), this.apiKey);
+          const guidance = rejectedCreditGuidance(record, this.base.origin, route.startsWith('assets/create/'));
+          const tokens = Object.fromEntries(['balance', 'required', 'shortfall']
+            .filter(key => Number.isFinite(record.tokens?.[key]) && (key === 'balance' || record.tokens[key] >= 0))
+            .map(key => [key, record.tokens[key]]));
+          throw new PalatialApiError(`Insufficient credits (HTTP ${response.status}). ${guidance.message}`, {
+            http_status: response.status, code: record.code, reason: guidance.reason,
+            ...(typeof record.billingMode === 'string' ? { billingMode: safeBillingValue(record.billingMode, this.apiKey) } : {}),
+            ...(Object.keys(tokens).length ? { tokens } : {}),
+            ...metadata, billing_guidance: guidance
+          });
+        }
+      }
+      const detail = response.status < 500 ? apiErrorDetail(payload, this.apiKey) : '';
       const error = new Error(`${reason} (HTTP ${response.status}).${detail}${method !== 'GET' && response.status >= 500 ? ' Submission outcome is uncertain; inspect your workspace before retrying.' : ''}`);
       error.status = response.status;
       throw error;
     }
     if (raw) return response;
-    try { return await response.json(); } catch { throw new Error('Palatial returned an invalid JSON response. For a create request, inspect your workspace before submitting again.'); }
+    try { return sanitizeBillingFields(await response.json(), this.apiKey); } catch { throw new Error('Palatial returned an invalid JSON response. For a create request, inspect your workspace before submitting again.'); }
   }
 
   async doctor() {
@@ -267,16 +417,21 @@ export class PalatialClient {
     try {
       result = await this.request(`assets/create/${{ text: 'texttosim', image: 'imagetosim', cad: 'cadtosim' }[source]}`, { method: 'POST', body });
     } catch (error) {
-      const message = safeMessage(error, this.apiKey);
-      // A 4xx is a definite rejection: nothing was created.
-      if (error.status >= 400 && error.status < 500) {
-        try { await writeFile(requestReceipt, JSON.stringify({ ...intent, status: 'rejected', http_status: error.status, error: message }, null, 2) + '\n', { mode: 0o600 }); } catch {}
+      // A 4xx rejection is definitive, unlike a lost response.
+      const httpStatus = error.http_status ?? error.status;
+      if (httpStatus >= 400 && httpStatus < 500) {
+        try {
+          await writeFile(requestReceipt, JSON.stringify({ ...intent, status: 'rejected', http_status: httpStatus, error: safeMessage(error, this.apiKey), ...(error instanceof PalatialApiError ? { rejection: error.toJSON() } : {}) }, null, 2) + '\n', { mode: 0o600 });
+        } catch {
+          throw errorWithContext(error, ` Local receipt could not be updated: ${requestReceipt}. This create was rejected; do not treat the stale receipt as evidence of acceptance.`, this.apiKey);
+        }
+        throw errorWithContext(error, ` Rejected submission receipt: ${requestReceipt}`, this.apiKey);
       }
-      throw new Error(`${message} Recovery receipt: ${requestReceipt}`);
+      throw errorWithContext(error, ` Recovery receipt: ${requestReceipt}`, this.apiKey);
     }
     const assetId = result?.id;
     if (typeof assetId !== 'string' || !assetIdSchema.safeParse(assetId).success) throw new Error(`Create response did not contain a valid asset ID. The job may exist: inspect the Palatial dashboard before submitting again. Recovery receipt: ${requestReceipt}`);
-    const created = { asset_id: assetId, status: statusValue(result) || 'SUBMITTED', dashboard_url: this.base.origin, request_id: requestId, receipt_file: requestReceipt, message: 'Save this asset ID. Use palatial_get_asset to track it; do not submit again to poll.' };
+    const created = { asset_id: assetId, status: statusValue(result) || 'SUBMITTED', ...billingMetadata(result), ...billingPause(result, this.base.origin, assetId), dashboard_url: this.base.origin, request_id: requestId, receipt_file: requestReceipt, message: 'Save this asset ID. Use palatial_get_asset to track it; do not submit again to poll.' };
     try { await writeFile(requestReceipt, JSON.stringify({ ...intent, ...created }, null, 2) + '\n', { mode: 0o600 }); }
     catch { created.receipt_warning = 'Asset was submitted successfully, but the local receipt could not be updated. Save asset_id from this response.'; }
     return created;
@@ -286,7 +441,7 @@ export class PalatialClient {
     assetIdSchema.parse(assetId);
     const record = await this.request(`assets/${assetId}/status`);
     const status = statusValue(record) || 'UNKNOWN';
-    const result = { asset_id: assetId, status, details: record };
+    const result = { asset_id: assetId, status, details: record, ...billingMetadata(record), ...billingPause(record, this.base.origin, assetId) };
     const route = generationRoute(record);
     if (route) {
       result.generation_route = route;
@@ -297,26 +452,35 @@ export class PalatialClient {
     if (status === 'READY') result.ready_means = 'Outputs are available; inspect validation evidence and test in your target simulator.';
     if (status === 'PROCESSING_FAILED') result.failure_guidance = {
       message: 'Processing failed. Preserve this asset ID and inspect the dashboard or available validation evidence.',
-      failed_stage: record.failedStageKey || record.failed_stage || record.stage || null,
-      refund: 'Charges for failed stages are refunded.',
-      reprocessing: 'Reprocessing charges only for the remaining stages. Confirm before starting it.',
-      next_steps: ['Open the asset in the Palatial dashboard.', 'Ask the user before requesting a partial or unvalidated export, because export uses credits.', 'Contact support with this asset ID if the failure is unclear.']
+      failed_stage: record.processingSummary?.failedStageKey || record.failedStageKey || record.failed_stage || record.stage || null,
+      billing: 'Only successfully completed stages are charged. Failed stages are not charged.',
+      reprocessing: 'Reprocessing uses per-stage completion billing. Confirm before starting it.',
+      next_steps: ['Open the asset in the Palatial dashboard.', 'Ask the user before requesting a partial or unvalidated export.', 'Contact support with this asset ID if the failure is unclear.']
     };
     return result;
   }
 
-  async getAssetDetails(assetId) { assetIdSchema.parse(assetId); return this.request(`assets/${assetId}`); }
+  async getAssetDetails(assetId) {
+    assetIdSchema.parse(assetId);
+    return addBillingGuidance(await this.request(`assets/${assetId}`), this.base.origin, assetId);
+  }
   async listAssets({ search, status, limit = 20, skip = 0 } = {}) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100 || !Number.isInteger(skip) || skip < 0) throw new Error('limit must be 1-100 and skip must be non-negative.');
     const filter = { limit, skip, where: { ...(search ? { search } : {}), ...(status ? { 'status.status': status } : {}) } };
-    return this.request(`assets?filter=${encodeURIComponent(JSON.stringify(filter))}`);
+    return addBillingGuidance(await this.request(`assets?filter=${encodeURIComponent(JSON.stringify(filter))}`), this.base.origin);
   }
-  async batchStatus(assetIds) { return this.request('assets/statuses', { method: 'POST', body: { ids: z.array(assetIdSchema).min(1).max(100).parse(assetIds) } }); }
-  async pipelineProgress(assetId) { assetIdSchema.parse(assetId); return this.request(`assets/${assetId}/pipeline-runs/current`); }
+  async batchStatus(assetIds) {
+    const ids = z.array(assetIdSchema).min(1).max(100).parse(assetIds);
+    return addBillingGuidance(await this.request('assets/statuses', { method: 'POST', body: { ids } }), this.base.origin);
+  }
+  async pipelineProgress(assetId) {
+    assetIdSchema.parse(assetId);
+    return addBillingGuidance(await this.request(`assets/${assetId}/pipeline-runs/current`), this.base.origin, assetId);
+  }
   async reprocess(assetId, input) {
     assetIdSchema.parse(assetId);
     const body = z.object({ from: z.string().min(1).max(100).optional(), mode: z.enum(['step', 'auto']).optional(), stopAfter: z.string().min(1).max(100).optional(), sourceRunId: z.string().min(1).max(128).optional(), destination: z.enum(['overwrite', 'variant']).optional(), feedback: z.string().max(4000).optional() }).strict().parse(input);
-    return this.request(`assets/${assetId}/reprocess`, { method: 'POST', body });
+    return addBillingGuidance(await this.request(`assets/${assetId}/reprocess`, { method: 'POST', body }), this.base.origin, assetId);
   }
 
   async createVariant(assetId, input) {
@@ -332,7 +496,7 @@ export class PalatialClient {
     if (typeof variantId !== 'string' || !assetIdSchema.safeParse(variantId).success) {
       throw new Error('Variant response did not contain a valid asset ID. Inspect the Palatial dashboard before retrying.');
     }
-    return { asset_id: variantId, parent_asset_id: assetId, status: statusValue(result) || 'SUBMITTED', details: result, message: 'Variant created as an independent asset. Use palatial_get_asset to track it; do not submit again to poll.' };
+    return { asset_id: variantId, parent_asset_id: assetId, status: statusValue(result) || 'SUBMITTED', details: result, ...billingMetadata(result), ...billingPause(result, this.base.origin, variantId), message: 'Variant created as an independent asset. Use palatial_get_asset to track it; do not submit again to poll.' };
   }
 
   async cancel(assetId) {
@@ -345,24 +509,25 @@ export class PalatialClient {
     const directory = path.resolve(outputDir);
     const destination = path.join(directory, `${assetId}-export.zip`);
     const receiptPath = path.join(directory, `${assetId}-receipt.json`);
-    // A matching receipt avoids a second billable export request after success.
+    // A matching receipt avoids downloading the same export again after success.
     try {
       const receipt = JSON.parse(await readFile(receiptPath, 'utf8'));
-      if (receipt.asset_id === assetId && receipt.file === destination) {
+      if (receipt.asset_id === assetId && receipt.file === destination && receipt.source_status === 'READY') {
         const checksum = await sha256File(destination);
         if (checksum === receipt.sha256) return { ...receipt, receipt_file: receiptPath, cached: true };
       }
-      throw new Error('Existing download receipt is invalid. Choose a new output directory.');
+      if (receipt.source_status === 'READY') throw new Error('Existing download receipt is invalid. Choose a new output directory.');
     } catch (error) { if (error.code !== 'ENOENT') throw error; }
     for (const file of [destination, receiptPath]) {
       try { await stat(file); throw new Error('Output already exists. Choose a new output directory; no export was requested.'); }
       catch (error) { if (error.code !== 'ENOENT') throw error; }
     }
     const current = await this.getAsset(assetId);
-    if (current.status === 'PROCESSING_FAILED' && !allowFailedExport) throw new Error('Asset processing failed. A partial or unvalidated export may exist, but requesting it uses export credits. Ask the user first, then retry with allow_failed_export=true.');
-    if (current.status !== 'READY' && current.status !== 'PROCESSING_FAILED') throw new Error(`Asset is ${current.status}; wait until processing completes before exporting.`);
+    if (current.status === 'PROCESSING_FAILED' && !allowFailedExport) throw new Error('Asset processing failed. A partial or unvalidated export may exist. Ask the user first, then retry with allow_failed_export=true.');
+    const existingExport = Boolean(current.details?.export?.key);
+    if (current.status !== 'READY' && current.status !== 'PROCESSING_FAILED' && !existingExport) throw new Error(`Asset is ${current.status}; ${current.billing_guidance?.message || 'wait until processing completes before exporting.'}`);
     await mkdir(directory, { recursive: true });
-    // Reserve the destination before asking for a billable export.
+    // Reserve the destination before requesting an export.
     const file = await open(destination, 'wx', 0o600);
     let complete = false;
     try {
@@ -396,7 +561,7 @@ export class PalatialClient {
       complete = true;
       return { ...receipt, receipt_file: receiptPath, cached: false };
     } catch (error) {
-      throw new Error(safeMessage(error, this.apiKey) + (current.status === 'PROCESSING_FAILED' ? ' No export package was available for this failed job; failed-stage charges are refunded. Reprocessing charges only for remaining stages and requires confirmation.' : ' No automatic export retry was made; an export credit may already have been consumed.'));
+      throw errorWithContext(error, ' No automatic export retry was made. Export itself does not consume tokens.' + (current.status === 'PROCESSING_FAILED' ? ' Any available export may be partial or unvalidated. Reprocessing uses per-stage completion billing and requires confirmation.' : ''), this.apiKey);
     } finally {
       await file.close();
       if (!complete) await unlink(destination).catch(() => {});

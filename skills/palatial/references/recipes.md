@@ -80,9 +80,9 @@ A phone walkaround of one object. `image_paths` works only with `parametric`.
 ```
 
 For a research-and-authoring build instead of the low-effort parametric pipeline,
-add `"effort": "medium"` or `"effort": "mad_max"` to a text or image
-request with `"shape_model": "parametric"`. Those routes cost more and take
-longer. Omit `effort` for the pipeline default.
+add `"effort": "mad_max"` to a text or image request with
+`"shape_model": "parametric"`. That route costs more and takes longer. Omit
+`effort` for the pipeline default.
 
 ## CAD
 

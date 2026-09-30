@@ -8,7 +8,7 @@ This is Palatial's **public thin client**: a command-line application and a loca
 
 ## Install
 
-You need Node.js 22 or newer, a Palatial workspace API key, and Codex CLI or Claude Code. Generation and export use your Palatial workspace credits. Your coding agent's subscription or API charges are separate.
+You need Node.js 22 or newer, a Palatial workspace API key, and Codex CLI or Claude Code. Generation uses the shared organization/workspace token balance and charges as stages complete. Export itself does not consume tokens. Your coding agent's subscription or API charges are separate.
 
 Install the versioned package from the official GitHub Release:
 
@@ -65,8 +65,8 @@ Specify the target simulator, dimensions, and articulation requirements when kno
 
 ## How your agent learns to use this
 
-Tool names alone do not tell a coding agent that a second create is a second
-charge, or that `image_paths` works with one shape model and not the others.
+Tool names alone do not tell a coding agent that a second create starts another
+job with its own stage charges, or that `image_paths` works with one shape model and not the others.
 The package ships that guidance as plain Markdown you can read and edit, in
 `skills/palatial/`: a workflow overview, a full `palatial_create_asset`
 parameter reference with defaults and cross-field rules, worked requests for
@@ -106,18 +106,31 @@ This preference is inspectable and editable. It does not guarantee that every na
 | --- | --- | --- |
 | `palatial_guide` | Read the packaged usage and parameter guidance | Local and read-only; no API call |
 | `palatial_doctor` | Check credentials and API connectivity | Read-only; no generation or export |
-| `palatial_create_asset` | Submit text, image, multiview, or CAD generation | Creates an asset; uses workspace credits |
+| `palatial_create_asset` | Submit text, image, multiview, or CAD generation | Creates an asset; charges tokens as stages complete |
 | `palatial_get_asset` | Check an existing asset's processing status | Read-only |
 | `palatial_get_asset_details` | Retrieve the complete asset record | Read-only |
 | `palatial_list_assets` | List workspace assets with optional name/status filters | Read-only |
 | `palatial_batch_get_statuses` | Check up to 100 asset statuses in one request | Read-only |
 | `palatial_get_pipeline_progress` | Retrieve stage-level progress for an asset | Read-only |
-| `palatial_create_variant` | Create an independent variant from a READY asset using feedback | Creates an asset; uses workspace credits |
-| `palatial_reprocess_asset` | Reprocess from a pipeline stage in place or as a variant, or, without a stage, retry a researching job's failed build | Changes processing; uses workspace credits |
-| `palatial_download_asset` | Save a READY export ZIP and SHA-256 receipt | Writes local files; export may consume a credit. A failed asset requires user confirmation plus `allow_failed_export: true` |
+| `palatial_create_variant` | Create an independent variant from a READY asset using feedback | Creates an asset; charges tokens as stages complete |
+| `palatial_reprocess_asset` | Reprocess from a pipeline stage in place or as a variant, or, without a stage, retry a researching job's failed build | Changes processing; charges tokens as stages complete |
+| `palatial_download_asset` | Save an available export ZIP and SHA-256 receipt | Writes local files; export itself is free. A failed asset requires user confirmation plus `allow_failed_export: true` |
 | `palatial_cancel_asset` | Cancel a specific asset's processing | Stops a job; does not imply a refund |
 
+MCP `structuredContent` is always an object as required by the protocol. When
+an API response is an array, `palatial_list_assets` exposes it as `data` and
+`palatial_batch_get_statuses` exposes it as `statuses`; the text response keeps
+the original JSON array for clients that read text only.
+
 The client accepts PNG/JPEG/WebP references and PDF datasheets. CAD requests require a mesh file; the reference image is optional and needed when generating textures from a photo. A GLB with embedded textures can retain its appearance when the server inspection confirms them. Each local input is limited to 256 MiB; downloads are limited to 2 GiB in this preview. ZIP files are saved without automatic extraction or simulator import.
+
+## Billing and paused jobs
+
+Only successfully completed stages are charged. New generations must meet the route start minimum (Diffusion 20, Parametric Low 40, Mad Max 80, CAD to Sim 4 tokens); the minimum admits the run but does not reserve or deduct the whole estimate. A zero or negative net balance blocks new jobs and the next stages; an already-running stage can finish and leave debt. A normal `PROCESSING_PAUSED` checkpoint between stages (`billing.paused: false`, `run.awaitingContinue: true`) continues automatically in about a minute while the balance is above zero. For `billing.paused: true` with `pauseReason: insufficient_credits`, posted credit covers debt first and the same asset resumes once the net balance is positive. Keep polling the same asset; the client never retries generation or starts checkout automatically.
+
+Creation and status responses retain the API's `billing` and `warnings` fields when present. Status calls also return `billing_guidance` for credit pauses and normal stage checkpoints. A start-gate `insufficient_tokens` error is identified by `tokens.required`; it includes `tokens.balance` and `tokens.shortfall`, says that nothing was created, and tells the caller to add tokens and submit once. MCP exposes these in both text JSON and `structuredContent`. Responses without a route minimum retain their server billing code and do not promise automatic resume. The client redacts credentials and signed URL secrets in billing metadata and does not copy arbitrary error bodies. Older servers without billing fields retain their existing response and generic error behavior.
+
+The first export requires a positive net balance, but exporting does not deduct tokens. A later paused or indebted run can use an earlier export only when the server still exposes its materialized `export.key`; an in-place reprocess may clear that key. The server decides export eligibility; the client does not infer it from `export.status` alone.
 
 ## Use the CLI directly
 
@@ -140,9 +153,9 @@ palatial-agent status --asset-id YOUR_ASSET_ID
 palatial-agent download --asset-id YOUR_ASSET_ID --output-dir ./assets
 ```
 
-Creation returns immediately with an asset ID. Status polling does not create another asset. A local submission receipt is saved under `~/.local/state/palatial-agent` (or `PALATIAL_STATE_DIR`) so accepted IDs can be recovered after a terminal session ends. An uncertain submission receipt means you should inspect the dashboard before submitting again; the receipt is not server-side idempotency.
+Creation returns immediately with an asset ID. Status polling does not create another asset. A local submission receipt is saved under `~/.local/state/palatial-agent` (or `PALATIAL_STATE_DIR`) so accepted IDs can be recovered after a terminal session ends. A definite start-gate rejection is recorded as `rejected`: nothing was created, so add tokens to meet the minimum and submit once. A receipt with `submission_outcome_unknown` means you should inspect the dashboard before submitting again; the receipt is not server-side idempotency.
 
-Exports include an absolute local path, SHA-256, byte count, and asset ID. A completed download with a matching receipt is reused locally without calling the export endpoint again. Existing files are preserved. Failed assets are not exported automatically: the user must confirm the possible partial or unvalidated result before `allow_failed_export` is set. If a download fails after export authorization, a credit may already have been consumed; the client does not automatically retry that export.
+Exports include an absolute local path, SHA-256, byte count, and asset ID. A completed download with a matching receipt is reused locally without calling the export endpoint again. Existing files are preserved. Failed assets are not exported automatically: the user must confirm the possible partial or unvalidated result before `allow_failed_export` is set. The client does not automatically retry a failed download.
 
 ## Authentication and data
 
@@ -159,7 +172,9 @@ The public client contains only input validation, authentication handling, API t
 | Palatial tools are missing | Rerun setup and start a fresh coding-agent session; inspect the MCP connection. |
 | The agent ignores the guidance | Ask it to call `palatial_guide` directly. In Claude Code, check that `~/.claude/skills/palatial/SKILL.md` exists and rerun setup if not. |
 | Authentication fails | Run `palatial-agent login`; check for an overriding `PALATIAL_API_KEY`. |
-| HTTP 403 | Check workspace access and generation/export credits in Palatial. |
+| `insufficient_tokens` at generation start | Read `tokens.required`, `tokens.balance` and `tokens.shortfall`. Nothing was created; add enough tokens to meet the route minimum, then submit once. |
+| `insufficient_credits` while a run is paused | Top up the shared organization/workspace net balance above zero in Palatial. Keep the existing asset ID; the server resumes the credit-paused run automatically after credit is posted. |
+| Other HTTP 403 | Check workspace access and balance in Palatial. Older APIs may omit a specific billing code. |
 | Generation request times out | Keep the recovery receipt and inspect the dashboard before submitting again. |
 | Job is failed, canceled, or paused | Inspect that asset's status; do not create a replacement merely to poll. |
 | Existing output or receipt conflicts | Choose a new output directory; files are not overwritten. |

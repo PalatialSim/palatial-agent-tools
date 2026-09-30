@@ -25,7 +25,8 @@ in conversation and never put one in a tool argument.
    only handle to the job.
 3. `palatial_get_asset` polls it. Generation takes minutes, not seconds.
 4. When status is `READY`, `palatial_download_asset` saves the export ZIP and a
-   SHA-256 receipt into a directory the user chose.
+   SHA-256 receipt into a directory the user chose. A later paused run can use
+   an earlier export only while the server exposes its materialized `export.key`.
 
 For several assets at once, poll with `palatial_batch_get_statuses` instead of
 one call per asset. For a stuck job, `palatial_get_pipeline_progress` shows
@@ -33,18 +34,42 @@ which stage it is on.
 
 ## Rules that cost the user money when broken
 
-- `palatial_create_asset`, `palatial_create_variant`, `palatial_reprocess_asset`
-  and `palatial_download_asset` all spend workspace credits. Reads do not.
+- Generation uses the shared organization/workspace net token balance.
+  `palatial_create_asset`, `palatial_create_variant`, and
+  `palatial_reprocess_asset` charge only for successfully completed stages.
+  Reads and export itself do not consume tokens.
+- New generations need a route start minimum: Diffusion 20, Parametric Low 40,
+  Mad Max 80, or CAD to Sim 4 tokens. The minimum admits the run; the estimate
+  is not prepaid. A `low_recommended_balance` warning recommending 10 or 20
+  tokens is advisory.
+- At zero or negative balance, new jobs are blocked and the next stage waits.
+  An already-running stage can finish and leave debt. A normal
+  `PROCESSING_PAUSED` checkpoint has `billing.paused: false` and
+  `run.awaitingContinue: true`; Palatial continues automatically in about a
+  minute while the balance is above zero, so keep polling. For
+  `billing.paused: true` with `pauseReason: insufficient_credits`, show
+  `billing_guidance` and keep polling the same asset ID. Posted credit covers
+  debt first; once the net balance is positive, processing resumes automatically.
+  Do not start checkout, reprocess, or create a replacement to resume it.
+- A first export requires a positive net balance. An earlier export remains
+  downloadable during a later run only when the server exposes `export.key`.
+  Let the server check eligibility; do not infer it from `export.status` alone.
+- A generation-start `insufficient_tokens` error is identified by
+  `tokens.required`. It includes the route minimum, balance, and shortfall and
+  means that nothing was created; add tokens and submit once. Its local
+  submission receipt is marked `rejected`. Do not promise automatic resume
+  for a rejected create or treat its receipt as an accepted job.
 - **Never call create again to check on a job.** A second create is a second
   paid asset. Poll the ID you already have.
-- **Never retry a create whose outcome is unclear.** If a create errors with a
-  recovery receipt, the server may still have accepted it. Tell the user to
-  check the Palatial dashboard before submitting anything else.
+- **Never retry a create whose outcome is unclear.** After a timeout, connection
+  loss, or unclear server response, the server may still have accepted it; the
+  recovery receipt remains `submission_outcome_unknown`. Tell the user to check
+  the Palatial dashboard before submitting anything else. A receipt alone does
+  not imply an unclear outcome; a definite start-gate rejection is handled above.
 - Confirm with the user before reprocessing, creating a variant, or generating
   a batch of assets from one request.
-- A failed asset may have a partial export, but requesting it still uses export
-  credits. Ask first, then pass `allow_failed_export: true` and label the result
-  partial or unvalidated.
+- A failed asset may have a partial export. Ask first, then pass
+  `allow_failed_export: true` and label the result partial or unvalidated.
 - `READY` means the outputs exist. It does not mean the asset behaves correctly
   in the user's simulator. Report generation and validation separately, and do
   not claim a simulator accepted an asset unless the user tested it.
@@ -75,10 +100,11 @@ it is the only place dimensions can go.
   same object.
 
 For `shape_model: parametric`, `effort: low` uses the parametric pipeline.
-`medium` and `mad_max` research the described product and author the model;
-they cost more and take longer. They work with text and image inputs, not CAD.
-An image `mad_max` request can set `product_research: specs_only` to use the web
-for specifications but build only from the uploaded images, or `off` to look
+`mad_max` researches the described product and authors the model; it costs more
+and takes longer.
+These choices work with text and image inputs, not CAD. An image `mad_max`
+request can set `product_research: specs_only` to use the web for
+specifications but build only from the uploaded images, or `off` to look
 nothing up.
 
 ## Reading the route back
@@ -86,7 +112,7 @@ nothing up.
 A finished asset reports how it was built as `generationAgent`: `diffusion`,
 `parametric`, or `mad_max`. `palatial_get_asset` surfaces this as
 `generation_route`, and the full record from `palatial_get_asset_details`
-carries the field and any `madMaxBuild` progress block.
+carries the route field and its server-owned progress metadata.
 
 That label is read-only. It is not a `shape_model` value, and copying it into a
 new request is refused: `mad_max` is requested with `shape_model: parametric`

@@ -28,7 +28,7 @@ and an omitted field is safer than a guessed one.
 | `image_path` | one PNG, JPEG, or WebP path | none | `image`, `cad` | Required for a single-image request. Optional for CAD; provide it when asking to generate textures from a reference. |
 | `image_paths` | 2 to 50 PNG, JPEG, or WebP paths | none | `image` | Photos of one object. Accepted **only** with `shape_model: parametric`. |
 | `views` | object with `front`, `left`, `back`, `right` | none | `image` | Named angles of one object. Give at least 2. `auto` and `diffusion` accept at most 4. |
-| `reconstruct` | boolean | ignored | `image` | Legacy API field. The current Queue ignores it: one image does not trigger synthetic view generation, and supplied views are processed directly. Omit this field. The client rejects it with `medium` or `mad_max` effort. |
+| `reconstruct` | boolean | ignored | `image` | Legacy API field. The current Queue ignores it: one image does not trigger synthetic view generation, and supplied views are processed directly. Omit this field. The client rejects it with `mad_max` effort. |
 | `mesh_path` | path to the mesh file | none | `cad` | Required for CAD. |
 | `datasheet_path` | path to a PDF | none | `cad` | Optional specification sheet. |
 
@@ -70,7 +70,7 @@ a swivel chair with rolling wheels is `rigid_bodies` with
 | Field | Values | Default | Sources | Notes |
 | --- | --- | --- | --- | --- |
 | `shape_model` | `auto`, `diffusion`, `parametric` | `auto` | `text`, `image` | `auto` lets Palatial select a supported route. `diffusion` is faster, cheaper, and better at organic shapes; it takes one image or up to 4 named views. `parametric` is more controllable and better for articulation; it is the only model that accepts `image_paths`. **Rejected for CAD.** |
-| `effort` | `low`, `medium`, `mad_max` | `low` when parametric | `text`, `image` | Requires `shape_model: parametric`. `low` runs the parametric pipeline. `medium` and `mad_max` research the described product and author the model; they cost more and take longer. **Rejected for CAD.** |
+| `effort` | `low`, `mad_max` | `low` when parametric | `text`, `image` | Requires `shape_model: parametric`. `low` runs the parametric pipeline. `mad_max` researches the described product and authors the model; it costs more and takes longer. **Rejected for CAD.** |
 | `product_research` | `on`, `specs_only`, `off` | `on` | `image` | How much Product Research a `mad_max` build does. `on` researches the real product on the web, its pages and its product photos. `specs_only` reads the web for identity and specifications but uses no web images, so the model is built only from your images. `off` looks nothing up. Use `specs_only` or `off` when your own photos show the exact unit and web photos of similar products could mislead the build. |
 | `texture_model` | `auto` | `auto` | all | Selects the supported texture model. There is no other public value, so omit it. |
 | `apply_textures` | boolean | `true` with a CAD reference image, `false` without one | `cad` | Generate textures from the reference image. `true` requires `image_path`. When it is off, `texture_model` has nothing to run. |
@@ -189,7 +189,7 @@ names the rule.
   asset reports in `generationAgent`; request it with `shape_model: parametric`
   and `effort: mad_max`.
 - The legacy `reconstruct` field is ignored by the current Queue. The client
-  rejects it with `effort: medium` or `mad_max`; omit it on all new requests.
+  rejects it with `effort: mad_max`; omit it on all new requests.
 - `apply_textures: true` on CAD requires `image_path`.
 - Strict decimation requires exactly one target. Any other mode accepts none.
 - The four CAD reuse flags are rejected for `text` and `image`.
