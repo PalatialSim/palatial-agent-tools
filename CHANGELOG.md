@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.6 — product research mode
+
+- `palatial_create_asset` accepts `product_research` (`on`, `specs_only`, or
+  `off`) on an image request with `effort: mad_max`. `on` is the default and
+  researches the real product on the web, its pages and its product photos.
+  `specs_only` reads the web for identity and specifications but uses no web
+  images, so the model is built only from the uploaded images. `off` looks
+  nothing up and builds from the uploaded images and description alone.
+- A narrowed mode on any other route, or without images, is refused before
+  anything is sent, because the API would accept it and do nothing.
+
 ## 0.1.5 — public generation route on asset reads
 
 - The API now publishes how an asset was built as `generationAgent`
