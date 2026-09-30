@@ -165,6 +165,16 @@ function safeMessage(error, secret) {
   });
 }
 
+// Only the API's structured `{ code, message }` error is surfaced, bounded and
+// redacted; any other response body stays out of the error.
+function apiErrorDetail(body, secret) {
+  if (!body || typeof body !== 'object') return '';
+  const message = Array.isArray(body.message) ? body.message.join('; ') : body.message;
+  if (typeof message !== 'string' || !message.trim()) return '';
+  const code = typeof body.code === 'string' && /^[A-Z0-9_]{1,64}$/.test(body.code) ? `${body.code}: ` : '';
+  return ` ${safeMessage(new Error(code + message), secret).replace(/\s+/g, ' ').trim().slice(0, 500)}`;
+}
+
 function safeBillingValue(value, secret) {
   if (typeof value === 'string') return safeMessage(new Error(value), secret);
   if (Array.isArray(value)) return value.map(item => safeBillingValue(item, secret));
@@ -209,7 +219,7 @@ function checkpointGuidance(dashboardUrl, assetId) {
   };
 }
 
-function rejectedCreditGuidance(record, dashboardUrl) {
+function rejectedCreditGuidance(record, dashboardUrl, isCreate) {
   const required = record?.tokens?.required;
   if (Number.isFinite(required)) {
     const balance = Number.isFinite(record?.tokens?.balance) ? record.tokens.balance : undefined;
@@ -226,7 +236,12 @@ function rejectedCreditGuidance(record, dashboardUrl) {
   const mode = record.billingMode ?? record.billing?.mode;
   const postpaid = mode ? mode === 'postpaid_stage_v1'
     : record.reason === 'insufficient_credits' || record.code === 'insufficient_credits';
-  if (postpaid) return creditGuidance(dashboardUrl);
+  if (postpaid && !isCreate) return creditGuidance(dashboardUrl);
+  if (isCreate) return {
+    reason: postpaid ? 'insufficient_credits' : 'insufficient_tokens',
+    message: 'Nothing was created. Top up the shared organization/workspace balance in the Palatial dashboard so the net balance is above zero and meets the server admission requirement, then submit once. Do not retry generation automatically.',
+    dashboard_url: dashboardUrl
+  };
   return {
     reason: 'insufficient_tokens',
     message: 'Check the required credits and shortfall returned by the server, and replenish the balance in the Palatial dashboard to meet that requirement. Inspect the asset before requesting a retry; do not retry generation automatically.',
@@ -284,7 +299,9 @@ export class PalatialApiError extends Error {
 function errorWithContext(error, context, secret) {
   const message = safeMessage(error, secret) + context;
   if (error instanceof PalatialApiError) { error.message = message; return error; }
-  return new Error(message);
+  const result = new Error(message);
+  if (error.status !== undefined) result.status = error.status;
+  return result;
 }
 
 async function sha256File(filename) {
@@ -321,16 +338,18 @@ export class PalatialClient {
     if (raw && response.status >= 300 && response.status < 400) return response;
     if (!response.ok) {
       const reason = { 400: 'Invalid request', 401: 'Invalid or expired API key', 403: 'Access denied or insufficient credits', 404: 'Asset or workspace not found', 409: 'Request conflicts with asset state', 429: 'Rate limit reached' }[response.status] || 'Service request failed';
+      let payload;
+      if (response.status < 500) {
+        try { payload = await response.json(); } catch { /* Non-JSON errors use the generic fallback. */ }
+      }
       if ([402, 403, 409].includes(response.status)) {
-        let payload;
-        try { payload = await response.json(); } catch { /* Legacy non-JSON errors use the generic fallback. */ }
         const body = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
         const errorDetails = body.error && typeof body.error === 'object' && !Array.isArray(body.error) ? body.error : {};
         const nestedDetails = errorDetails.details && typeof errorDetails.details === 'object' && !Array.isArray(errorDetails.details) ? errorDetails.details : {};
         const record = { ...body, ...errorDetails, ...nestedDetails };
         if (['insufficient_tokens', 'insufficient_credits'].includes(record.code)) {
           const metadata = safeBillingValue(billingMetadata(record), this.apiKey);
-          const guidance = rejectedCreditGuidance(record, this.base.origin);
+          const guidance = rejectedCreditGuidance(record, this.base.origin, route.startsWith('assets/create/'));
           const tokens = Object.fromEntries(['balance', 'required', 'shortfall']
             .filter(key => Number.isFinite(record.tokens?.[key]) && (key === 'balance' || record.tokens[key] >= 0))
             .map(key => [key, record.tokens[key]]));
@@ -342,7 +361,10 @@ export class PalatialClient {
           });
         }
       }
-      throw new Error(`${reason} (HTTP ${response.status}).${method !== 'GET' && response.status >= 500 ? ' Submission outcome is uncertain; inspect your workspace before retrying.' : ''}`);
+      const detail = response.status < 500 ? apiErrorDetail(payload, this.apiKey) : '';
+      const error = new Error(`${reason} (HTTP ${response.status}).${detail}${method !== 'GET' && response.status >= 500 ? ' Submission outcome is uncertain; inspect your workspace before retrying.' : ''}`);
+      error.status = response.status;
+      throw error;
     }
     if (raw) return response;
     try { return sanitizeBillingFields(await response.json(), this.apiKey); } catch { throw new Error('Palatial returned an invalid JSON response. For a create request, inspect your workspace before submitting again.'); }
@@ -395,11 +417,11 @@ export class PalatialClient {
     try {
       result = await this.request(`assets/create/${{ text: 'texttosim', image: 'imagetosim', cad: 'cadtosim' }[source]}`, { method: 'POST', body });
     } catch (error) {
-      // A recognized admission rejection is definitive, unlike a lost response.
-      if (error instanceof PalatialApiError && error.http_status === 403
-        && error.code === 'insufficient_tokens' && Number.isFinite(error.tokens?.required)) {
+      // A 4xx rejection is definitive, unlike a lost response.
+      const httpStatus = error.http_status ?? error.status;
+      if (httpStatus >= 400 && httpStatus < 500) {
         try {
-          await writeFile(requestReceipt, JSON.stringify({ ...intent, status: 'rejected', rejection: error.toJSON() }, null, 2) + '\n', { mode: 0o600 });
+          await writeFile(requestReceipt, JSON.stringify({ ...intent, status: 'rejected', http_status: httpStatus, error: safeMessage(error, this.apiKey), ...(error instanceof PalatialApiError ? { rejection: error.toJSON() } : {}) }, null, 2) + '\n', { mode: 0o600 });
         } catch {
           throw errorWithContext(error, ` Local receipt could not be updated: ${requestReceipt}. This create was rejected; do not treat the stale receipt as evidence of acceptance.`, this.apiKey);
         }

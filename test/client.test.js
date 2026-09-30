@@ -436,6 +436,34 @@ test('API calls forbid insecure origins and do not leak arbitrary server error b
   await assert.rejects(client.doctor(), error => { assert.ok(!error.message.includes(secret)); assert.match(error.message, /403/); return true; });
 });
 
+test('API rejection redacts secrets before the message limit can split them', async t => {
+  const { client } = await fixture(t, async () => json({ code: 'BAD_REQUEST', message: `${'x'.repeat(495)}${secret} https://x.test/a?token=1` }, 400));
+  let receipt;
+  await assert.rejects(client.create(basic), error => {
+    assert.ok(!error.message.includes(secret.slice(0, 5)));
+    assert.ok(!error.message.includes('token=1'));
+    receipt = error.message.match(/(?:Recovery receipt|Rejected submission receipt): (\S+)$/)[1];
+    return true;
+  });
+  const saved = await readFile(receipt, 'utf8');
+  assert.ok(!saved.includes(secret.slice(0, 5)));
+});
+
+test('a rejected create surfaces the API reason and records the rejection in its receipt', async t => {
+  const { client } = await fixture(t, async () => json({ statusCode: 400, code: 'BAD_REQUEST', message: `effort requires a plan (key ${secret}) https://x.test/a?token=1` }, 400));
+  let receipt;
+  await assert.rejects(client.create(basic), error => {
+    assert.match(error.message, /Invalid request \(HTTP 400\)\. BAD_REQUEST: effort requires a plan/);
+    assert.ok(!error.message.includes(secret));
+    assert.ok(!error.message.includes('token=1'));
+    receipt = error.message.match(/(?:Recovery receipt|Rejected submission receipt): (\S+)$/)[1];
+    return true;
+  });
+  const saved = JSON.parse(await readFile(receipt, 'utf8'));
+  assert.equal(saved.status, 'rejected');
+  assert.equal(saved.http_status, 400);
+});
+
 test('saved credentials have restricted permissions and environment keys take precedence', async t => {
   const dir = await mkdtemp(path.join(tmpdir(), 'palatial-auth-'));
   t.after(() => rm(dir, { recursive: true, force: true }));

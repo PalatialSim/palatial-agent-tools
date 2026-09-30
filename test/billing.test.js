@@ -88,9 +88,29 @@ test('MCP keeps a structured insufficient-token create rejection and actionable 
   assert.deepEqual(textDetails.tokens, { balance: -0.5 });
   assert.match(result.content[0].text, /top up/i);
   assert.match(result.content[0].text, /net balance.*above zero/i);
+  assert.match(result.structuredContent.billing_guidance.message, /Nothing was created/);
+  assert.doesNotMatch(result.structuredContent.billing_guidance.message, /same asset|poll|resumes automatically/i);
+  assert.doesNotMatch(result.structuredContent.message, /Recovery receipt/);
   assert.ok(!JSON.stringify(result).includes(secret));
   assert.ok(!JSON.stringify(result).includes('Do not expose server text'));
   assert.deepEqual(calls, [{ path: '/api/v1/external/assets/create/texttosim', method: 'POST' }]);
+});
+
+test('ordinary 403 and 409 create rejections keep their API reason alongside billing handling', async t => {
+  for (const status of [403, 409]) {
+    const { client } = await fixture(t, async () => json({ code: 'WORKSPACE_REJECTED', message: `Workspace is disabled ${secret}` }, status));
+    let receipt;
+    await assert.rejects(client.create(basic), error => {
+      assert.match(error.message, /WORKSPACE_REJECTED: Workspace is disabled/);
+      assert.ok(!error.message.includes(secret));
+      assert.equal(error.status, status);
+      receipt = error.message.match(/Rejected submission receipt: (\S+)$/)[1];
+      return true;
+    });
+    const saved = JSON.parse(await readFile(receipt, 'utf8'));
+    assert.equal(saved.status, 'rejected');
+    assert.equal(saved.http_status, status);
+  }
 });
 
 test('a new-generation start gate explains the route minimum and confirms that nothing was created', async t => {
@@ -170,13 +190,12 @@ test('a receipt write failure does not make a definite start rejection uncertain
   assert.equal(calls, 1);
 });
 
-test('creates without a definite start-gate response retain their unknown-outcome receipt', async t => {
+test('creates without a definite HTTP rejection retain their unknown-outcome receipt', async t => {
   const responses = [
     ['connection loss', () => { throw new Error('socket closed'); }],
     ['server failure', () => json({ code: 'insufficient_tokens', tokens: { required: 40 } }, 503)],
     ['invalid JSON', () => new Response('{', { status: 201 })],
-    ['missing asset ID', () => json({}, 201)],
-    ['unrecognized forbidden response', () => json({ message: 'Forbidden' }, 403)]
+    ['missing asset ID', () => json({}, 201)]
   ];
   for (const [name, response] of responses) {
     let calls = 0;
