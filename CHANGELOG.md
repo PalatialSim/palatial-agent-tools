@@ -16,6 +16,13 @@
   while keeping their raw JSON in the text response, as required by the MCP
   result schema.
 
+## 0.1.8 — reprocess wording for researching jobs
+
+- The `palatial_reprocess_asset` description, README and troubleshooting
+  guidance match the API: without `from`, a researching job retries its failed
+  or stopped model build, delivery or completion, whether or not it already
+  has pipeline work; with `from`, the call always reprocesses that stage.
+
 ## 0.1.7 — stop and retry researching jobs
 
 - `palatial_reprocess_asset` accepts a request without `from`. A researching
