@@ -113,7 +113,7 @@ This preference is inspectable and editable. It does not guarantee that every na
 | `palatial_batch_get_statuses` | Check up to 100 asset statuses in one request | Read-only |
 | `palatial_get_pipeline_progress` | Retrieve stage-level progress for an asset | Read-only |
 | `palatial_create_variant` | Create an independent variant from a READY asset using feedback | Creates an asset; uses workspace credits |
-| `palatial_reprocess_asset` | Reprocess from a pipeline stage in place or as a variant | Changes processing; uses workspace credits |
+| `palatial_reprocess_asset` | Reprocess from a pipeline stage in place or as a variant, or, without a stage, retry a researching job's failed build | Changes processing; uses workspace credits |
 | `palatial_download_asset` | Save a READY export ZIP and SHA-256 receipt | Writes local files; export may consume a credit. A failed asset requires user confirmation plus `allow_failed_export: true` |
 | `palatial_cancel_asset` | Cancel a specific asset's processing | Stops a job; does not imply a refund |
 

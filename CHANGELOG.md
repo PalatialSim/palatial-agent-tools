@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.6 — API rejection reasons
+## Unreleased — API rejection reasons
 
 - A 4xx response now carries the API's own reason, for example
   `Invalid request (HTTP 400). BAD_REQUEST: <message>`. Only the structured
@@ -9,6 +9,38 @@
 - A create the API rejects with a 4xx records `status: rejected`, the HTTP
   status and the reason in its recovery receipt instead of
   `submission_outcome_unknown`, since nothing was created.
+
+
+## 0.1.8 — reprocess wording for researching jobs
+
+- The `palatial_reprocess_asset` description, README and troubleshooting
+  guidance match the API: without `from`, a researching job retries its failed
+  or stopped model build, delivery or completion, whether or not it already
+  has pipeline work; with `from`, the call always reprocesses that stage.
+
+## 0.1.7 — stop and retry researching jobs
+
+- `palatial_reprocess_asset` accepts a request without `from`. A researching
+  job (`effort: mad_max`, or a create with a video) that failed before it
+  reached the pipeline retries its failed research or model build that way,
+  at the same price as the Dashboard retry. Every other asset still needs a
+  stage, and the API says so.
+- `palatial_cancel_asset` is documented to stop a researching job that is
+  still researching or waiting for its build to start, which the API now
+  supports.
+- `palatial_get_asset` reports `generation_route` while a job runs, because
+  the status route the tool polls now carries `generationAgent`.
+
+## 0.1.6 — product research mode
+
+- `palatial_create_asset` accepts `product_research` (`on`, `specs_only`, or
+  `off`) on an image request with `effort: mad_max`. `on` is the default and
+  researches the real product on the web, its pages and its product photos.
+  `specs_only` reads the web for identity and specifications but uses no web
+  images, so the model is built only from the uploaded images. `off` looks
+  nothing up and builds from the uploaded images and description alone.
+- A narrowed mode on any other route, or without images, is refused before
+  anything is sent, because the API would accept it and do nothing.
 
 ## 0.1.5 — public generation route on asset reads
 

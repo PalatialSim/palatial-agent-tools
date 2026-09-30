@@ -71,6 +71,7 @@ a swivel chair with rolling wheels is `rigid_bodies` with
 | --- | --- | --- | --- | --- |
 | `shape_model` | `auto`, `diffusion`, `parametric` | `auto` | `text`, `image` | `auto` lets Palatial select a supported route. `diffusion` is faster, cheaper, and better at organic shapes; it takes one image or up to 4 named views. `parametric` is more controllable and better for articulation; it is the only model that accepts `image_paths`. **Rejected for CAD.** |
 | `effort` | `low`, `medium`, `mad_max` | `low` when parametric | `text`, `image` | Requires `shape_model: parametric`. `low` runs the parametric pipeline. `medium` and `mad_max` research the described product and author the model; they cost more and take longer. **Rejected for CAD.** |
+| `product_research` | `on`, `specs_only`, `off` | `on` | `image` | How much Product Research a `mad_max` build does. `on` researches the real product on the web, its pages and its product photos. `specs_only` reads the web for identity and specifications but uses no web images, so the model is built only from your images. `off` looks nothing up. Use `specs_only` or `off` when your own photos show the exact unit and web photos of similar products could mislead the build. |
 | `texture_model` | `auto` | `auto` | all | Selects the supported texture model. There is no other public value, so omit it. |
 | `apply_textures` | boolean | `true` with a CAD reference image, `false` without one | `cad` | Generate textures from the reference image. `true` requires `image_path`. When it is off, `texture_model` has nothing to run. |
 
@@ -182,6 +183,8 @@ names the rule.
   `image_paths`, `views`, `reconstruct`, `mesh_quality`, `shape_model`, and `effort`. Source-frame fields
   then follow the file-format rules above.
 - `effort` requires `shape_model: parametric` on text or image requests.
+- `product_research: specs_only` or `off` requires `effort: mad_max` and
+  `source: image`: it builds only from the images you upload.
 - `shape_model: mad_max` is refused. `mad_max` is the route label a finished
   asset reports in `generationAgent`; request it with `shape_model: parametric`
   and `effort: mad_max`.

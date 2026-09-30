@@ -77,6 +77,9 @@ it is the only place dimensions can go.
 For `shape_model: parametric`, `effort: low` uses the parametric pipeline.
 `medium` and `mad_max` research the described product and author the model;
 they cost more and take longer. They work with text and image inputs, not CAD.
+An image `mad_max` request can set `product_research: specs_only` to use the web
+for specifications but build only from the uploaded images, or `off` to look
+nothing up.
 
 ## Reading the route back
 

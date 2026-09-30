@@ -33,6 +33,7 @@ export const createSchema = z.object({
   collision_quality: z.enum(['low', 'medium', 'high', 'x_high', 'sdf']).describe('Image, text, and CAD: collision quality; sdf means signed-distance-field collision.').optional(),
   shape_model: z.enum(['auto', 'diffusion', 'parametric']).describe('Image and text only: auto lets Palatial select a supported generation route; diffusion is faster, cheaper, and better for organic shapes and accepts one image or named multiview inputs; parametric is controllable, better for articulation, and accepts N images (up to 50).').optional(),
   effort: z.enum(['low', 'medium', 'mad_max']).describe('Text and image with shape_model=parametric only: low uses the parametric pipeline; medium and mad_max use the research and authoring route, cost more, and take longer. CAD does not support them.').optional(),
+  product_research: z.enum(['on', 'specs_only', 'off']).describe('Image with effort=mad_max: how much Product Research the build does first. on (default) researches the real product on the web, its pages and its product photos. specs_only reads the web for identity and specifications but uses no web images, so the model is built only from your images. off looks nothing up and builds from your images and description alone.').optional(),
   texture_model: z.literal('auto').describe('Image, text, and CAD: auto selects the supported texture model.').optional(),
   decimation: z.boolean().describe('Image, text, and CAD: legacy adaptive reduction switch; prefer decimation_mode.').optional(),
   optimize_textures: z.boolean().describe('Image, text, and CAD: downscale oversized maps without upscaling smaller maps.').optional(),
@@ -94,6 +95,13 @@ export function validateCreate(input) {
   if (p.source === 'cad' && (!p.mesh_path || p.image_paths || views.length)) throw new Error('CAD requires mesh_path; image_path is optional, and image_paths and named views are not accepted.');
   if (p.source === 'cad' && (p.mesh_quality || p.shape_model || p.effort)) throw new Error('mesh_quality, shape_model, and effort are not used for CAD input.');
   if (p.effort && p.shape_model !== 'parametric') throw new Error('effort applies to shape_model=parametric only.');
+  // A narrowed mode builds only from the uploaded images, so it needs the one
+  // route that researches and a request that carries images. Anywhere else the
+  // API would accept it and do nothing, which an agent could not notice.
+  if (p.product_research && p.product_research !== 'on') {
+    if (p.effort !== 'mad_max') throw new Error('product_research applies to effort=mad_max only; other routes do not research.');
+    if (p.source !== 'image') throw new Error(`product_research=${p.product_research} builds only from uploaded images, so it needs source=image.`);
+  }
   if (p.source !== 'cad' && p.meters_per_unit !== undefined) throw new Error('meters_per_unit is accepted only for direct-mesh CAD input.');
   if (p.source === 'image' && (p.units || p.up_direction)) throw new Error('units and up_direction are not accepted for image input; include requested dimensions and orientation in the description.');
   if (p.source === 'cad' && !p.image_path && p.apply_textures === true) throw new Error('apply_textures=true requires a CAD reference image_path.');
@@ -166,7 +174,7 @@ async function apiErrorDetail(response, secret) {
   const message = Array.isArray(body.message) ? body.message.join('; ') : body.message;
   if (typeof message !== 'string' || !message.trim()) return '';
   const code = typeof body.code === 'string' && /^[A-Z0-9_]{1,64}$/.test(body.code) ? `${body.code}: ` : '';
-  return ` ${safeMessage(new Error(code + message.replace(/\s+/g, ' ').trim().slice(0, 500)), secret)}`;
+  return ` ${safeMessage(new Error(code + message), secret).replace(/\s+/g, ' ').trim().slice(0, 500)}`;
 }
 
 async function sha256File(filename) {
@@ -307,7 +315,7 @@ export class PalatialClient {
   async pipelineProgress(assetId) { assetIdSchema.parse(assetId); return this.request(`assets/${assetId}/pipeline-runs/current`); }
   async reprocess(assetId, input) {
     assetIdSchema.parse(assetId);
-    const body = z.object({ from: z.string().min(1).max(100), mode: z.enum(['step', 'auto']).optional(), stopAfter: z.string().min(1).max(100).optional(), sourceRunId: z.string().min(1).max(128).optional(), destination: z.enum(['overwrite', 'variant']).optional(), feedback: z.string().max(4000).optional() }).strict().parse(input);
+    const body = z.object({ from: z.string().min(1).max(100).optional(), mode: z.enum(['step', 'auto']).optional(), stopAfter: z.string().min(1).max(100).optional(), sourceRunId: z.string().min(1).max(128).optional(), destination: z.enum(['overwrite', 'variant']).optional(), feedback: z.string().max(4000).optional() }).strict().parse(input);
     return this.request(`assets/${assetId}/reprocess`, { method: 'POST', body });
   }
 
