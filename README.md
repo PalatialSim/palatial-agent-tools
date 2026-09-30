@@ -126,13 +126,12 @@ The client accepts PNG/JPEG/WebP references and PDF datasheets. CAD requests req
 
 ## Billing and paused jobs
 
-With `postpaid_stage_v1`, new generations must meet the route start minimum: Diffusion 20, Parametric Low 40, Mad Max 80, or CAD to Sim 4 tokens. The minimum admits the run but does not reserve or deduct the full estimate. A low recommended balance is advisory.
-
 Only successfully completed stages are charged. New generations must meet the route start minimum (Diffusion 20, Parametric Low 40, Mad Max 80, CAD to Sim 4 tokens); the minimum admits the run but does not reserve or deduct the whole estimate. A zero or negative net balance blocks new jobs and the next stages; an already-running stage can finish and leave debt. A normal `PROCESSING_PAUSED` checkpoint between stages (`billing.paused: false`, `run.awaitingContinue: true`) continues automatically in about a minute while the balance is above zero. For `billing.paused: true` with `pauseReason: insufficient_credits`, posted credit covers debt first and the same asset resumes once the net balance is positive. Keep polling the same asset; the client never retries generation or starts checkout automatically.
 
 Creation and status responses retain the API's `billing` and `warnings` fields when present. Status calls also return `billing_guidance` for credit pauses and normal stage checkpoints. A start-gate `insufficient_tokens` error is identified by `tokens.required`; it includes `tokens.balance` and `tokens.shortfall`, says that nothing was created, and tells the caller to add tokens and submit once. MCP exposes these in both text JSON and `structuredContent`. Responses without a route minimum retain their server billing code and do not promise automatic resume. The client redacts credentials and signed URL secrets in billing metadata and does not copy arbitrary error bodies. Older servers without billing fields retain their existing response and generic error behavior.
 
 The first export requires a positive net balance, but exporting does not deduct tokens. A later paused or indebted run can use an earlier export only when the server still exposes its materialized `export.key`; an in-place reprocess may clear that key. The server decides export eligibility; the client does not infer it from `export.status` alone.
+
 ## Use the CLI directly
 
 Save `asset.json`:
