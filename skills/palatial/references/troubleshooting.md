@@ -55,19 +55,20 @@ Two different tools, and the difference matters.
 | --- | --- | --- |
 | Produces | A new independent asset with its own ID | A new run on the same asset |
 | Source asset | Preserved | Preserved with `destination: "variant"`, **replaced** with the default `overwrite` |
-| Takes | `feedback` describing the change | A pipeline stage to restart `from`, or nothing for a researching job that failed before the pipeline |
+| Takes | `feedback` describing the change | A pipeline stage to restart `from`, or nothing to retry a researching job's failed build |
 | Needs | The workspace `asset:variant-create` capability | Nothing extra |
 
 Use a variant when the user wants a different version and wants to keep the
 original. Use reprocess when a specific stage needs rerunning. Confirm before
 either, and say out loud when `overwrite` will replace existing outputs.
 
-A researching job (`effort: mad_max`, or a create with a video) can fail
-before it reaches the pipeline, in its research or its model build. There is
-no stage to restart then: call `palatial_reprocess_asset` without `from` and
-the same asset retries the failed work at the Dashboard retry price. A model
-retry starts paid work, so confirm first. When the job offers no retry, the
-call says so, and a new asset is the way to build it again.
+A researching job (`effort: mad_max`, or a create with a video) can fail or be
+stopped in its model build, its delivery or its completion. Call
+`palatial_reprocess_asset` without `from` and the same asset retries that work
+at the Dashboard retry price. A model retry starts paid work, so confirm
+first. When the job offers no retry, the call says so, and a new asset is the
+way to build it again. Passing `from` always reprocesses that pipeline stage
+instead.
 
 ## The download failed
 
