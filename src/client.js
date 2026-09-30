@@ -395,6 +395,16 @@ export class PalatialClient {
     try {
       result = await this.request(`assets/create/${{ text: 'texttosim', image: 'imagetosim', cad: 'cadtosim' }[source]}`, { method: 'POST', body });
     } catch (error) {
+      // A recognized admission rejection is definitive, unlike a lost response.
+      if (error instanceof PalatialApiError && error.http_status === 403
+        && error.code === 'insufficient_tokens' && Number.isFinite(error.tokens?.required)) {
+        try {
+          await writeFile(requestReceipt, JSON.stringify({ ...intent, status: 'rejected', rejection: error.toJSON() }, null, 2) + '\n', { mode: 0o600 });
+        } catch {
+          throw errorWithContext(error, ` Local receipt could not be updated: ${requestReceipt}. This create was rejected; do not treat the stale receipt as evidence of acceptance.`, this.apiKey);
+        }
+        throw errorWithContext(error, ` Rejected submission receipt: ${requestReceipt}`, this.apiKey);
+      }
       throw errorWithContext(error, ` Recovery receipt: ${requestReceipt}`, this.apiKey);
     }
     const assetId = result?.id;

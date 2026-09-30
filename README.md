@@ -153,7 +153,7 @@ palatial-agent status --asset-id YOUR_ASSET_ID
 palatial-agent download --asset-id YOUR_ASSET_ID --output-dir ./assets
 ```
 
-Creation returns immediately with an asset ID. Status polling does not create another asset. A local submission receipt is saved under `~/.local/state/palatial-agent` (or `PALATIAL_STATE_DIR`) so accepted IDs can be recovered after a terminal session ends. An uncertain submission receipt means you should inspect the dashboard before submitting again; the receipt is not server-side idempotency.
+Creation returns immediately with an asset ID. Status polling does not create another asset. A local submission receipt is saved under `~/.local/state/palatial-agent` (or `PALATIAL_STATE_DIR`) so accepted IDs can be recovered after a terminal session ends. A definite start-gate rejection is recorded as `rejected`: nothing was created, so add tokens to meet the minimum and submit once. A receipt with `submission_outcome_unknown` means you should inspect the dashboard before submitting again; the receipt is not server-side idempotency.
 
 Exports include an absolute local path, SHA-256, byte count, and asset ID. A completed download with a matching receipt is reused locally without calling the export endpoint again. Existing files are preserved. Failed assets are not exported automatically: the user must confirm the possible partial or unvalidated result before `allow_failed_export` is set. The client does not automatically retry a failed download.
 

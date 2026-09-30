@@ -4,6 +4,8 @@
 
 - Preserve sanitized billing metadata, advisory balance warnings, and financial
   error codes through the client, submission receipts, and MCP responses.
+- Record definite generation-start rejections as `rejected`, with consistent
+  top-up guidance in MCP. Keep recovery guidance for uncertain submissions.
 - Explain route start minimums, postpaid stage charges, normal checkpoint
   auto-resume, and same-asset resumption after a posted top-up leaves the
   shared net balance positive. Export itself does not consume tokens; a later

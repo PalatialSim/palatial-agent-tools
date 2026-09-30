@@ -5,7 +5,9 @@
 For a generation-start rejection, look for `tokens.required`. Report the route
 minimum, `tokens.balance`, and `tokens.shortfall`; nothing was created. Tell the
 user to add enough tokens to meet that minimum, then submit once. Do not retry
-or promise automatic resume for a rejected create.
+automatically or promise automatic resume for a rejected create. Its local
+submission receipt is marked `rejected`; this is a definite rejection, not an
+uncertain submission.
 
 For a postpaid credit rejection (`billingMode: postpaid_stage_v1` or
 `reason: insufficient_credits`), report the supplied net `tokens.balance` and
@@ -15,7 +17,7 @@ automatically.
 
 If a submission times out or its outcome is unclear, it may still have been
 accepted. The error carries the path of a local recovery receipt holding the
-request ID, name, source, and time.
+request ID, name, source, time, and status `submission_outcome_unknown`.
 
 Do not submit again. Tell the user to open the Palatial dashboard and check
 whether the asset exists, and give them the receipt path. The receipt is

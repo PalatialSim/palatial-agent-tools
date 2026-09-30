@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -94,13 +94,14 @@ test('MCP keeps a structured insufficient-token create rejection and actionable 
 });
 
 test('a new-generation start gate explains the route minimum and confirms that nothing was created', async t => {
-  const { client } = await fixture(t, async () => json({
+  let calls = 0;
+  const { client } = await fixture(t, async () => { calls++; return json({
     statusCode: 403,
     code: 'insufficient_tokens',
     error: 'Insufficient tokens',
-    message: 'Generation start requires at least 40 tokens; balance is 12 (28 short).',
-    tokens: { required: 40, balance: 12, shortfall: 28 }
-  }, 403));
+    message: `Generation start requires at least 40 tokens; balance is 12 (28 short). ${secret}`,
+    tokens: { required: 40, balance: 12, shortfall: 28, apiKey: secret }
+  }, 403); });
   await assert.rejects(client.create(basic), error => {
     assert.equal(error.code, 'insufficient_tokens');
     assert.equal(error.reason, 'insufficient_tokens');
@@ -110,8 +111,88 @@ test('a new-generation start gate explains the route minimum and confirms that n
     assert.match(error.billing_guidance.message, /40/);
     assert.match(error.billing_guidance.message, /28/);
     assert.doesNotMatch(error.billing_guidance.message, /same asset|poll/i);
+    assert.doesNotMatch(error.message, /Recovery receipt|may have accepted|uncertain/i);
     return true;
   });
+  assert.equal(calls, 1);
+  const receipts = await readdir(client.receiptDir);
+  assert.equal(receipts.length, 1);
+  const receipt = JSON.parse(await readFile(path.join(client.receiptDir, receipts[0]), 'utf8'));
+  assert.equal(receipt.status, 'rejected');
+  assert.equal(receipt.asset_id, undefined);
+  assert.equal(receipt.rejection.code, 'insufficient_tokens');
+  assert.deepEqual(receipt.rejection.tokens, { required: 40, balance: 12, shortfall: 28 });
+  assert.ok(!JSON.stringify(receipt).includes(secret));
+});
+
+test('MCP reports a start-gate rejection without conflicting recovery instructions', async t => {
+  let calls = 0;
+  const { client: api } = await fixture(t, async () => {
+    calls++;
+    return json({ statusCode: 403, code: 'insufficient_tokens', error: 'Insufficient tokens',
+      tokens: { required: 20, balance: 0, shortfall: 20 } }, 403);
+  });
+  const server = createServer({ clientFactory: async () => api });
+  const client = new Client({ name: 'billing-test', version: '1.0' });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a); await client.connect(b);
+  t.after(async () => { await client.close(); await server.close(); });
+
+  const result = await client.callTool({ name: 'palatial_create_asset', arguments: basic });
+  const textResult = JSON.parse(result.content[0].text);
+  assert.equal(result.isError, true);
+  assert.deepEqual(textResult, result.structuredContent);
+  assert.equal(textResult.code, 'insufficient_tokens');
+  assert.deepEqual(textResult.tokens, { required: 20, balance: 0, shortfall: 20 });
+  assert.match(textResult.message, /Nothing was created.*submit once/i);
+  assert.doesNotMatch(textResult.message, /Recovery receipt|may have accepted|uncertain/i);
+  assert.equal(textResult.billing_guidance.resume_asset_id, undefined);
+  assert.equal(calls, 1);
+});
+
+test('a receipt write failure does not make a definite start rejection uncertain', async t => {
+  let calls = 0;
+  const { client } = await fixture(t, async () => {
+    calls++;
+    // Simulate the local state directory disappearing while the request is in flight.
+    await rm(client.receiptDir, { recursive: true });
+    return json({ statusCode: 403, code: 'insufficient_tokens',
+      tokens: { required: 40, balance: 12, shortfall: 28 } }, 403);
+  });
+  await assert.rejects(client.create(basic), error => {
+    assert.equal(error.code, 'insufficient_tokens');
+    assert.deepEqual(error.tokens, { required: 40, balance: 12, shortfall: 28 });
+    assert.match(error.message, /Nothing was created/i);
+    assert.match(error.message, /receipt.*could not be updated/i);
+    assert.doesNotMatch(error.message, /Recovery receipt|may have accepted|uncertain/i);
+    return true;
+  });
+  assert.equal(calls, 1);
+});
+
+test('creates without a definite start-gate response retain their unknown-outcome receipt', async t => {
+  const responses = [
+    ['connection loss', () => { throw new Error('socket closed'); }],
+    ['server failure', () => json({ code: 'insufficient_tokens', tokens: { required: 40 } }, 503)],
+    ['invalid JSON', () => new Response('{', { status: 201 })],
+    ['missing asset ID', () => json({}, 201)],
+    ['unrecognized forbidden response', () => json({ message: 'Forbidden' }, 403)]
+  ];
+  for (const [name, response] of responses) {
+    let calls = 0;
+    const { client } = await fixture(t, async () => { calls++; return response(); });
+    await assert.rejects(client.create(basic), error => {
+      assert.match(error.message, /Recovery receipt/, name);
+      assert.doesNotMatch(error.message, /Nothing was created/, name);
+      return true;
+    });
+    assert.equal(calls, 1, name);
+    const receipts = await readdir(client.receiptDir);
+    assert.equal(receipts.length, 1, name);
+    const receipt = JSON.parse(await readFile(path.join(client.receiptDir, receipts[0]), 'utf8'));
+    assert.equal(receipt.status, 'submission_outcome_unknown', name);
+    assert.equal(receipt.asset_id, undefined, name);
+  }
 });
 
 test('a credit pause keeps the same asset and clears guidance when the server resumes it', async t => {

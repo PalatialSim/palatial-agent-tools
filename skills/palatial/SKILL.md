@@ -56,13 +56,16 @@ which stage it is on.
   Let the server check eligibility; do not infer it from `export.status` alone.
 - A generation-start `insufficient_tokens` error is identified by
   `tokens.required`. It includes the route minimum, balance, and shortfall and
-  means that nothing was created; add tokens and submit once. Do not promise
-  automatic resume for a rejected create.
+  means that nothing was created; add tokens and submit once. Its local
+  submission receipt is marked `rejected`. Do not promise automatic resume
+  for a rejected create or treat its receipt as an accepted job.
 - **Never call create again to check on a job.** A second create is a second
   paid asset. Poll the ID you already have.
-- **Never retry a create whose outcome is unclear.** If a create errors with a
-  recovery receipt, the server may still have accepted it. Tell the user to
-  check the Palatial dashboard before submitting anything else.
+- **Never retry a create whose outcome is unclear.** After a timeout, connection
+  loss, or unclear server response, the server may still have accepted it; the
+  recovery receipt remains `submission_outcome_unknown`. Tell the user to check
+  the Palatial dashboard before submitting anything else. A receipt alone does
+  not imply an unclear outcome; a definite start-gate rejection is handled above.
 - Confirm with the user before reprocessing, creating a variant, or generating
   a batch of assets from one request.
 - A failed asset may have a partial export. Ask first, then pass
