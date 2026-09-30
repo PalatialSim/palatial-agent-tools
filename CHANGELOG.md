@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — API rejection reasons
+
+- A 4xx response now carries the API's own reason, for example
+  `Invalid request (HTTP 400). BAD_REQUEST: <message>`. Only the structured
+  `code` and `message` fields are read, bounded to 500 characters and
+  redacted; any other response body stays out of the error.
+- A create the API rejects with a 4xx records `status: rejected`, the HTTP
+  status and the reason in its recovery receipt instead of
+  `submission_outcome_unknown`, since nothing was created.
+
+
 ## 0.1.8 — reprocess wording for researching jobs
 
 - The `palatial_reprocess_asset` description, README and troubleshooting
