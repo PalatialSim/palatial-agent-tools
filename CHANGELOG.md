@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.7 — stop and retry researching jobs
+
+- `palatial_reprocess_asset` accepts a request without `from`. A researching
+  job (`effort: mad_max`, or a create with a video) that failed before it
+  reached the pipeline retries its failed research or model build that way,
+  at the same price as the Dashboard retry. Every other asset still needs a
+  stage, and the API says so.
+- `palatial_cancel_asset` is documented to stop a researching job that is
+  still researching or waiting for its build to start, which the API now
+  supports.
+- `palatial_get_asset` reports `generation_route` while a job runs, because
+  the status route the tool polls now carries `generationAgent`.
+
 ## 0.1.6 — product research mode
 
 - `palatial_create_asset` accepts `product_research` (`on`, `specs_only`, or

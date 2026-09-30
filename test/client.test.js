@@ -494,3 +494,13 @@ test('reprocess preserves exact stage and run controls and never retries ambiguo
   await assert.rejects(client.reprocess('asset-a', { from: 'texture', mode: 'unsupported' }));
   assert.equal(calls, 1);
 });
+
+test('reprocess without a stage is sent as-is, so a researching job can retry its failed work', async t => {
+  const { client } = await fixture(t, async (url, init) => {
+    assert.match(url.pathname, /assets\/asset-a\/reprocess$/);
+    assert.deepEqual(JSON.parse(init.body), {});
+    return new Response(JSON.stringify({ id: 'asset-a', recovery: 'retry_model', accepted: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+  });
+  const result = await client.reprocess('asset-a', {});
+  assert.equal(result.recovery, 'retry_model');
+});
