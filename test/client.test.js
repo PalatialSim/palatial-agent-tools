@@ -513,7 +513,7 @@ test('variant creation submits only public fields and returns the independent as
 
 test('reprocess preserves exact stage and run controls and never retries ambiguous writes', async t => {
   let calls = 0;
-  const body = { from: 'texture', mode: 'step', stopAfter: 'texture', sourceRunId: 'run-1', destination: 'variant', feedback: 'matte finish' };
+  const body = { from: 'texture', mode: 'step', stopAfter: 'texture', sourceRunId: 'run-1', destination: 'overwrite', feedback: 'matte finish' };
   const { client } = await fixture(t, async (url, init) => {
     calls++; assert.match(url.pathname, /assets\/asset-a\/reprocess$/); assert.deepEqual(JSON.parse(init.body), body); throw Error('connection closed');
   });
@@ -531,4 +531,19 @@ test('reprocess without a stage is sent as-is, so a researching job can retry it
   });
   const result = await client.reprocess('asset-a', {});
   assert.equal(result.recovery, 'retry_model');
+});
+
+
+test('feedback edits reject invalid intent locally and forward exact feedback, settings and source', async t => {
+  const calls = [];
+  const { client } = await fixture(t, async (url, init) => { calls.push(JSON.parse(init.body)); return json({ id: 'asset-a' }); });
+  for (const input of [{ from: 'texture', feedback: ' ' }, { from: 'texture', feedback: 'x'.repeat(4001) },
+    { from: 'texture', destination: 'variant' }, { feedback: 'Repair the labels.' }]) {
+    await assert.rejects(client.reprocess('asset-a', input));
+  }
+  assert.equal(calls.length, 0);
+  const body = { from: 'texture', mode: 'auto', sourceRunId: 'asset-a-original', destination: 'overwrite',
+    feedback: 'Add readable key legends; preserve the housing.', parameters: { texture_size: 2048 } };
+  await client.reprocess('asset-a', body);
+  assert.deepEqual(calls, [body]);
 });

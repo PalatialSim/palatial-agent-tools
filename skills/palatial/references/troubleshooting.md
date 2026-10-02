@@ -84,13 +84,20 @@ Two different tools, and the difference matters.
 | | `palatial_create_variant` | `palatial_reprocess_asset` |
 | --- | --- | --- |
 | Produces | A new independent asset with its own ID | A new run on the same asset |
-| Source asset | Preserved | Preserved with `destination: "variant"`, **replaced** with the default `overwrite` |
-| Takes | `feedback` describing the change | A pipeline stage to restart `from`, or nothing to retry a researching job's failed build |
+| Source asset | Preserved | Current outputs **replaced** by in-place reprocessing |
+| Takes | `feedback` describing the change | `from`, optional `feedback` and `sourceRunId`, or no stage for researching-job recovery |
 | Needs | The workspace `asset:variant-create` capability | Nothing extra |
 
 Use a variant when the user wants a different version and wants to keep the
 original. Use reprocess when a specific stage needs rerunning. Confirm before
 either, and say out loud when `overwrite` will replace existing outputs.
+
+For a repair, collect the requested change and what should remain unchanged.
+Send it in `feedback` (up to 4,000 characters), with `from` and the chosen
+`sourceRunId`. Set `mode: "auto"` for downstream work and validation. Preserve the
+source identity and report a missing checkpoint as unavailable; a new generation
+requires separate authorization. `destination: "variant"` is not supported by
+reprocess; independent versions use `palatial_create_variant`.
 
 A researching job (`effort: mad_max`, or a create with a video) can fail or be
 stopped in its model build, its delivery or its completion. Call

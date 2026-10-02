@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Share the validated reprocess feedback schema across MCP and the API client;
+  add `palatial-agent reprocess --asset-id ID --request repair.json`.
+- Align reprocessing with the overwrite-only API; independent versions use
+  `palatial_create_variant`. Feedback edits require an explicit stage and carry
+  the selected source run and supported processing settings.
+
 - Preserve sanitized billing metadata, advisory balance warnings, and financial
   error codes through the client, submission receipts, and MCP responses.
 - Record definite generation-start rejections as `rejected`, with consistent

@@ -113,7 +113,7 @@ This preference is inspectable and editable. It does not guarantee that every na
 | `palatial_batch_get_statuses` | Check up to 100 asset statuses in one request | Read-only |
 | `palatial_get_pipeline_progress` | Retrieve stage-level progress for an asset | Read-only |
 | `palatial_create_variant` | Create an independent variant from a READY asset using feedback | Creates an asset; charges tokens as stages complete |
-| `palatial_reprocess_asset` | Reprocess from a pipeline stage in place or as a variant, or, without a stage, retry a researching job's failed build | Changes processing; charges tokens as stages complete |
+| `palatial_reprocess_asset` | Repair the same asset from a pipeline stage with feedback, or, without a stage, retry a researching job's failed build | Changes processing; charges tokens as stages complete |
 | `palatial_download_asset` | Save an available export ZIP and SHA-256 receipt | Writes local files; export itself is free. A failed asset requires user confirmation plus `allow_failed_export: true` |
 | `palatial_cancel_asset` | Cancel a specific asset's processing | Stops a job; does not imply a refund |
 
@@ -207,7 +207,39 @@ To test the published package in a fresh Docker container with external networki
 
 Client integration references: [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli), [Claude Code MCP](https://code.claude.com/docs/en/mcp).
 
-### Updating
+### Repair an existing asset with feedback
+
+Describe the requested change in `feedback`, identify the stage in `from`, and
+select the retained predecessor with `sourceRunId`. `mode: "auto"` continues
+through downstream delivery and validation; `step` stops at the selected stage.
+Reprocessing updates the same asset. Use `palatial_create_variant` when you want
+an independent version with a different asset ID.
+
+```json
+{
+  "from": "texture",
+  "mode": "auto",
+  "sourceRunId": "SOURCE_QUEUE_RUN_ID",
+  "feedback": "Add readable key legends. Preserve the housing and key geometry."
+}
+```
+
+Pass these fields to `palatial_reprocess_asset` with `asset_id`, or save them as
+`repair.json` for the CLI command in the next package release:
+
+```bash
+palatial-agent reprocess --asset-id ASSET_ID --request repair.json
+```
+
+The API accepts up to 4,000 feedback characters. Settings can accompany the
+instruction in `parameters`; the server validates supported settings. Confirm
+the repair before submission and poll the same asset afterward. If the mutation
+response is uncertain, inspect the current run instead of submitting again.
+The server chooses the retained source and reports unavailable source inputs;
+feedback does not guarantee that every historical asset has a usable checkpoint.
+A ready export and successful simulator validation remain separate outcomes.
+
+## Updating
 
 The MCP runs from the locally installed package. Run `palatial-agent update` to
 check the latest GitHub Release and print the installation command. Use
