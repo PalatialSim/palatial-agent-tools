@@ -9,6 +9,16 @@ export const DEFAULT_API_URL = 'https://dashboard.palatial.cloud/api/v1/external
 const engine = z.enum(['isaac_sim', 'mujoco', 'newton']);
 const assetName = z.string().trim().min(4).max(50).regex(/^[a-zA-Z\d_\-.\s]+$/, 'Asset name may contain only letters, digits, spaces, underscores, hyphens, and periods.');
 export const assetIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/, 'Invalid asset ID.');
+export const reprocessSchema = z.object({
+  from: z.string().min(1).max(100).describe('Pipeline stage to repair. Omit only to recover a researching job, without edit feedback.').optional(),
+  mode: z.enum(['step', 'auto']).optional(),
+  stopAfter: z.string().min(1).max(100).optional(),
+  sourceRunId: z.string().min(1).max(128).describe('Exact retained source run for this repair.').optional(),
+  destination: z.literal('overwrite').describe('Updates this asset; use createVariant to preserve a separate version.').optional(),
+  feedback: z.string().min(1).max(4000).refine(value => value.trim().length > 0, 'Feedback must contain text.').describe('Requested repair, up to 4000 characters. State what should change and what to preserve; supply from for an edit.').optional(),
+  parameters: z.record(z.string(), z.unknown()).describe('Supported processing-setting overrides; server validates allowed settings.').optional()
+}).strict().refine(value => !value.feedback || value.from, 'Feedback edits require a pipeline stage in from.');
+
 export const createSchema = z.object({
   source: z.enum(['text', 'image', 'cad']).describe('Input type: text prompt, one or more reference images, or a CAD mesh with an optional reference image.'),
   name: assetName.describe('Asset name, 4-50 characters: letters, digits, spaces, underscores, hyphens, and periods.'),
@@ -479,7 +489,7 @@ export class PalatialClient {
   }
   async reprocess(assetId, input) {
     assetIdSchema.parse(assetId);
-    const body = z.object({ from: z.string().min(1).max(100).optional(), mode: z.enum(['step', 'auto']).optional(), stopAfter: z.string().min(1).max(100).optional(), sourceRunId: z.string().min(1).max(128).optional(), destination: z.enum(['overwrite', 'variant']).optional(), feedback: z.string().max(4000).optional() }).strict().parse(input);
+    const body = reprocessSchema.parse(input);
     return addBillingGuidance(await this.request(`assets/${assetId}/reprocess`, { method: 'POST', body }), this.base.origin, assetId);
   }
 

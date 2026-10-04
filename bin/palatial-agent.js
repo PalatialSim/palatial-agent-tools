@@ -26,6 +26,7 @@ palatial-agent mcp                        Run the stdio MCP server
 palatial-agent guide                      Print the usage and parameter guidance
 palatial-agent guide --topic parameters   Print one topic: ${GUIDE_TOPICS.map(item => item.topic).join(', ')}
 palatial-agent create --request asset.json   Submit a generation request (uses credits)
+palatial-agent reprocess --asset-id ID --request repair.json  Repair with feedback (uses tokens)
 palatial-agent status --asset-id ID       Check an existing asset
 palatial-agent download --asset-id ID --output-dir ./assets  Export READY ZIP (uses credits)
 palatial-agent download --asset-id ID --output-dir ./assets --allow-failed-export  Export a failed asset after confirmation
@@ -105,12 +106,14 @@ async function main() {
     await deleteApiKey();
     return { saved_key_deleted: true, message: 'Also unset PALATIAL_API_KEY if configured. Deleting the local copy does not revoke the key in Palatial.' };
   }
-  if (!['doctor', 'create', 'status', 'download', 'cancel'].includes(command)) throw new Error('Unknown command. Run palatial-agent --help.');
+  if (!['doctor', 'create', 'reprocess', 'status', 'download', 'cancel'].includes(command)) throw new Error('Unknown command. Run palatial-agent --help.');
   const client = new PalatialClient({ apiKey: await getApiKey(), baseUrl: process.env.PALATIAL_API_URL || DEFAULT_API_URL });
   if (command === 'doctor') return { ...(await client.doctor()), version: VERSION, update: await checkForUpdate() };
-  if (command === 'create') {
+  if (command === 'create' || command === 'reprocess') {
     if (!values.request) throw new Error('Provide --request pointing to a JSON file.');
-    return client.create(JSON.parse(await readFile(values.request, 'utf8')));
+    if (command === 'reprocess' && !values['asset-id']) throw new Error('Provide --asset-id.');
+    const request = JSON.parse(await readFile(values.request, 'utf8'));
+    return command === 'create' ? client.create(request) : client.reprocess(values['asset-id'], request);
   }
   if (!values['asset-id']) throw new Error('Provide --asset-id.');
   if (command === 'status') return client.getAsset(values['asset-id']);

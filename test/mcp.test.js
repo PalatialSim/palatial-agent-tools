@@ -175,3 +175,24 @@ test('setup reports failure when registration succeeds but the Claude skill is n
   assert.equal(setup.output.claude_code_skill.action, 'skipped');
   assert.equal(setup.failed, true);
 });
+
+
+test('MCP feedback repair uses the shared API schema and preserves reviewed instruction and source', async t => {
+  const calls = [];
+  const server = createServer({ clientFactory: async () => ({ reprocess: async (id, body) => { calls.push({ id, body }); return { id }; } }) });
+  const client = new Client({ name: 'feedback-contract', version: '1.0' });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a); await client.connect(b);
+  t.after(async () => { await client.close(); await server.close(); });
+  const tool = (await client.listTools()).tools.find(item => item.name === 'palatial_reprocess_asset');
+  assert.equal(tool.inputSchema.properties.feedback.maxLength, 4000);
+  assert.match(tool.inputSchema.properties.feedback.description, /preserve/);
+  const body = { from: 'texture', mode: 'auto', sourceRunId: 'asset-source', feedback: 'Label the keys; preserve their geometry.' };
+  const result = await client.callTool({ name: tool.name, arguments: { asset_id: 'asset-a', ...body } });
+  assert.equal(result.isError, undefined);
+  assert.deepEqual(calls, [{ id: 'asset-a', body }]);
+  for (const invalid of [{ ...body, feedback: ' ' }, { ...body, destination: 'variant' }, { feedback: 'Label the keys.' }]) {
+    assert.equal((await client.callTool({ name: tool.name, arguments: { asset_id: 'asset-a', ...invalid } })).isError, true);
+  }
+  assert.equal(calls.length, 1);
+});
