@@ -70,10 +70,27 @@ const modeCreateSchema = flatCreateSchema.extend(modeFields(flatCreateSchema.sha
 export const createSchema = modeCreateSchema.superRefine(validateMode);
 // The CLI/API client still reads existing request files. The advertised MCP
 // surface uses modes, so agents never need to pick redundant legacy models.
-export const mcpCreateSchema = modeCreateSchema.omit({ shape_model: true, texture_model: true }).superRefine((p, ctx) => {
+const mcpCollisionQuality = z.enum(['auto', 'low', 'medium', 'high', 'sdf']).describe('Prefer auto. For Diffusion, Parametric Low and CAD this omits the API override, using its current medium default. Mad Max chooses proxies itself and accepts no build settings. Higher hull quality trades more collision detail for more work; sdf requests signed-distance-field collision.').optional();
+const mcpNewtonSolver = z.enum(['mujoco', 'style3D']).describe('Rigid-body Newton solver, read only when engine includes newton.').optional();
+const mcpParameters = modeCreateSchema.shape.parameters.unwrap()
+  .omit({ body_type: true, replace_glass: true, auto_scale: true })
+  .extend({ collision_quality: mcpCollisionQuality, newton_solver: mcpNewtonSolver })
+  .describe('Route-specific settings for rigid assets. Diffusion: structure, mesh, decimation, texture, collision, validation and repair. Parametric Low: articulation, face_budget, collision_quality, run_simulation, optimize_textures and newton_solver. Mad Max and video: omit or use {}.').optional();
+export const mcpCreateSchema = modeCreateSchema.omit({ shape_model: true, texture_model: true, body_type: true, replace_glass: true, auto_scale: true })
+  .extend({ parameters: mcpParameters, collision_quality: mcpCollisionQuality, newton_solver: mcpNewtonSolver }).superRefine((p, ctx) => {
   validateMode(p, ctx);
   if (p.source !== 'cad' && !p.mode) ctx.addIssue({ code: 'custom', path: ['mode'], message: 'Text/image MCP requests require mode: diffusion, parametric, or mad_max.' });
 });
+
+// The public API does not yet accept the product's "auto" collision label.
+// Preserve the server's default by omitting the override, rather than sending
+// an invalid value or promising primitive selection on a hull-only route.
+export function mcpCreateInput(input) {
+  const p = { ...input, ...(input.parameters ? { parameters: { ...input.parameters } } : {}) };
+  if (p.collision_quality === 'auto') delete p.collision_quality;
+  if (p.parameters?.collision_quality === 'auto') delete p.parameters.collision_quality;
+  return p;
+}
 
 const DIRECT_MESH_EXTENSIONS = new Set(['.obj', '.glb', '.gltf', '.stl', '.ply', '.fbx']);
 const AXIS_ONLY_CAD_EXTENSIONS = new Set(['.step', '.stp', '.iges', '.igs']);

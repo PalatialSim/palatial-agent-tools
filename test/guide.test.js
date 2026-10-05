@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
-import { createSchema } from '../src/client.js';
+import { mcpCreateSchema } from '../src/client.js';
 import { GUIDE_TOPICS, readGuide, claudeSkillDirectory, installClaudeSkill } from '../src/guide.js';
 
 const guideFile = file => readFile(new URL(`../skills/palatial/${file}`, import.meta.url), 'utf8');
@@ -39,7 +39,7 @@ function closedValues(node) {
 test('the parameter reference structurally matches every create field and closed value', async () => {
   const text = await guideFile('references/parameters.md');
   const rows = parameterRows(text);
-  const shape = createSchema.def.shape;
+  const shape = mcpCreateSchema.def.shape;
   assert.deepEqual([...rows.keys()].sort(), Object.keys(shape).sort());
   for (const [field, schema] of Object.entries(shape)) {
     const expected = closedValues(schema).sort();
@@ -52,16 +52,16 @@ test('the parameter reference structurally matches every create field and closed
 test('the parameter reference pins source applicability and effective defaults', async () => {
   const rows = parameterRows(await guideFile('references/parameters.md'));
   const expected = {
-    mode: ['omitted for legacy requests', '`text`, `image`'], parameters: ['route defaults', '`text`, `image`'],
+    mode: ['required for text/image', '`text`, `image`'], parameters: ['route defaults', '`text`, `image`'],
     video_path: ['none', '`image`'], reference_mesh_path: ['none', '`text`, `image`'],
     source: ['required', 'all'], name: ['required', 'all'], description: ['required', 'all'],
     engine: ['`["isaac_sim"]`', 'all'], workspace: ["the API key's workspace", 'all'],
     image_path: ['none', '`image`, `cad`'], image_paths: ['none', '`image`'], views: ['none', '`image`'], reconstruct: ['ignored', '`image`'], mesh_path: ['none', '`cad`'], datasheet_path: ['none', '`cad`'],
     create_articulation: ['`false`', 'all'], enable_parts_segmentation: ['`true`', 'all'], run_simulation: ['`true`', 'all'],
-    collision_quality: ['`medium` for ordinary rigid assets', 'all'], mesh_quality: ['`high`; `medium` when parts segmentation is off and articulation is not requested', '`text`, `image`'],
-    shape_model: ['`auto`', '`text`, `image`'], effort: ['`low` when parametric', '`text`, `image`'], product_research: ['`on`', '`text`, `image`'], texture_model: ['`auto`', 'all'], apply_textures: ['`true` with a CAD reference image, `false` without one', '`cad`'],
-    repair_mesh: ['`true`', 'all'], replace_glass: ['`false`', 'all'], auto_scale: ['`true`', 'all'],
-    body_type: ['`rigid_bodies`', 'all'], newton_solver: ['`vbd` for soft bodies, `mujoco` for rigid', 'all'],
+    collision_quality: ['`auto` (currently medium)', 'all'], mesh_quality: ['`high`; `medium` when parts segmentation is off and articulation is not requested', '`text`, `image`'],
+    effort: ['`low` when parametric', '`text`, `image`'], product_research: ['`on`', '`text`, `image`'], apply_textures: ['`true` with a CAD reference image, `false` without one', '`cad`'],
+    repair_mesh: ['`true`', 'all'],
+    newton_solver: ['`mujoco`', 'all'],
     regenerate_parts: ['`false`', '`cad`'], keep_existing_textures: ['`false`', '`cad`'],
     keep_existing_shape: ['`false`', '`cad`'], physics_validation_only: ['`false`', '`cad`'],
     texture_size: ['`4096`', 'all'], optimize_textures: ['`true`', 'all'], texture_max_resolution: ['`4096`', 'all'],

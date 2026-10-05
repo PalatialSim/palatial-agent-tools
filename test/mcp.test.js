@@ -61,6 +61,12 @@ test('create tool explains API options in its MCP schema', async t => {
   assert.match(tool.inputSchema.properties.units.description, /direct-mesh CAD/);
   assert.equal(tool.inputSchema.properties.shape_model, undefined);
   assert.equal(tool.inputSchema.properties.texture_model, undefined);
+  for (const field of ['body_type', 'auto_scale', 'replace_glass']) {
+    assert.equal(tool.inputSchema.properties[field], undefined);
+    assert.equal(tool.inputSchema.properties.parameters.properties[field], undefined);
+  }
+  assert.deepEqual(tool.inputSchema.properties.parameters.properties.collision_quality.enum, ['auto', 'low', 'medium', 'high', 'sdf']);
+  assert.deepEqual(tool.inputSchema.properties.parameters.properties.newton_solver.enum, ['mujoco', 'style3D']);
   assert.deepEqual(tool.inputSchema.properties.effort.enum, ['low', 'mad_max']);
   assert.doesNotMatch(tool.inputSchema.properties.effort.description, /medium/i);
   assert.match(tool.inputSchema.properties.image_path.description, /optional PNG\/JPEG\/WebP reference/);
@@ -105,7 +111,12 @@ test('real MCP create calls accept each mode and reject unsupported parameters b
   for (const extra of [{}, { mode: 'diffusion', shape_model: 'diffusion' }, { mode: 'diffusion', texture_model: 'auto' }]) {
     assert.equal((await client.callTool({ name: 'palatial_create_asset', arguments: { ...base, ...extra } })).isError, true);
   }
+  for (const parameters of [{ body_type: 'rigid_bodies' }, { auto_scale: true }, { replace_glass: false }, { collision_quality: 'x_high' }, { newton_solver: 'vbd' }]) {
+    assert.equal((await client.callTool({ name: 'palatial_create_asset', arguments: { ...base, mode: 'diffusion', parameters } })).isError, true);
+  }
   assert.equal(calls.length, 3);
+  assert.notEqual((await client.callTool({ name: 'palatial_create_asset', arguments: { ...base, mode: 'parametric', parameters: { collision_quality: 'auto', face_budget: 50000 } } })).isError, true);
+  assert.deepEqual(calls.at(-1).parameters, { face_budget: 50000 });
 });
 
 test('guidance reaches any client as a tool, and as resources where they are supported', async t => {

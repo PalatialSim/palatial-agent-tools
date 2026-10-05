@@ -157,30 +157,26 @@ texture inside the uploaded bytes. Other direct mesh formats cannot prove
 external texture sidecars from one uploaded file. With no reference image,
 they can instead stay untextured.
 
-## A soft object
-
-Cloth, garments, cable, and rope deform instead of holding a shape.
+## A rigid object for Newton
 
 ```json
 {
   "source": "text",
-  "name": "Cotton tote bag",
-  "description": "An empty cotton tote bag, about 380 by 420 mm, two woven handles, soft unlined fabric that drapes.",
-  "engine": [
-    "newton"
-  ],
-  "mode": "diffusion",
+  "name": "Rigid storage bin",
+  "description": "A rigid open polypropylene bin, 20 cm wide, 15 cm deep and 12 cm tall, no moving parts.",
+  "engine": ["newton"],
+  "mode": "parametric",
+  "effort": "low",
   "parameters": {
-    "structure": "single_object",
-    "body_type": "soft_bodies",
-    "newton_solver": "vbd"
+    "articulation": false,
+    "collision_quality": "auto",
+    "newton_solver": "mujoco"
   }
 }
 ```
 
-Soft bodies simulate in Newton, so `engine` says `newton` and the solver is
-`vbd`, the only one soft bodies accept. A soft object is one piece, so parts
-segmentation is off. Leave `body_type` out entirely for ordinary solid objects.
+The MCP omits the collision override for auto, using the API's current medium
+choice on Low. A rigid object needs no body_type. Mad Max chooses proxies itself.
 
 ## A hard polygon budget
 

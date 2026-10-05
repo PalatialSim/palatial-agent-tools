@@ -1,9 +1,9 @@
 # palatial_create_asset parameters
 
-MCP create arguments and CLI/API-client compatibility fields, their meaning,
-and their refusal rules. Text/image MCP requests require mode and expose neither
-shape_model nor texture_model. Those two fields remain only in the client for
-older request files. Defaults are applied by the Palatial API when omitted.
+MCP create arguments and their refusal rules. Text/image requests require
+mode. The MCP builds rigid assets and omits shape_model, texture_model,
+body_type, auto_scale and replace_glass. The CLI/API client keeps older flat
+request files compatible. Defaults come from the API when omitted.
 
 Set as little as possible. The defaults are chosen to produce a usable asset,
 and an omitted field is safer than a guessed one.
@@ -16,19 +16,19 @@ snapshot; read changed pages before using affected settings.
 
 | Field | Values | Default | Sources | Notes |
 | --- | --- | --- | --- | --- |
-| `mode` | `diffusion`, `parametric`, `mad_max` | omitted for legacy requests | `text`, `image` | Preferred for new requests. `mad_max` is shorthand for Parametric at Mad Max effort. CAD has no mode. |
-| `parameters` | object with `mesh_quality`, `collision_quality`, `triangle_count`, `mesh_density`, `decimation`, `decimation_mode`, `decimation_target_faces`, `decimation_target_ratio`, `texture_size`, `optimize_textures`, `texture_max_resolution`, `run_simulation`, `body_type`, `newton_solver`, `repair_mesh`, `replace_glass`, `auto_scale`, `structure`, `articulation`, `face_budget` | route defaults | `text`, `image` | Only the settings allowed for the chosen route; see below. JSON types stay numbers and booleans, including multipart uploads. |
+| `mode` | `diffusion`, `parametric`, `mad_max` | required for text/image | `text`, `image` | Preferred for new requests. `mad_max` is shorthand for Parametric at Mad Max effort. CAD has no mode. |
+| `parameters` | object with `mesh_quality`, `collision_quality`, `triangle_count`, `mesh_density`, `decimation`, `decimation_mode`, `decimation_target_faces`, `decimation_target_ratio`, `texture_size`, `optimize_textures`, `texture_max_resolution`, `run_simulation`, `newton_solver`, `repair_mesh`, `structure`, `articulation`, `face_budget` | route defaults | `text`, `image` | Only the settings allowed for the chosen route; see below. JSON types stay numbers and booleans, including multipart uploads. |
 
 - **Diffusion:** `structure` (`single_object`, `static_parts`, `articulated_parts`),
   mesh quality/density/triangle controls, decimation, texture generation/delivery,
-  collision/physics, body type/solver, repair, glass replacement and auto scale.
+  collision/physics, rigid solver and mesh repair.
   Defaults: static parts, high quality (medium for one object), medium collision,
   4K textures and strict 100,000-face simplification.
 - **Parametric Low:** `articulation` (false), `face_budget` (100,000; allowed
   2,000-200,000), `collision_quality` (medium), `run_simulation` (true),
-  `optimize_textures` (true), `replace_glass` (false), and `newton_solver`
+  `optimize_textures` (true), and `newton_solver`
   (`mujoco` or `style3D`). It authors rigid parts; mesh quality, texture size,
-  body type, repair and auto scale are unsupported settings.
+  body type and mesh repair are unsupported settings.
 - **Mad Max and every video build:** omit `parameters` or send an empty object.
   Research decides the build settings. Mad Max takes exactly one engine.
 
@@ -40,8 +40,14 @@ shorthand is refused (`CREATE_EFFORT_INVALID`). `product_research` on a route
 without research is refused (`CREATE_PRODUCT_RESEARCH_UNSUPPORTED`).
 A refused request sends no generation from this client.
 
-The remaining flat build fields below are for legacy CLI/API-client requests
-without `mode` and for CAD. With `mode`, use the corresponding allowed setting in `parameters`.
+The build fields below use flat names for CAD. With text/image mode, use
+the corresponding allowed setting in parameters. Diffusion/Low collision auto
+is an MCP alias that omits the API override, currently selecting medium. The
+raw API does not yet accept the string auto. Mad Max chooses proxies itself;
+it takes no collision setting. SDF is an explicit choice, not the default.
+Higher hull quality trades more detail for collision computation; it does not
+guarantee better simulator behaviour. Automatic selection does not guarantee
+a primitive collider on Diffusion/Low.
 
 ## Always required
 
@@ -81,38 +87,26 @@ PNG, JPEG, or WebP; datasheets must be PDF.
 | `create_articulation` | boolean | `false` | all | Create joints for moving parts such as doors, drawers, or wheels. Turn on only when the user needs the object to move. |
 | `enable_parts_segmentation` | boolean | `true` | all | Split the object into separate rigid parts. Set `false` for one solid rigid mesh. |
 | `run_simulation` | boolean | `true` | all | Run physics validation after the build. |
-| `collision_quality` | `low`, `medium`, `high`, `x_high`, `sdf` | `medium` for ordinary rigid assets | all | Collision geometry fidelity. Soft-body assets use `sdf`. |
+| `collision_quality` | `auto`, `low`, `medium`, `high`, `sdf` | `auto` (currently medium) | all | Prefer auto or omission. medium/high use authored hulls; low delegates convex decomposition to the target simulator; sdf requests signed-distance fields. Mad Max accepts no override. |
 | `mesh_quality` | `low`, `medium`, `high` | `high`; `medium` when parts segmentation is off and articulation is not requested | `text`, `image` | Generation quality. **Rejected for CAD**, which starts from a mesh the user supplied. |
 | `repair_mesh` | boolean | `true` | all | Close holes and fix bad geometry after generation. |
-| `replace_glass` | boolean | `false` | all | Rebuild transparent or translucent parts as real glass. Set it for clear plastic, acrylic, resin, crystal, and lenses too, not only for things called glass. |
-| `auto_scale` | boolean | `true` | all | Scale the finished asset to the real-world size stated in `description`. |
 
 ## How the object behaves
 
 | Field | Values | Default | Sources | Notes |
 | --- | --- | --- | --- | --- |
-| `body_type` | `rigid_bodies`, `soft_bodies`, `mixed_bodies` | `rigid_bodies` | all | What the object is made to behave like. `rigid_bodies` is a solid object. `soft_bodies` deforms: cloth, garments, cable, rope. `mixed_bodies` has both in one asset. |
-| `newton_solver` | `mujoco`, `style3D`, `vbd` | `vbd` for soft bodies, `mujoco` for rigid | all | Read only when `engine` includes `newton`. |
+| `newton_solver` | `mujoco`, `style3D` | `mujoco` | all | Read only when `engine` includes `newton`. |
 
-Soft bodies simulate in Newton, so a soft-body request should include `newton`
-in `engine`. The solver is tied to the body type: soft bodies accept only
-`vbd`, and rigid bodies accept `mujoco` or `style3D`. The API silently swaps a
-solver the body type cannot use, so this client refuses the contradictory pair
-instead and names the value that body type accepts.
+All MCP assets are rigid. Joints still connect rigid parts: use Diffusion
+structure: articulated_parts or Parametric Low articulation: true.
 
-Body type is independent of articulation. A rigid object can still have joints:
-a swivel chair with rolling wheels is `rigid_bodies` with
-`create_articulation: true`.
-
-## Shape and texture models
+## Route and research
 
 | Field | Values | Default | Sources | Notes |
 | --- | --- | --- | --- | --- |
-| `shape_model` | `auto`, `diffusion`, `parametric` | `auto` | `text`, `image` | `auto` lets Palatial select a supported route. `diffusion` is faster, cheaper, and better at organic shapes; it takes one image or up to 4 named views. `parametric` is more controllable and better for articulation; it accepts up to 50 photos at Low effort; Mad Max accepts 8, or 7 with a reference mesh. **Rejected for CAD.** |
-| `effort` | `low`, `mad_max` | `low` when parametric | `text`, `image` | Requires `mode: parametric` or legacy `shape_model: parametric`. `low` runs the parametric pipeline. `mad_max` researches the described product and authors the model; it costs more and takes longer. **Rejected for CAD.** |
+| `effort` | `low`, `mad_max` | `low` when parametric | `text`, `image` | Requires `mode: parametric` . `low` runs the parametric pipeline. `mad_max` researches the described product and authors the model; it costs more and takes longer. **Rejected for CAD.** |
 | `product_research` | `on`, `specs_only`, `off` | `on` | `text`, `image` | How much research Mad Max or any video build does. Narrowed modes require photos or video. `on` researches the real product on the web, its pages and its product photos. `specs_only` reads the web for identity and specifications but uses no web images, so the model is built only from your images. `off` looks nothing up. Use `specs_only` or `off` when your own photos show the exact unit and web photos of similar products could mislead the build. |
-| `texture_model` | `auto` | `auto` | all | Selects the supported texture model. There is no other public value, so omit it. |
-| `apply_textures` | boolean | `true` with a CAD reference image, `false` without one | `cad` | Generate textures from the reference image. `true` requires `image_path`. When it is off, `texture_model` has nothing to run. |
+| `apply_textures` | boolean | `true` with a CAD reference image, `false` without one | `cad` | Generate textures from the reference image. `true` requires `image_path`. When it is off, there is no texture generation. |
 
 ## Texture output
 
@@ -221,11 +215,9 @@ names the rule.
 - `cad` requires `mesh_path`, accepts an optional `image_path`, and rejects
   `image_paths`, `views`, `reconstruct`, `mesh_quality`, `shape_model`, and `effort`. Source-frame fields
   then follow the file-format rules above.
-- `effort` requires Parametric mode or legacy shape_model on text or image requests.
+- `effort` requires Parametric mode on text or image requests.
 - `product_research: specs_only` or `off` requires Mad Max or a video, with uploaded photos or video.
-- `shape_model: mad_max` is refused. `mad_max` is the route label a finished
-  asset reports in `generationAgent`; request it with `shape_model: parametric`
-  and `effort: mad_max`.
+- The MCP accepts no shape_model or texture_model. Select mode and effort.
 - The legacy `reconstruct` field is ignored by the current Queue. The client
   rejects it with `effort: mad_max`; omit it on all new requests.
 - `apply_textures: true` on CAD requires `image_path`.
@@ -235,8 +227,8 @@ names the rule.
   `regenerate_parts: true`, because they ask for opposite things.
 - `keep_existing_textures` and `physics_validation_only` are rejected alongside
   `apply_textures: true`, for the same reason.
-- `body_type: soft_bodies` accepts only `newton_solver: vbd`, and
-  `body_type: rigid_bodies` rejects `vbd`.
+- body_type, auto_scale, replace_glass, collision_quality: x_high and
+  newton_solver: vbd are outside the MCP surface; older CLI files stay compatible.
 - OBJ, GLTF, STL, PLY, and FBX reject explicit requests to keep authored
   appearance. With a reference image, they also reject `apply_textures: false`.
   GLB is accepted for inspection; the API may reject it if no bound embedded

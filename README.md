@@ -53,7 +53,10 @@ Text/image MCP calls use `mode: diffusion` or `mode: parametric` with
 `effort: low` or `mad_max`. Route-specific settings go in `parameters`.
 The MCP exposes no `shape_model` or `texture_model`: mode selects the builder
 and the backend chooses the painter. CAD has no mode and uses its supplied mesh.
-The CLI/API client continues to accept legacy request files without mode.
+The MCP builds rigid assets and omits body_type, auto_scale and replace_glass.
+Collision quality is auto/low/medium/high/sdf; prefer auto or omission. auto
+leaves the API override unset, currently medium on Diffusion/Low. Mad Max picks
+proxies itself. The CLI/API client keeps legacy request files compatible.
 
 ## Live docs and startup checks
 

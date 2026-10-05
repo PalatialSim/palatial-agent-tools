@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, rm, truncate } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { PalatialClient, createSchema, validateCreate } from '../src/client.js';
+import { PalatialClient, createSchema, mcpCreateSchema, mcpCreateInput, validateCreate } from '../src/client.js';
 
 const base = { source: 'text', name: 'Mode test bin', description: 'A rigid open storage bin.', engine: ['isaac_sim'] };
 async function fixture(t) {
@@ -69,6 +69,28 @@ test('multipart parameters preserve JSON types and use the documented file field
   assert.equal(body.get('file').name, 'front.webp');
   assert.equal(body.get('file').type, 'image/webp');
   assert.equal(body.get('image_path'), null);
+});
+
+test('MCP auto collision uses the server default in JSON and multipart without changing the caller input', async t => {
+  const { dir, calls, client } = await fixture(t);
+  const image = path.join(dir, 'front.png');
+  await writeFile(image, 'image fixture');
+  const inputs = [
+    { ...base, mode: 'diffusion', parameters: { collision_quality: 'auto', structure: 'single_object' } },
+    { ...base, source: 'image', mode: 'parametric', image_path: image, parameters: { collision_quality: 'auto', face_budget: 50000 } },
+    { ...base, source: 'cad', mesh_path: path.join(dir, 'mesh.obj'), units: 'm', up_direction: 'z', collision_quality: 'auto' }
+  ];
+  await writeFile(inputs[2].mesh_path, 'mesh fixture');
+  for (const input of inputs) {
+    const original = structuredClone(input);
+    await client.create(mcpCreateInput(mcpCreateSchema.parse(input)));
+    const body = calls.at(-1).body;
+    const sent = typeof body === 'string' ? JSON.parse(body) : Object.fromEntries(body.entries());
+    assert.equal(sent.collision_quality, undefined);
+    const parameters = typeof sent.parameters === 'string' ? JSON.parse(sent.parameters) : sent.parameters;
+    assert.equal(parameters?.collision_quality, undefined);
+    assert.deepEqual(input, original);
+  }
 });
 
 test('video-only creates and videos with mixed photos work for every route with empty parameters', async t => {
