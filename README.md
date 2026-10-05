@@ -254,7 +254,7 @@ an independent version with a different asset ID.
 ```
 
 Pass these fields to `palatial_reprocess_asset` with `asset_id`, or save them as
-`repair.json` for the CLI command in the next package release:
+`repair.json` for the CLI command:
 
 ```bash
 palatial-agent reprocess --asset-id ASSET_ID --request repair.json

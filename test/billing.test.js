@@ -75,7 +75,7 @@ test('MCP keeps a structured insufficient-token create rejection and actionable 
   const [a, b] = InMemoryTransport.createLinkedPair();
   await server.connect(a); await client.connect(b);
   t.after(async () => { await client.close(); await server.close(); });
-  const result = await client.callTool({ name: 'palatial_create_asset', arguments: basic });
+  const result = await client.callTool({ name: 'palatial_create_asset', arguments: { ...basic, mode: 'diffusion' } });
   assert.equal(result.isError, true);
   assert.equal(result.structuredContent?.code, 'insufficient_tokens');
   assert.equal(result.structuredContent.reason, 'insufficient_credits');
@@ -158,7 +158,7 @@ test('MCP reports a start-gate rejection without conflicting recovery instructio
   await server.connect(a); await client.connect(b);
   t.after(async () => { await client.close(); await server.close(); });
 
-  const result = await client.callTool({ name: 'palatial_create_asset', arguments: basic });
+  const result = await client.callTool({ name: 'palatial_create_asset', arguments: { ...basic, mode: 'diffusion' } });
   const textResult = JSON.parse(result.content[0].text);
   assert.equal(result.isError, true);
   assert.deepEqual(textResult, result.structuredContent);

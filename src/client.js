@@ -485,7 +485,7 @@ export class PalatialClient {
     if (route) {
       result.generation_route = route;
       result.generation_route_means = route === 'mad_max'
-        ? 'Built by the Mad Max research and authoring route. To request the same route on a new asset use shape_model=parametric with effort=mad_max; mad_max is not a shape_model value.'
+        ? 'Built by the Mad Max research and authoring route. For a new MCP request use mode=parametric with effort=mad_max. Legacy clients use shape_model=parametric with effort=mad_max; mad_max is not a shape_model value.'
         : `Built with the ${route} shape model.`;
     }
     if (status === 'READY') result.ready_means = 'Outputs are available; inspect validation evidence and test in your target simulator.';
