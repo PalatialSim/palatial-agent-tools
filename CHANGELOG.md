@@ -2,8 +2,10 @@
 
 ## 0.1.9 — create modes and live documentation checks
 
-- Add explicit create modes with route-specific, typed parameters, keeping
-  legacy flat and CAD requests. Reject unsupported settings before submission.
+- Add explicit create modes with route-specific, typed parameters. The MCP
+  requires modes for text/image and omits redundant shape/texture-model fields;
+  the CLI/API client keeps legacy request files. Reject unsupported settings
+  before submission.
 - Add MP4/MOV video input and Mad Max scanned GLB references; enforce mode,
   research, photo-count, engine and face-budget limits.
 - Check docs.palatial.cloud on every MCP startup with persistent article hashes,

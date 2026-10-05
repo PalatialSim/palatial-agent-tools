@@ -66,7 +66,14 @@ const flatCreateSchema = z.object({
   decimation_target_faces: z.number().int().min(4).max(10000000).describe('Image, text, and CAD strict mode: maximum 4-10,000,000 faces; exclusive with ratio.').optional(),
   decimation_target_ratio: z.number().min(0.001).max(0.999).describe('Image, text, and CAD strict mode: retain 0.001-0.999 of source faces; mutually exclusive with face target.').optional()
 }).strict();
-export const createSchema = flatCreateSchema.extend(modeFields(flatCreateSchema.shape)).superRefine(validateMode);
+const modeCreateSchema = flatCreateSchema.extend(modeFields(flatCreateSchema.shape));
+export const createSchema = modeCreateSchema.superRefine(validateMode);
+// The CLI/API client still reads existing request files. The advertised MCP
+// surface uses modes, so agents never need to pick redundant legacy models.
+export const mcpCreateSchema = modeCreateSchema.omit({ shape_model: true, texture_model: true }).superRefine((p, ctx) => {
+  validateMode(p, ctx);
+  if (p.source !== 'cad' && !p.mode) ctx.addIssue({ code: 'custom', path: ['mode'], message: 'Text/image MCP requests require mode: diffusion, parametric, or mad_max.' });
+});
 
 const DIRECT_MESH_EXTENSIONS = new Set(['.obj', '.glb', '.gltf', '.stl', '.ply', '.fbx']);
 const AXIS_ONLY_CAD_EXTENSIONS = new Set(['.step', '.stp', '.iges', '.igs']);

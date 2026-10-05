@@ -47,6 +47,14 @@ To configure both clients, run `palatial-agent setup --client both`. Preview eve
 
 The client runs over **stdio**: your coding agent starts it as a local process. You do not need Docker, a local GPU, an inbound port, or your own hosted MCP server. Internet access to Palatial and its export storage is required.
 
+## Generation modes
+
+Text/image MCP calls use `mode: diffusion` or `mode: parametric` with
+`effort: low` or `mad_max`. Route-specific settings go in `parameters`.
+The MCP exposes no `shape_model` or `texture_model`: mode selects the builder
+and the backend chooses the painter. CAD has no mode and uses its supplied mesh.
+The CLI/API client continues to accept legacy request files without mode.
+
 ## Live docs and startup checks
 
 The skill points to [docs.palatial.cloud](https://docs.palatial.cloud/) and its

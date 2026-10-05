@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { PalatialClient, PalatialApiError, createSchema, reprocessSchema, assetIdSchema, DEFAULT_API_URL } from './client.js';
+import { PalatialClient, PalatialApiError, mcpCreateSchema, reprocessSchema, assetIdSchema, DEFAULT_API_URL } from './client.js';
 import { getApiKey } from './auth.js';
 import { VERSION } from './version.js';
 import { checkForUpdate } from './update.js';
@@ -64,8 +64,8 @@ export function createServer({ clientFactory, updateChecker = checkForUpdate, do
     return { content: [{ type: 'text', text: JSON.stringify(result) }], structuredContent: result };
   });
   server.registerTool('palatial_create_asset', {
-    description: 'Generate a simulation asset from text, photos, video, or CAD. For text/image use mode=diffusion, or mode=parametric with effort=low (default) or mad_max; mode=mad_max is shorthand. Put build settings in parameters. Diffusion controls structure, mesh density, textures and physics. Parametric Low authors rigid parts and accepts articulation, face_budget (2,000-200,000), collision_quality, run_simulation, optimize_textures, replace_glass and a rigid newton_solver. Mad Max and every video build require empty parameters. Diffusion takes one image_path or 2-4 named views; Parametric Low takes up to 50 photos on image_path/image_paths/views. Video accepts MP4/MOV up to 300 MiB and 60 seconds, alone or with photos on any route. Mad Max takes one engine and up to 8 photos (7 with a scanned GLB reference_mesh_path, also supported for text). Mad Max and video builds accept product_research on/specs_only/off; narrowed research needs photos or video. Legacy shape_model and flat settings remain accepted without mode. CAD requires mesh_path, optional image_path, flat settings and no mode. New generation needs the route minimum: Diffusion 20, Parametric Low 40, Mad Max 80, CAD 4 tokens. A start-gate rejection creates nothing; charges settle as stages complete. Returns an asset ID immediately. Poll that ID, never recreate it to check progress.',
-    inputSchema: createSchema,
+    description: 'Generate a simulation asset from text, photos, video, or CAD. For text/image use mode=diffusion, or mode=parametric with effort=low (default) or mad_max; mode=mad_max is shorthand. Put build settings in parameters. Diffusion controls structure, mesh density, textures and physics. Parametric Low authors rigid parts and accepts articulation, face_budget (2,000-200,000), collision_quality, run_simulation, optimize_textures, replace_glass and a rigid newton_solver. Mad Max and every video build require empty parameters. Diffusion takes one image_path or 2-4 named views; Parametric Low takes up to 50 photos on image_path/image_paths/views. Video accepts MP4/MOV up to 300 MiB and 60 seconds, alone or with photos on any route. Mad Max takes one engine and up to 8 photos (7 with a scanned GLB reference_mesh_path, also supported for text). Mad Max and video builds accept product_research on/specs_only/off; narrowed research needs photos or video. Text/image MCP calls require mode and expose no shape_model or texture_model. CAD requires mesh_path, optional image_path, flat settings and no mode. New generation needs the route minimum: Diffusion 20, Parametric Low 40, Mad Max 80, CAD 4 tokens. A start-gate rejection creates nothing; charges settle as stages complete. Returns an asset ID immediately. Poll that ID, never recreate it to check progress.',
+    inputSchema: mcpCreateSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
   }, invoke((c, input) => c.create(input)));
   server.registerTool('palatial_get_asset', {

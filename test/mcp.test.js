@@ -59,12 +59,8 @@ test('create tool explains API options in its MCP schema', async t => {
   assert.match(tool.inputSchema.properties.engine.description, /isaac_sim/);
   assert.match(tool.inputSchema.properties.create_articulation.description, /joints/);
   assert.match(tool.inputSchema.properties.units.description, /direct-mesh CAD/);
-  assert.match(tool.inputSchema.properties.shape_model.description, /parametric/);
-  assert.match(tool.inputSchema.properties.shape_model.description, /auto lets Palatial select/);
-  assert.doesNotMatch(tool.inputSchema.properties.shape_model.description, /Tencent|provider|vendor/i);
-  assert.match(tool.inputSchema.properties.shape_model.description, /faster, cheaper/);
-  assert.match(tool.inputSchema.properties.shape_model.description, /better for articulation/);
-  assert.deepEqual(tool.inputSchema.properties.shape_model.enum, ['auto', 'diffusion', 'parametric']);
+  assert.equal(tool.inputSchema.properties.shape_model, undefined);
+  assert.equal(tool.inputSchema.properties.texture_model, undefined);
   assert.deepEqual(tool.inputSchema.properties.effort.enum, ['low', 'mad_max']);
   assert.doesNotMatch(tool.inputSchema.properties.effort.description, /medium/i);
   assert.match(tool.inputSchema.properties.image_path.description, /optional PNG\/JPEG\/WebP reference/);
@@ -106,6 +102,9 @@ test('real MCP create calls accept each mode and reject unsupported parameters b
     assert.notEqual((await client.callTool({ name: 'palatial_create_asset', arguments: { ...base, ...route } })).isError, true);
   }
   assert.equal((await client.callTool({ name: 'palatial_create_asset', arguments: { ...base, mode: 'parametric', parameters: { mesh_quality: 'high' } } })).isError, true);
+  for (const extra of [{}, { mode: 'diffusion', shape_model: 'diffusion' }, { mode: 'diffusion', texture_model: 'auto' }]) {
+    assert.equal((await client.callTool({ name: 'palatial_create_asset', arguments: { ...base, ...extra } })).isError, true);
+  }
   assert.equal(calls.length, 3);
 });
 

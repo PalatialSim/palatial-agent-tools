@@ -128,9 +128,10 @@ Mad Max and video builds accept top-level `product_research`: `on` is the
 default; `specs_only` researches specifications without web photos, and `off`
 skips web lookup. The latter two require uploaded photos or a video.
 
-CAD uses flat settings and has no `mode`. Legacy text/image requests without
-`mode` still accept `shape_model` and flat build settings. Mixing those settings
-with `mode` is refused before submission.
+CAD uses flat settings and has no `mode`. The MCP exposes neither `shape_model`
+nor `texture_model`: mode and effort choose the shape route, and the backend
+chooses the painter. The CLI/API client accepts older request files with
+`shape_model` and flat build settings when mode is absent.
 
 ## Reading the route back
 

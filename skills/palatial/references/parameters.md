@@ -1,7 +1,9 @@
 # palatial_create_asset parameters
 
-Every field accepted by `palatial_create_asset`, what it does, and when it is
-rejected. Defaults are what the Palatial API applies when the field is omitted.
+MCP create arguments and CLI/API-client compatibility fields, their meaning,
+and their refusal rules. Text/image MCP requests require mode and expose neither
+shape_model nor texture_model. Those two fields remain only in the client for
+older request files. Defaults are applied by the Palatial API when omitted.
 
 Set as little as possible. The defaults are chosen to produce a usable asset,
 and an omitted field is safer than a guessed one.
@@ -38,8 +40,8 @@ shorthand is refused (`CREATE_EFFORT_INVALID`). `product_research` on a route
 without research is refused (`CREATE_PRODUCT_RESEARCH_UNSUPPORTED`).
 A refused request sends no generation from this client.
 
-The remaining flat build fields below are for legacy requests without `mode`
-and for CAD. With `mode`, use the corresponding allowed setting in `parameters`.
+The remaining flat build fields below are for legacy CLI/API-client requests
+without `mode` and for CAD. With `mode`, use the corresponding allowed setting in `parameters`.
 
 ## Always required
 
