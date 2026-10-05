@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.1.9 — create modes and live documentation checks
+
+- Add explicit create modes with route-specific, typed parameters, keeping
+  legacy flat and CAD requests. Reject unsupported settings before submission.
+- Add MP4/MOV video input and Mad Max scanned GLB references; enforce mode,
+  research, photo-count, engine and face-budget limits.
+- Check docs.palatial.cloud on every MCP startup with persistent article hashes,
+  changed-page excerpts, offline fallback, palatial_check_docs and CLI docs.
+  The packaged skill directs agents to the live API reference.
+
 
 - Share the validated reprocess feedback schema across MCP and the API client;
   add `palatial-agent reprocess --asset-id ID --request repair.json`.

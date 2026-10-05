@@ -6,11 +6,14 @@ import { getApiKey } from './auth.js';
 import { VERSION } from './version.js';
 import { checkForUpdate } from './update.js';
 import { GUIDE_TOPICS, readGuide } from './guide.js';
+import { checkDocs, DOCS_ORIGIN, API_DOCS_URL } from './docs.js';
 
-export function createServer({ clientFactory, updateChecker = checkForUpdate } = {}) {
+export function createServer({ clientFactory, updateChecker = checkForUpdate, docsChecker = checkDocs, startupDocs = { status: 'not_checked', changed: null } } = {}) {
+  let docsStatus = startupDocs;
+  const docsInstructions = `Live reference: ${API_DOCS_URL}. Startup documentation check: ${startupDocs.status}; ${startupDocs.changed_pages?.length || 0} changed pages. Call palatial_check_docs to inspect startup changes and refresh the live site. Read changed pages before using affected options, and report mismatches with the installed schema. For new text/image creates, prefer mode=diffusion or mode=parametric with effort=low/mad_max and route-specific parameters; Mad Max and every video build take no build parameters. `;
   const client = clientFactory || (async () => new PalatialClient({ apiKey: await getApiKey(), baseUrl: process.env.PALATIAL_API_URL || DEFAULT_API_URL }));
   const server = new McpServer({ name: 'palatial', version: VERSION }, {
-    instructions: 'Use Palatial when the user requests simulation-ready 3D assets from text, images, or CAD. Read palatial_guide before the first palatial_create_asset call of a session, and read its parameters topic before setting any create field beyond source, name, description, and engine; the create parameters have cross-field rules that reject a request. New-generation admission uses route minimums (Diffusion 20, Parametric Low 40, Mad Max 80, CAD to Sim 4 tokens); a positive balance alone is sufficient only for continuation or reprocessing when the server permits it. Charges settle only as stages complete; the estimated total is not prepaid. Low recommended balance warnings are advisory. At zero or negative balance, an already-running stage may finish and the next stage waits. A normal PROCESSING_PAUSED checkpoint (billing.paused=false, run.awaitingContinue=true) continues automatically in about a minute while the balance is above 0; a credit pause (billing.paused=true, pauseReason=insufficient_credits) needs a posted top-up before the same asset resumes. Show billing_guidance and preserve asset IDs; never retry generation, create a replacement, or start checkout automatically. Export itself is free; the server decides whether a materialized export key is available. A failed asset requires explicit user confirmation and allow_failed_export. An export is not proof of simulator acceptance. This connector contains no proprietary generation prompts.'
+    instructions: docsInstructions + 'Use Palatial when the user requests simulation-ready 3D assets from text, images, or CAD. Read palatial_guide before the first palatial_create_asset call of a session, and read its parameters topic before setting any create field beyond source, name, description, and engine; the create parameters have cross-field rules that reject a request. New-generation admission uses route minimums (Diffusion 20, Parametric Low 40, Mad Max 80, CAD to Sim 4 tokens); a positive balance alone is sufficient only for continuation or reprocessing when the server permits it. Charges settle only as stages complete; the estimated total is not prepaid. Low recommended balance warnings are advisory. At zero or negative balance, an already-running stage may finish and the next stage waits. A normal PROCESSING_PAUSED checkpoint (billing.paused=false, run.awaitingContinue=true) continues automatically in about a minute while the balance is above 0; a credit pause (billing.paused=true, pauseReason=insufficient_credits) needs a posted top-up before the same asset resumes. Show billing_guidance and preserve asset IDs; never retry generation, create a replacement, or start checkout automatically. Export itself is free; the server decides whether a materialized export key is available. A failed asset requires explicit user confirmation and allow_failed_export. An export is not proof of simulator acceptance. This connector contains no proprietary generation prompts.'
   });
   const invoke = (fn, { arrayKey = 'data' } = {}) => async input => {
     try {
@@ -50,9 +53,18 @@ export function createServer({ clientFactory, updateChecker = checkForUpdate } =
     description: 'Check Palatial authentication and API connectivity. Read-only; does not generate assets or consume tokens.',
     inputSchema: z.object({}).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
-  }, invoke(async c => ({ ...(await c.doctor()), version: VERSION, update: await updateChecker() })));
+  }, invoke(async c => ({ ...(await c.doctor()), version: VERSION, update: await updateChecker(), docs: docsStatus })));
+  server.registerTool('palatial_check_docs', {
+    description: `Check ${DOCS_ORIGIN} directly for documentation changes. Re-fetches the sitemap and articles, compares persistent content hashes, and returns changed page links and added/removed excerpts plus the startup check. No Palatial credentials, generation, or charges. The check does not change the client schema.`,
+    inputSchema: z.object({}).strict(),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  }, async () => {
+    docsStatus = await docsChecker();
+    const result = { ...docsStatus, startup_check: startupDocs };
+    return { content: [{ type: 'text', text: JSON.stringify(result) }], structuredContent: result };
+  });
   server.registerTool('palatial_create_asset', {
-    description: 'Generate a simulation asset from text, images, or CAD. shape_model is auto, diffusion, or parametric: auto lets Palatial select a supported generation route; diffusion is faster, cheaper, and better for organic shapes and accepts one image or named multiview inputs; parametric is controllable, better for articulation, and accepts N images (up to 50). Text and image parametric requests can select effort low or mad_max. An image mad_max request can set product_research to specs_only (no web images) or off (no web lookup) to build only from its own images. Options are documented in the input schema. Text accepts no files; image accepts image_path or named views for auto/diffusion, or image_paths for parametric; CAD requires mesh_path and accepts an optional image_path. body_type chooses rigid or soft behaviour, and a CAD request can keep the shape or textures it was given instead of rebuilding them. New generations need the route minimum: diffusion 20, parametric low 40, mad_max 80, or CAD to Sim 4 tokens. A start-gate 403 returns tokens.required, tokens.balance, and tokens.shortfall; nothing is created, so add tokens and submit once. Charges settle as stages complete. Returns immediately with an asset ID and available billing metadata. Resume through get_asset; never submit again to poll.',
+    description: 'Generate a simulation asset from text, photos, video, or CAD. For text/image use mode=diffusion, or mode=parametric with effort=low (default) or mad_max; mode=mad_max is shorthand. Put build settings in parameters. Diffusion controls structure, mesh density, textures and physics. Parametric Low authors rigid parts and accepts articulation, face_budget (2,000-200,000), collision_quality, run_simulation, optimize_textures, replace_glass and a rigid newton_solver. Mad Max and every video build require empty parameters. Diffusion takes one image_path or 2-4 named views; Parametric Low takes up to 50 photos on image_path/image_paths/views. Video accepts MP4/MOV up to 300 MiB and 60 seconds, alone or with photos on any route. Mad Max takes one engine and up to 8 photos (7 with a scanned GLB reference_mesh_path, also supported for text). Mad Max and video builds accept product_research on/specs_only/off; narrowed research needs photos or video. Legacy shape_model and flat settings remain accepted without mode. CAD requires mesh_path, optional image_path, flat settings and no mode. New generation needs the route minimum: Diffusion 20, Parametric Low 40, Mad Max 80, CAD 4 tokens. A start-gate rejection creates nothing; charges settle as stages complete. Returns an asset ID immediately. Poll that ID, never recreate it to check progress.',
     inputSchema: createSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
   }, invoke((c, input) => c.create(input)));
@@ -90,8 +102,9 @@ export function createServer({ clientFactory, updateChecker = checkForUpdate } =
   return server;
 }
 
-export async function serveStdio() {
-  const server = createServer();
+export async function serveStdio({ docsChecker = checkDocs } = {}) {
+  const startupDocs = await docsChecker();
+  const server = createServer({ docsChecker, startupDocs });
   await server.connect(new StdioServerTransport());
   return server;
 }

@@ -17,6 +17,22 @@ workspace key works. If it reports that Palatial is not authenticated, tell the
 user to run `palatial-agent login` in their terminal. Never ask for an API key
 in conversation and never put one in a tool argument.
 
+## Check the current docs
+
+Use [docs.palatial.cloud](https://docs.palatial.cloud/) as the live reference,
+especially [Using the API](https://docs.palatial.cloud/integrations/api/) before
+choosing a generation mode or build setting. The MCP checks the site's sitemap
+and article content on every startup. `palatial_doctor.docs` reports that check;
+`palatial_check_docs` refreshes it and returns changed pages with added/removed
+excerpts, including the startup result. The CLI equivalent is `palatial-agent docs`.
+
+When `changed` is true, read the affected pages directly before using their
+options. Compare their request rules with the installed tool schema and report
+any mismatch. If the check is unavailable, say that live docs could not be
+verified and use the packaged reference. A first successful check establishes a
+baseline; it does not prove the docs have never changed. Docs checks use no
+Palatial key and consume no generation tokens.
+
 ## The one workflow
 
 1. `palatial_create_asset` submits the job and returns immediately with an
@@ -78,34 +94,43 @@ which stage it is on.
 
 | The user has | `source` | Required inputs |
 | --- | --- | --- |
-| Only a description | `text` | No files at all |
+| Only a description | `text` | No photos; Mad Max may take a `reference_mesh_path` |
 | One photo or render | `image` | `image_path` |
-| Several angles of one object | `image` | `views` (2 to 4 named views) or `image_paths` |
+| Several angles of one object | `image` | `views` or `image_paths`, within the route limits |
+| A product video | `image` | `video_path`, optionally with photos |
 | A CAD or mesh file | `cad` | `mesh_path`; `image_path` is optional |
 
 Put real dimensions, materials, articulation, and intended use in
 `description`. It is the single most important field, and for `source: image`
 it is the only place dimensions can go.
 
-## Picking the shape model
+## Picking the generation mode
 
-`shape_model` applies to `text` and `image` only. CAD rejects it.
+For new text/image requests, choose `mode` and put its build settings inside
+`parameters`. Read `references/parameters.md` for the allowed settings.
 
-- `auto` (default) lets Palatial select a supported route. Use it unless the
-  user has a specific shape-model requirement.
-- `diffusion` is faster and cheaper and handles organic shapes better. Takes
-  one image, or up to four named views.
-- `parametric` is more controllable and better for articulated objects. It is
-  the only model that accepts `image_paths`, which takes 2 to 50 photos of the
-  same object.
+- `mode: diffusion` is fastest and cheapest and suits organic shapes. It takes
+  one photo or 2-4 named views. `parameters.structure` chooses `single_object`,
+  `static_parts` (default), or `articulated_parts`.
+- `mode: parametric`, `effort: low` (default) suits manufactured objects and
+  moving parts. It takes 1-50 photos and authors rigid parts. Choose joints with
+  `parameters.articulation` and an authored face budget with `parameters.face_budget`.
+- `mode: parametric`, `effort: mad_max` researches and authors the product. It
+  chooses structure, density and appearance itself, so omit `parameters` or
+  send `{}`. It takes exactly one engine and at most 8 photos (7 with a scanned
+  GLB `reference_mesh_path`). `mode: mad_max` is accepted shorthand.
 
-For `shape_model: parametric`, `effort: low` uses the parametric pipeline.
-`mad_max` researches the described product and authors the model; it costs more
-and takes longer.
-These choices work with text and image inputs, not CAD. An image `mad_max`
-request can set `product_research: specs_only` to use the web for
-specifications but build only from the uploaded images, or `off` to look
-nothing up.
+A `video_path` works on every image route and requires empty `parameters`:
+research settles the build from the clip. MP4/MOV, at most 300 MiB and 60 seconds.
+Diffusion and Low accept up to 50 photos beside a video; Mad Max keeps its cap.
+
+Mad Max and video builds accept top-level `product_research`: `on` is the
+default; `specs_only` researches specifications without web photos, and `off`
+skips web lookup. The latter two require uploaded photos or a video.
+
+CAD uses flat settings and has no `mode`. Legacy text/image requests without
+`mode` still accept `shape_model` and flat build settings. Mixing those settings
+with `mode` is refused before submission.
 
 ## Reading the route back
 
@@ -114,16 +139,15 @@ A finished asset reports how it was built as `generationAgent`: `diffusion`,
 `generation_route`, and the full record from `palatial_get_asset_details`
 carries the route field and its server-owned progress metadata.
 
-That label is read-only. It is not a `shape_model` value, and copying it into a
-new request is refused: `mad_max` is requested with `shape_model: parametric`
-and `effort: mad_max`. To rebuild "the same way", read `generation_route` and
-translate it, do not paste the record's parameters into a create.
+Use that label to select the equivalent create mode. `mad_max` corresponds to
+`mode: parametric` with `effort: mad_max`; `parametric` corresponds to Low.
+Read the current request rules before selecting its build settings.
 
 ## Writing the rest of the request
 
-Most requests should set `source`, `name`, `description`, `engine`, and nothing
-else. The server defaults are deliberate, and a guessed value is worse than an
-omitted one.
+New text/image requests should set `source`, `name`, `description`, `mode`,
+and `engine`, adding `effort` when selecting Mad Max. Use the route defaults
+for settings the user has not specified.
 
 Reach for `references/parameters.md` before setting any other field. It lists
 every parameter, its default, which sources accept it, and the cross-field

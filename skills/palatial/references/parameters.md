@@ -6,6 +6,41 @@ rejected. Defaults are what the Palatial API applies when the field is omitted.
 Set as little as possible. The defaults are chosen to produce a usable asset,
 and an omitted field is safer than a guessed one.
 
+## Current generation contract
+
+Check [Using the API](https://docs.palatial.cloud/integrations/api/) for current
+rules. `palatial_check_docs` compares the live docs with the last successful
+snapshot; read changed pages before using affected settings.
+
+| Field | Values | Default | Sources | Notes |
+| --- | --- | --- | --- | --- |
+| `mode` | `diffusion`, `parametric`, `mad_max` | omitted for legacy requests | `text`, `image` | Preferred for new requests. `mad_max` is shorthand for Parametric at Mad Max effort. CAD has no mode. |
+| `parameters` | object with `mesh_quality`, `collision_quality`, `triangle_count`, `mesh_density`, `decimation`, `decimation_mode`, `decimation_target_faces`, `decimation_target_ratio`, `texture_size`, `optimize_textures`, `texture_max_resolution`, `run_simulation`, `body_type`, `newton_solver`, `repair_mesh`, `replace_glass`, `auto_scale`, `structure`, `articulation`, `face_budget` | route defaults | `text`, `image` | Only the settings allowed for the chosen route; see below. JSON types stay numbers and booleans, including multipart uploads. |
+
+- **Diffusion:** `structure` (`single_object`, `static_parts`, `articulated_parts`),
+  mesh quality/density/triangle controls, decimation, texture generation/delivery,
+  collision/physics, body type/solver, repair, glass replacement and auto scale.
+  Defaults: static parts, high quality (medium for one object), medium collision,
+  4K textures and strict 100,000-face simplification.
+- **Parametric Low:** `articulation` (false), `face_budget` (100,000; allowed
+  2,000-200,000), `collision_quality` (medium), `run_simulation` (true),
+  `optimize_textures` (true), `replace_glass` (false), and `newton_solver`
+  (`mujoco` or `style3D`). It authors rigid parts; mesh quality, texture size,
+  body type, repair and auto scale are unsupported settings.
+- **Mad Max and every video build:** omit `parameters` or send an empty object.
+  Research decides the build settings. Mad Max takes exactly one engine.
+
+With `mode`, top-level legacy build settings are refused
+(`CREATE_MODE_FIELD_CONFLICT`). A route-inappropriate setting is refused
+(`CREATE_PARAMETERS_INVALID`); `parameters` without `mode` is refused
+(`CREATE_MODE_REQUIRED`). Effort on Diffusion or conflicting with the Mad Max
+shorthand is refused (`CREATE_EFFORT_INVALID`). `product_research` on a route
+without research is refused (`CREATE_PRODUCT_RESEARCH_UNSUPPORTED`).
+A refused request sends no generation from this client.
+
+The remaining flat build fields below are for legacy requests without `mode`
+and for CAD. With `mode`, use the corresponding allowed setting in `parameters`.
+
 ## Always required
 
 | Field | Values | Default | Sources | Notes |
@@ -26,13 +61,15 @@ and an omitted field is safer than a guessed one.
 | Field | Values | Default | Sources | Notes |
 | --- | --- | --- | --- | --- |
 | `image_path` | one PNG, JPEG, or WebP path | none | `image`, `cad` | Required for a single-image request. Optional for CAD; provide it when asking to generate textures from a reference. |
-| `image_paths` | 2 to 50 PNG, JPEG, or WebP paths | none | `image` | Photos of one object. Accepted **only** with `shape_model: parametric`. |
-| `views` | object with `front`, `left`, `back`, `right` | none | `image` | Named angles of one object. Give at least 2. `auto` and `diffusion` accept at most 4. |
+| `image_paths` | 1 to 50 PNG, JPEG, or WebP paths | none | `image` | Parametric Low or any video build. Mad Max: at most 8 photos, or 7 with a reference mesh; total includes named views and image_path. |
+| `video_path` | one MP4 or MOV path | none | `image` | Up to 300 MiB and 60 seconds; may accompany photos. Every video route requires empty parameters. Server validates duration and video bytes. |
+| `reference_mesh_path` | scanned GLB path | none | `text`, `image` | Mad Max only; uploaded as reference_mesh. Counts as one of its 8 inputs. |
+| `views` | object with `front`, `left`, `back`, `right` | none | `image` | Named angles of one object. Diffusion without video needs 2-4; Parametric or video builds can mix these with uploaded photos. |
 | `reconstruct` | boolean | ignored | `image` | Legacy API field. The current Queue ignores it: one image does not trigger synthetic view generation, and supplied views are processed directly. Omit this field. The client rejects it with `mad_max` effort. |
 | `mesh_path` | path to the mesh file | none | `cad` | Required for CAD. |
 | `datasheet_path` | path to a PDF | none | `cad` | Optional specification sheet. |
 
-Each local input must be a regular file of at most 256 MiB. References must be
+Each local input must be a nonempty regular file of at most 256 MiB (300 MiB for video). References must be
 PNG, JPEG, or WebP; datasheets must be PDF.
 
 ## What to build
@@ -69,9 +106,9 @@ a swivel chair with rolling wheels is `rigid_bodies` with
 
 | Field | Values | Default | Sources | Notes |
 | --- | --- | --- | --- | --- |
-| `shape_model` | `auto`, `diffusion`, `parametric` | `auto` | `text`, `image` | `auto` lets Palatial select a supported route. `diffusion` is faster, cheaper, and better at organic shapes; it takes one image or up to 4 named views. `parametric` is more controllable and better for articulation; it is the only model that accepts `image_paths`. **Rejected for CAD.** |
-| `effort` | `low`, `mad_max` | `low` when parametric | `text`, `image` | Requires `shape_model: parametric`. `low` runs the parametric pipeline. `mad_max` researches the described product and authors the model; it costs more and takes longer. **Rejected for CAD.** |
-| `product_research` | `on`, `specs_only`, `off` | `on` | `image` | How much Product Research a `mad_max` build does. `on` researches the real product on the web, its pages and its product photos. `specs_only` reads the web for identity and specifications but uses no web images, so the model is built only from your images. `off` looks nothing up. Use `specs_only` or `off` when your own photos show the exact unit and web photos of similar products could mislead the build. |
+| `shape_model` | `auto`, `diffusion`, `parametric` | `auto` | `text`, `image` | `auto` lets Palatial select a supported route. `diffusion` is faster, cheaper, and better at organic shapes; it takes one image or up to 4 named views. `parametric` is more controllable and better for articulation; it accepts up to 50 photos at Low effort; Mad Max accepts 8, or 7 with a reference mesh. **Rejected for CAD.** |
+| `effort` | `low`, `mad_max` | `low` when parametric | `text`, `image` | Requires `mode: parametric` or legacy `shape_model: parametric`. `low` runs the parametric pipeline. `mad_max` researches the described product and authors the model; it costs more and takes longer. **Rejected for CAD.** |
+| `product_research` | `on`, `specs_only`, `off` | `on` | `text`, `image` | How much research Mad Max or any video build does. Narrowed modes require photos or video. `on` researches the real product on the web, its pages and its product photos. `specs_only` reads the web for identity and specifications but uses no web images, so the model is built only from your images. `off` looks nothing up. Use `specs_only` or `off` when your own photos show the exact unit and web photos of similar products could mislead the build. |
 | `texture_model` | `auto` | `auto` | all | Selects the supported texture model. There is no other public value, so omit it. |
 | `apply_textures` | boolean | `true` with a CAD reference image, `false` without one | `cad` | Generate textures from the reference image. `true` requires `image_path`. When it is off, `texture_model` has nothing to run. |
 
@@ -173,18 +210,17 @@ the dimensions and orientation in `description` instead.
 The client checks these before spending anything, and returns an error that
 names the rule.
 
-- `text` accepts no files and rejects `apply_textures`.
-- `image` requires exactly one of `image_path`, `image_paths`, or `views`.
-- `views` needs at least 2 entries, and at most 4 under `auto` or `diffusion`.
-- `image_paths` requires `shape_model: parametric`.
+- `text` accepts no photos/video; Mad Max accepts a GLB reference mesh. It rejects `apply_textures`.
+- `image` requires photos or a video. Pure Diffusion uses one image_path or 2-4 named views; Parametric or video builds can mix photo inputs within the route cap.
+- Diffusion without a video needs 2-4 named views. Parametric and video builds can mix named views and file photos.
+- `image_paths` requires Parametric or a video.
 - `image` rejects `mesh_path`, `datasheet_path`, `units`, `meters_per_unit`, `up_direction`, and
   `apply_textures`.
 - `cad` requires `mesh_path`, accepts an optional `image_path`, and rejects
   `image_paths`, `views`, `reconstruct`, `mesh_quality`, `shape_model`, and `effort`. Source-frame fields
   then follow the file-format rules above.
-- `effort` requires `shape_model: parametric` on text or image requests.
-- `product_research: specs_only` or `off` requires `effort: mad_max` and
-  `source: image`: it builds only from the images you upload.
+- `effort` requires Parametric mode or legacy shape_model on text or image requests.
+- `product_research: specs_only` or `off` requires Mad Max or a video, with uploaded photos or video.
 - `shape_model: mad_max` is refused. `mad_max` is the route label a finished
   asset reports in `generationAgent`; request it with `shape_model: parametric`
   and `effort: mad_max`.

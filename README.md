@@ -13,7 +13,7 @@ You need Node.js 22 or newer, a Palatial workspace API key, and Codex CLI or Cla
 Install the versioned package from the official GitHub Release:
 
 ```sh
-npm install --global https://github.com/PalatialSim/palatial-agent-tools/releases/download/v0.1.4/palatial-agent-tools-0.1.4.tgz
+npm install --global https://github.com/PalatialSim/palatial-agent-tools/releases/download/v0.1.9/palatial-agent-tools-0.1.9.tgz
 palatial-agent --version
 palatial-agent login
 palatial-agent doctor
@@ -46,6 +46,25 @@ Use `/mcp` to inspect the connection, then ask for the same read-only check.
 To configure both clients, run `palatial-agent setup --client both`. Preview every change with `--dry-run`. Setup adds a server named `palatial` in the user's client configuration, and for Claude Code it also installs the Palatial skill described below into `~/.claude/skills/palatial`. The installed copy carries an ownership manifest and file hashes; setup refuses to overwrite an unowned, edited, extra-file, or symlinked skill directory. A partial setup exits nonzero even when MCP registration succeeded. It does not modify your project instructions or other servers. If you move this installation or change the Node.js executable, rerun setup.
 
 The client runs over **stdio**: your coding agent starts it as a local process. You do not need Docker, a local GPU, an inbound port, or your own hosted MCP server. Internet access to Palatial and its export storage is required.
+
+## Live docs and startup checks
+
+The skill points to [docs.palatial.cloud](https://docs.palatial.cloud/) and its
+[API reference](https://docs.palatial.cloud/integrations/api/). Every MCP startup
+checks the sitemap and compares article content with the last successful local
+snapshot. `palatial_doctor.docs` reports the startup result. `palatial_check_docs`
+checks again and returns changed page URLs with added/removed excerpts, retaining
+startup changes so a refresh cannot hide them. Run `palatial-agent docs` for the
+same check without credentials.
+
+The first successful check establishes a baseline. Changes include pages added,
+removed or edited; generated CSS, scripts and navigation are ignored. Checks
+send no API key. They have a seven-second network budget and preserve the last
+successful snapshot on failure. Offline startup remains usable. The snapshot is
+`docs-snapshot.json` under `PALATIAL_STATE_DIR`, or the default local state
+directory; `PALATIAL_DOCS_CHECK=0` explicitly disables checking for offline use.
+A changed document calls for reading it and reconciling any client-schema
+mismatch; it never replaces client code automatically.
 
 ## Create your first asset
 
@@ -105,6 +124,7 @@ This preference is inspectable and editable. It does not guarantee that every na
 | Tool | Purpose | Changes or charges |
 | --- | --- | --- |
 | `palatial_guide` | Read the packaged usage and parameter guidance | Local and read-only; no API call |
+| `palatial_check_docs` | Check live documentation and report changed pages | Public read; writes a local comparison snapshot |
 | `palatial_doctor` | Check credentials and API connectivity | Read-only; no generation or export |
 | `palatial_create_asset` | Submit text, image, multiview, or CAD generation | Creates an asset; charges tokens as stages complete |
 | `palatial_get_asset` | Check an existing asset's processing status | Read-only |
@@ -122,7 +142,7 @@ an API response is an array, `palatial_list_assets` exposes it as `data` and
 `palatial_batch_get_statuses` exposes it as `statuses`; the text response keeps
 the original JSON array for clients that read text only.
 
-The client accepts PNG/JPEG/WebP references and PDF datasheets. CAD requests require a mesh file; the reference image is optional and needed when generating textures from a photo. A GLB with embedded textures can retain its appearance when the server inspection confirms them. Each local input is limited to 256 MiB; downloads are limited to 2 GiB in this preview. ZIP files are saved without automatic extraction or simulator import.
+The client accepts PNG/JPEG/WebP references and PDF datasheets. CAD requests require a mesh file; the reference image is optional and needed when generating textures from a photo. A GLB with embedded textures can retain its appearance when the server inspection confirms them. Each local input is limited to 256 MiB (300 MiB and 60 seconds for MP4/MOV videos); downloads are limited to 2 GiB in this preview. ZIP files are saved without automatic extraction or simulator import.
 
 ## Billing and paused jobs
 
@@ -142,7 +162,8 @@ Save `asset.json`:
   "name": "Storage bin",
   "description": "A rigid plastic storage bin",
   "engine": ["isaac_sim"],
-  "enable_parts_segmentation": false
+  "mode": "diffusion",
+  "parameters": { "structure": "single_object" }
 }
 ```
 

@@ -18,7 +18,7 @@ test('real MCP protocol lists tools and calls the shared client without a model'
   await server.connect(a); await client.connect(b);
   t.after(async () => { await client.close(); await server.close(); });
   const list = await client.listTools();
-  assert.equal(list.tools.length, 12);
+  assert.equal(list.tools.length, 13);
   assert.equal(list.tools.find(x => x.name === 'palatial_download_asset').annotations.readOnlyHint, false);
   const result = await client.callTool({ name: 'palatial_get_asset', arguments: { asset_id: 'asset-test' } });
   assert.equal(result.structuredContent.asset_id, 'asset-test');
@@ -72,6 +72,41 @@ test('create tool explains API options in its MCP schema', async t => {
   assert.match(tool.inputSchema.properties.meters_per_unit.description, /Direct-mesh CAD/);
   assert.equal(tool.inputSchema.properties.agentic_articulation, undefined);
   assert.match(tool.inputSchema.properties.decimation_target_ratio.description, /mutually exclusive/);
+  assert.deepEqual(tool.inputSchema.properties.mode.enum, ['diffusion', 'parametric', 'mad_max']);
+  assert.equal(tool.inputSchema.properties.parameters.properties.face_budget.minimum, 2000);
+  assert.equal(tool.inputSchema.properties.parameters.properties.face_budget.maximum, 200000);
+  assert.match(tool.inputSchema.properties.video_path.description, /300 MiB/);
+});
+
+test('startup doc changes reach instructions, doctor and a manual check without being hidden by a refresh', async t => {
+  const startupDocs = { status: 'changed', changed: true, changed_pages: [{ url: 'https://docs.palatial.cloud/integrations/api/', kind: 'modified' }] };
+  let checks = 0;
+  const server = createServer({ clientFactory: async () => ({ doctor: async () => ({ authenticated: true }) }), updateChecker: async () => ({ status: 'disabled' }), startupDocs, docsChecker: async () => { checks++; return { status: 'unchanged', changed: false }; } });
+  const client = new Client({ name: 'startup-docs-test', version: '1.0' });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a); await client.connect(b);
+  t.after(async () => { await client.close(); await server.close(); });
+  assert.match(client.getInstructions(), /Startup documentation check: changed; 1 changed pages/);
+  assert.deepEqual((await client.callTool({ name: 'palatial_doctor', arguments: {} })).structuredContent.docs, startupDocs);
+  const result = await client.callTool({ name: 'palatial_check_docs', arguments: {} });
+  assert.equal(result.structuredContent.changed, false);
+  assert.deepEqual(result.structuredContent.startup_check, startupDocs);
+  assert.equal(checks, 1);
+});
+
+test('real MCP create calls accept each mode and reject unsupported parameters before invoking the client', async t => {
+  const calls = [];
+  const server = createServer({ clientFactory: async () => ({ create: async input => { calls.push(input); return { asset_id: 'mode-test' }; } }) });
+  const client = new Client({ name: 'mode-transport-test', version: '1.0' });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a); await client.connect(b);
+  t.after(async () => { await client.close(); await server.close(); });
+  const base = { source: 'text', name: 'MCP mode test', description: 'A rigid bin' };
+  for (const route of [{ mode: 'diffusion', parameters: { structure: 'single_object' } }, { mode: 'parametric', effort: 'low', parameters: { face_budget: 50000 } }, { mode: 'parametric', effort: 'mad_max' }]) {
+    assert.notEqual((await client.callTool({ name: 'palatial_create_asset', arguments: { ...base, ...route } })).isError, true);
+  }
+  assert.equal((await client.callTool({ name: 'palatial_create_asset', arguments: { ...base, mode: 'parametric', parameters: { mesh_quality: 'high' } } })).isError, true);
+  assert.equal(calls.length, 3);
 });
 
 test('guidance reaches any client as a tool, and as resources where they are supported', async t => {
@@ -123,13 +158,13 @@ test('packaged CLI speaks stdio MCP and lists tools without authentication', asy
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [fileURLToPath(new URL('../bin/palatial-agent.js', import.meta.url)), 'mcp'],
-    env: { PATH: process.env.PATH, XDG_CONFIG_HOME: dir, PALATIAL_API_KEY: '' },
+    env: { PATH: process.env.PATH, XDG_CONFIG_HOME: dir, PALATIAL_API_KEY: '', PALATIAL_DOCS_CHECK: '0' },
     stderr: 'pipe'
   });
   const client = new Client({ name: 'stdio-test', version: '1.0' });
   await client.connect(transport);
   t.after(() => client.close());
-  assert.equal((await client.listTools()).tools.length, 12);
+  assert.equal((await client.listTools()).tools.length, 13);
   const result = await client.callTool({ name: 'palatial_doctor', arguments: {} });
   assert.equal(result.isError, true);
   assert.match(result.content[0].text, /not authenticated/);

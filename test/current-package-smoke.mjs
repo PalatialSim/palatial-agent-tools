@@ -27,13 +27,13 @@ try {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [cli, 'mcp'],
-    env: { PATH: process.env.PATH, PALATIAL_API_KEY: '', XDG_CONFIG_HOME: root },
+    env: { PATH: process.env.PATH, PALATIAL_API_KEY: '', PALATIAL_DOCS_CHECK: '0', XDG_CONFIG_HOME: root },
     stderr: 'pipe'
   });
   const client = new Client({ name: 'current-package-smoke', version: '1.0' });
   await client.connect(transport);
   try {
-    assert.equal((await client.listTools()).tools.length, 12);
+    assert.equal((await client.listTools()).tools.length, 13);
     const result = await client.callTool({ name: 'palatial_guide', arguments: { topic: 'parameters' } });
     assert.match(result.content[0].text, /collision_quality/);
     const resource = await client.readResource({ uri: 'palatial://guide/parameters' });
