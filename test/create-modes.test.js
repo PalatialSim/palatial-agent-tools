@@ -105,9 +105,14 @@ test('video-only creates and videos with mixed photos work for every route with 
   assert.equal(calls.at(-1).body.getAll('file').length, 1);
   assert.equal(calls.at(-1).body.get('front').name, 'object.png');
   const before = calls.length;
+  for (const fields of [{ mesh_quality: 'high' }, { create_articulation: true }, { collision_quality: 'medium' }, { texture_model: 'auto' }]) {
+    await assert.rejects(client.create({ ...base, source: 'image', shape_model: 'parametric', video_path: video, ...fields }), /CREATE_PARAMETERS_INVALID/);
+  }
   await assert.rejects(client.create({ ...base, source: 'image', mode: 'diffusion', video_path: video, parameters: { structure: 'single_object' } }), /CREATE_PARAMETERS_INVALID/);
   await assert.rejects(client.create({ ...base, mode: 'mad_max', video_path: video }), /Text generation/);
   assert.equal(calls.length, before);
+  await client.create({ ...base, source: 'image', shape_model: 'parametric', effort: 'low', video_path: video });
+  assert.equal(calls.at(-1).body.get('shape_model'), 'parametric');
 });
 
 test('Mad Max accepts a scanned GLB on text and image requests and counts it in the eight-input cap', async t => {

@@ -26,6 +26,10 @@ export function validateMode(p, ctx) {
   const refuse = (code, message, path = []) => ctx.addIssue({ code: 'custom', message: `${code}: ${message}`, path });
   if (!p.mode) {
     if (p.parameters !== undefined) refuse('CREATE_MODE_REQUIRED', 'parameters requires mode.', ['parameters']);
+    if (p.video_path) {
+      const buildFields = FLAT_FIELDS.filter(field => field !== 'shape_model' && p[field] !== undefined);
+      if (buildFields.length) refuse('CREATE_PARAMETERS_INVALID', `Video research decides build settings; remove legacy fields: ${buildFields.join(', ')}.`);
+    }
     return;
   }
   if (p.source === 'cad') refuse('CREATE_MODE_FIELD_CONFLICT', 'CAD accepts flat settings and has no mode.', ['mode']);
