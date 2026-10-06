@@ -142,3 +142,17 @@ tool argument or a command line.
 
 The user reruns `palatial-agent setup` and starts a fresh coding-agent session.
 An MCP process already running keeps its old version until the client restarts.
+
+## INIT while research has already failed
+
+Mad Max and video builds have a native research/build job before the Queue
+starts. get_asset (for INIT) and get_asset_details include its generation_job.
+Check that job separately: failed does not become success because the asset
+still says INIT. Report its error, message and both IDs; a missing job response
+means unavailable, not running or successful. A question or automation.blocked
+needs attention in the dashboard. Never create a replacement merely to poll.
+
+product_research_evidence_missing means research could not retain a usable
+product view. A useful real-product identity, page or reference photo may be
+needed. Preserve the existing run; do not retry or spend on another build
+without user authorization.

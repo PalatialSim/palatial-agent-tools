@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { mkdir, open, readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
+import { createRoute, modeFields, validateMode } from './create-modes.js';
 
 export const DEFAULT_API_URL = 'https://dashboard.palatial.cloud/api/v1/external/';
 const engine = z.enum(['isaac_sim', 'mujoco', 'newton']);
@@ -19,14 +20,16 @@ export const reprocessSchema = z.object({
   parameters: z.record(z.string(), z.unknown()).describe('Supported processing-setting overrides; server validates allowed settings.').optional()
 }).strict().refine(value => !value.feedback || value.from, 'Feedback edits require a pipeline stage in from.');
 
-export const createSchema = z.object({
+const flatCreateSchema = z.object({
   source: z.enum(['text', 'image', 'cad']).describe('Input type: text prompt, one or more reference images, or a CAD mesh with an optional reference image.'),
   name: assetName.describe('Asset name, 4-50 characters: letters, digits, spaces, underscores, hyphens, and periods.'),
   description: z.string().trim().min(1).max(500).describe('What to build, including dimensions, materials, articulation, and intended use when known.'),
   workspace: z.string().regex(/^[a-fA-F0-9]{24}$/, 'Workspace must be a 24-character MongoDB ObjectId.').describe('All sources: optional workspace ID; omit to use the API-key workspace.').optional(),
   engine: z.array(engine).min(1).max(3).default(['isaac_sim']).describe('All sources: simulator profiles; isaac_sim, mujoco, or newton; defaults to isaac_sim.').optional(),
   image_path: z.string().describe('Image: one PNG/JPEG/WebP input; CAD: optional PNG/JPEG/WebP reference for texture generation; use instead of views.').optional(),
-  image_paths: z.array(z.string()).min(2).max(50).describe('Image with parametric shape_model: 2-50 PNG/JPEG/WebP inputs of the same object; each is uploaded as a file.').optional(),
+  image_paths: z.array(z.string()).min(1).max(50).describe('Image: 1-50 photos for Parametric Low or a video build; Mad Max accepts 8, or 7 with reference_mesh_path. Uploaded as repeated file fields.').optional(),
+  video_path: z.string().min(1).describe('Image only: one MP4/MOV product video, at most 300 MiB and 60 seconds. May accompany photos on any route; parameters must be empty. The server validates duration and video bytes.').optional(),
+  reference_mesh_path: z.string().min(1).describe('Text/image Mad Max only: optional scanned GLB, uploaded as reference_mesh. Reduces the photo limit from 8 to 7.').optional(),
   views: z.object({ front: z.string().describe('Image multiview: front PNG/JPEG/WebP path.').optional(), left: z.string().describe('Image multiview: left PNG/JPEG/WebP path.').optional(), back: z.string().describe('Image multiview: back PNG/JPEG/WebP path.').optional(), right: z.string().describe('Image multiview: right PNG/JPEG/WebP path.').optional() }).strict().describe('Image only: named views of one object; provide at least two.').optional(),
   reconstruct: z.boolean().describe('Legacy image option accepted by the API but currently ignored by the Queue. It does not generate views from one image or change how supplied views are processed.').optional(),
   mesh_path: z.string().describe('CAD only: path to the mesh file.').optional(),
@@ -41,11 +44,11 @@ export const createSchema = z.object({
   auto_scale: z.boolean().describe('All sources: scale the finished asset to the real-world size stated in the description.').optional(),
   mesh_quality: z.enum(['low', 'medium', 'high']).describe('Image and text only: mesh quality preset; not used for CAD.').optional(),
   collision_quality: z.enum(['low', 'medium', 'high', 'x_high', 'sdf']).describe('Image, text, and CAD: collision quality; sdf means signed-distance-field collision.').optional(),
-  shape_model: z.enum(['auto', 'diffusion', 'parametric']).describe('Image and text only: auto lets Palatial select a supported generation route; diffusion is faster, cheaper, and better for organic shapes and accepts one image or named multiview inputs; parametric is controllable, better for articulation, and accepts N images (up to 50).').optional(),
-  effort: z.enum(['low', 'mad_max']).describe('Text and image with shape_model=parametric only: low uses the parametric pipeline; mad_max uses the research and authoring route, costs more, and takes longer. CAD does not support effort.').optional(),
-  product_research: z.enum(['on', 'specs_only', 'off']).describe('Image with effort=mad_max: how much Product Research the build does first. on (default) researches the real product on the web, its pages and its product photos. specs_only reads the web for identity and specifications but uses no web images, so the model is built only from your images. off looks nothing up and builds from your images and description alone.').optional(),
+  shape_model: z.enum(['auto', 'diffusion', 'parametric']).describe('Image and text only: auto lets Palatial select a supported generation route; diffusion is faster, cheaper, and better for organic shapes and accepts one image or named multiview inputs; parametric is controllable, better for articulation, and accepts up to 50 photos at Low effort; Mad Max accepts 8, or 7 with a reference mesh. Prefer mode for new requests.').optional(),
+  effort: z.enum(['low', 'mad_max']).describe('Text/image Parametric mode or legacy shape_model=parametric: low is the default; mad_max researches and authors the model. CAD has no effort.').optional(),
+  product_research: z.enum(['on', 'specs_only', 'off']).describe('Mad Max or any video build: on (default) researches the product and web photos; specs_only researches specifications without web photos; off skips web lookup. specs_only/off require uploaded photos or a video.').optional(),
   texture_model: z.literal('auto').describe('Image, text, and CAD: auto selects the supported texture model.').optional(),
-  decimation: z.boolean().describe('Image, text, and CAD: legacy adaptive reduction switch; prefer decimation_mode.').optional(),
+  decimation: z.boolean().describe('Diffusion defaults to strict 100,000 faces; false disables reduction. CAD defaults to disabled. Parametric Low uses face_budget in parameters.').optional(),
   optimize_textures: z.boolean().describe('Image, text, and CAD: downscale oversized maps without upscaling smaller maps.').optional(),
   texture_max_resolution: z.union([z.literal(512), z.literal(1024), z.literal(2048), z.literal(4096), z.literal(8192)]).describe('Image, text, and CAD: maximum texture edge; smaller maps are never upscaled.').optional(),
   triangle_count: z.enum(['minimal', 'low', 'medium', 'high', 'x_high', 'auto']).describe('Image, text, and CAD: legacy triangle preset; fixed values become strict targets when decimation is enabled.').optional(),
@@ -63,6 +66,31 @@ export const createSchema = z.object({
   decimation_target_faces: z.number().int().min(4).max(10000000).describe('Image, text, and CAD strict mode: maximum 4-10,000,000 faces; exclusive with ratio.').optional(),
   decimation_target_ratio: z.number().min(0.001).max(0.999).describe('Image, text, and CAD strict mode: retain 0.001-0.999 of source faces; mutually exclusive with face target.').optional()
 }).strict();
+const modeCreateSchema = flatCreateSchema.extend(modeFields(flatCreateSchema.shape));
+export const createSchema = modeCreateSchema.superRefine(validateMode);
+// The CLI/API client still reads existing request files. The advertised MCP
+// surface uses modes, so agents never need to pick redundant legacy models.
+const mcpCollisionQuality = z.enum(['auto', 'low', 'medium', 'high', 'sdf']).describe('Prefer auto. For Diffusion, Parametric Low and CAD this omits the API override, using its current medium default. Mad Max chooses proxies itself and accepts no build settings. Higher hull quality trades more collision detail for more work; sdf requests signed-distance-field collision.').optional();
+const mcpNewtonSolver = z.enum(['mujoco', 'style3D']).describe('Rigid-body Newton solver, read only when engine includes newton.').optional();
+const mcpParameters = modeCreateSchema.shape.parameters.unwrap()
+  .omit({ body_type: true, replace_glass: true, auto_scale: true })
+  .extend({ collision_quality: mcpCollisionQuality, newton_solver: mcpNewtonSolver })
+  .describe('Route-specific settings for rigid assets. Diffusion: structure, mesh, decimation, texture, collision, validation and repair. Parametric Low: articulation, face_budget, collision_quality, run_simulation, optimize_textures and newton_solver. Mad Max and video: omit or use {}.').optional();
+export const mcpCreateSchema = modeCreateSchema.omit({ shape_model: true, texture_model: true, body_type: true, replace_glass: true, auto_scale: true })
+  .extend({ parameters: mcpParameters, collision_quality: mcpCollisionQuality, newton_solver: mcpNewtonSolver }).superRefine((p, ctx) => {
+  validateMode(p, ctx);
+  if (p.source !== 'cad' && !p.mode) ctx.addIssue({ code: 'custom', path: ['mode'], message: 'Text/image MCP requests require mode: diffusion, parametric, or mad_max.' });
+});
+
+// The public API does not yet accept the product's "auto" collision label.
+// Preserve the server's default by omitting the override, rather than sending
+// an invalid value or promising primitive selection on a hull-only route.
+export function mcpCreateInput(input) {
+  const p = { ...input, ...(input.parameters ? { parameters: { ...input.parameters } } : {}) };
+  if (p.collision_quality === 'auto') delete p.collision_quality;
+  if (p.parameters?.collision_quality === 'auto') delete p.parameters.collision_quality;
+  return p;
+}
 
 const DIRECT_MESH_EXTENSIONS = new Set(['.obj', '.glb', '.gltf', '.stl', '.ply', '.fbx']);
 const AXIS_ONLY_CAD_EXTENSIONS = new Set(['.step', '.stp', '.iges', '.igs']);
@@ -73,8 +101,13 @@ export function validateCreate(input) {
     throw new Error('mad_max is a generation route reported on finished assets (generationAgent), not a shape_model. To request it, send shape_model=parametric with effort=mad_max.');
   }
   const p = createSchema.parse(input);
+  const { model, effort } = createRoute(p);
+  const settings = p.parameters || p;
   const views = Object.entries(p.views || {}).filter(([, file]) => file);
-  if (p.source === 'text' && (p.image_path || p.image_paths || views.length || p.mesh_path || p.datasheet_path)) throw new Error('Text generation does not accept input files.');
+  if (p.source === 'text' && (p.image_path || p.image_paths || views.length || p.mesh_path || p.datasheet_path || p.video_path)) throw new Error('Text generation does not accept input files except a Mad Max reference_mesh_path.');
+  if (p.video_path && p.source !== 'image') throw new Error('video_path is accepted only for image input.');
+  if (p.reference_mesh_path && (p.source === 'cad' || model !== 'parametric' || effort !== 'mad_max')) throw new Error('reference_mesh_path is accepted only for text/image Mad Max.');
+  if (effort === 'mad_max' && (p.engine || ['isaac_sim']).length !== 1) throw new Error('Mad Max accepts exactly one target engine.');
   if (p.source !== 'cad' && p.apply_textures !== undefined) throw new Error('apply_textures is accepted only for CAD input.');
   // The reuse flags decide what NOT to rebuild from a mesh the user supplied,
   // so they mean nothing where there is no supplied mesh.
@@ -92,25 +125,29 @@ export function validateCreate(input) {
   // The API silently coerces a solver the body type cannot use. An agent that
   // asked for one and quietly got another has no way to notice, so refuse the
   // pair instead and name the value that body type accepts.
-  if (p.body_type === 'soft_bodies' && p.newton_solver && p.newton_solver !== 'vbd') throw new Error('Soft bodies accept only newton_solver=vbd.');
-  if (p.body_type === 'rigid_bodies' && p.newton_solver === 'vbd') throw new Error('vbd is the soft-body solver. Rigid bodies accept newton_solver=mujoco or style3D.');
+  if (settings.body_type === 'soft_bodies' && settings.newton_solver && settings.newton_solver !== 'vbd') throw new Error('Soft bodies accept only newton_solver=vbd.');
+  if (settings.body_type === 'rigid_bodies' && settings.newton_solver === 'vbd') throw new Error('vbd is the soft-body solver. Rigid bodies accept newton_solver=mujoco or style3D.');
   const imageInputs = Number(Boolean(p.image_path)) + Number(Boolean(p.image_paths)) + Number(views.length > 0);
-  if (p.source === 'image' && imageInputs !== 1) throw new Error('Image generation requires image_path, image_paths, or named views.');
-  if (p.source === 'image' && views.length && views.length < 2) throw new Error('Multiview requires at least two views of the same object.');
-  if (p.source === 'image' && p.image_paths && p.shape_model !== 'parametric') throw new Error('image_paths is supported only with shape_model=parametric.');
+  if (p.source === 'image' && !imageInputs && !p.video_path) throw new Error('Image generation requires image_path, image_paths, named views, or video_path.');
+  if (p.source === 'image' && model !== 'parametric' && !p.video_path && imageInputs !== 1) throw new Error('Diffusion requires image_path or named views without mixing them.');
+  if (p.source === 'image' && model !== 'parametric' && !p.video_path && views.length && views.length < 2) throw new Error('Multiview requires at least two views of the same object.');
+  if (p.source === 'image' && p.image_paths && model !== 'parametric' && !p.video_path) throw new Error('image_paths is supported only with Parametric or a video.');
+  const photos = Number(Boolean(p.image_path)) + (p.image_paths?.length || 0) + views.length;
+  const photoLimit = effort === 'mad_max' ? p.reference_mesh_path ? 7 : 8 : 50;
+  if (p.source === 'image' && photos > photoLimit) throw new Error(`This route accepts at most ${photoLimit} photos${p.reference_mesh_path ? ' with a reference mesh' : ''}.`);
   if (p.source !== 'image' && p.reconstruct !== undefined) throw new Error('reconstruct is accepted only for image input.');
-  if (p.reconstruct !== undefined && p.effort === 'mad_max') throw new Error('The legacy reconstruct option is not accepted with mad_max effort.');
+  if (p.reconstruct !== undefined && effort === 'mad_max') throw new Error('The legacy reconstruct option is not accepted with mad_max effort.');
   if (p.source === 'image' && ['auto', 'diffusion'].includes(p.shape_model) && views.length > 4) throw new Error('auto and diffusion accept a single image or up to four named views.');
   if (p.source === 'image' && (p.mesh_path || p.datasheet_path)) throw new Error('mesh_path and datasheet_path are only accepted for CAD.');
   if (p.source === 'cad' && (!p.mesh_path || p.image_paths || views.length)) throw new Error('CAD requires mesh_path; image_path is optional, and image_paths and named views are not accepted.');
   if (p.source === 'cad' && (p.mesh_quality || p.shape_model || p.effort)) throw new Error('mesh_quality, shape_model, and effort are not used for CAD input.');
-  if (p.effort && p.shape_model !== 'parametric') throw new Error('effort applies to shape_model=parametric only.');
+  if (p.effort && model !== 'parametric') throw new Error('effort applies to shape_model=parametric or mode=parametric only.');
   // A narrowed mode builds only from the uploaded images, so it needs the one
   // route that researches and a request that carries images. Anywhere else the
   // API would accept it and do nothing, which an agent could not notice.
   if (p.product_research && p.product_research !== 'on') {
-    if (p.effort !== 'mad_max') throw new Error('product_research applies to effort=mad_max only; other routes do not research.');
-    if (p.source !== 'image') throw new Error(`product_research=${p.product_research} builds only from uploaded images, so it needs source=image.`);
+    if (effort !== 'mad_max' && !p.video_path) throw new Error('product_research applies to effort=mad_max only or a video; other routes do not research.');
+    if (!photos && !p.video_path) throw new Error(`product_research=${p.product_research} builds only from uploaded images or video, so it needs source=image with photos or a video.`);
   }
   if (p.source !== 'cad' && p.meters_per_unit !== undefined) throw new Error('meters_per_unit is accepted only for direct-mesh CAD input.');
   if (p.source === 'image' && (p.units || p.up_direction)) throw new Error('units and up_direction are not accepted for image input; include requested dimensions and orientation in the description.');
@@ -140,8 +177,12 @@ export function validateCreate(input) {
       throw new Error('Unsupported CAD format. Use OBJ, GLB, GLTF, STL, PLY, FBX, STEP, STP, IGES, IGS, USD, USDA, USDC, or USDZ.');
     }
   }
-  const targets = Number(p.decimation_target_faces !== undefined) + Number(p.decimation_target_ratio !== undefined);
-  if ((p.decimation_mode === 'strict' && targets !== 1) || (p.decimation_mode !== 'strict' && targets)) throw new Error('Strict decimation requires exactly one target; targets are not accepted in other modes.');
+  const targets = Number(settings.decimation_target_faces !== undefined) + Number(settings.decimation_target_ratio !== undefined);
+  if ((settings.decimation_mode === 'strict' && targets !== 1) || (settings.decimation_mode !== 'strict' && targets)) throw new Error('Strict decimation requires exactly one target; targets are not accepted in other modes.');
+  if (model === 'parametric' && settings.decimation_mode === 'strict') {
+    if (settings.decimation_target_ratio !== undefined) throw new Error('PARAMETRIC_DECIMATION_REQUIRES_FACE_TARGET: use an absolute face budget.');
+    if (settings.decimation_target_faces < 2000 || settings.decimation_target_faces > 200000) throw new Error('PARAMETRIC_FACE_BUDGET_UNSUPPORTED: use 2,000-200,000 faces.');
+  }
   return p;
 }
 
@@ -388,33 +429,38 @@ export class PalatialClient {
 
   async create(input) {
     const p = validateCreate(input);
-    const { source, image_path, image_paths, views, mesh_path, datasheet_path, ...parameters } = p;
+    const { source, image_path, image_paths, views, mesh_path, datasheet_path, video_path, reference_mesh_path, ...parameters } = p;
     let body = parameters;
-    if (source !== 'text') {
+    if (source !== 'text' || reference_mesh_path) {
       body = new FormData();
       for (const [key, value] of Object.entries(parameters)) {
         if (value === undefined) continue;
-        for (const item of Array.isArray(value) ? value : [value]) body.append(key, String(item));
+        for (const item of Array.isArray(value) ? value : [value]) body.append(key, typeof item === 'object' ? JSON.stringify(item) : String(item));
       }
       const addFile = async (field, filename, kind) => {
         const absolute = path.resolve(filename);
         const ext = path.extname(absolute).toLowerCase();
         if (kind === 'image' && !['.png', '.jpg', '.jpeg', '.webp'].includes(ext)) throw new Error('Reference images must be PNG, JPEG, or WebP.');
         if (kind === 'pdf' && ext !== '.pdf') throw new Error('Datasheets must be PDF.');
+        if (kind === 'video' && !['.mp4', '.mov'].includes(ext)) throw new Error('Product videos must be MP4 or MOV.');
+        if (kind === 'reference_mesh' && ext !== '.glb') throw new Error('Mad Max reference meshes must be GLB.');
         const info = await stat(absolute);
-        if (!info.isFile() || info.size > 256 * 1024 ** 2) throw new Error('Input must be a regular file of at most 256 MiB.');
-        const type = ext === '.png' ? 'image/png' : ['.jpg', '.jpeg'].includes(ext) ? 'image/jpeg' : ext === '.webp' ? 'image/webp' : ext === '.pdf' ? 'application/pdf' : 'application/octet-stream';
+        const maxMiB = kind === 'video' ? 300 : 256;
+        if (!info.isFile() || info.size === 0 || info.size > maxMiB * 1024 ** 2) throw new Error(`Input must be a nonempty regular file of at most ${maxMiB} MiB.`);
+        const type = ext === '.png' ? 'image/png' : ['.jpg', '.jpeg'].includes(ext) ? 'image/jpeg' : ext === '.webp' ? 'image/webp' : ext === '.pdf' ? 'application/pdf' : ext === '.mp4' ? 'video/mp4' : ext === '.mov' ? 'video/quicktime' : 'application/octet-stream';
         body.append(field, new Blob([await readFile(absolute)], { type }), path.basename(absolute));
       };
       if (source === 'image') {
         if (image_path) await addFile('file', image_path, 'image');
-        else if (image_paths) for (const filename of image_paths) await addFile('file', filename, 'image');
-        else for (const [view, file] of Object.entries(views)) if (file) await addFile(view, file, 'image');
-      } else {
+        if (image_paths) for (const filename of image_paths) await addFile('file', filename, 'image');
+        for (const [view, file] of Object.entries(views || {})) if (file) await addFile(view, file, 'image');
+        if (video_path) await addFile('video', video_path, 'video');
+      } else if (source === 'cad') {
         await addFile('mesh', mesh_path, 'mesh');
         if (image_path) await addFile('image', image_path, 'image');
         if (datasheet_path) await addFile('datasheet', datasheet_path, 'pdf');
       }
+      if (reference_mesh_path) await addFile('reference_mesh', reference_mesh_path, 'reference_mesh');
     }
     // Persist intent before the network write. This is recovery evidence, not
     // backend idempotency: an ambiguous submission must never be auto-retried.
@@ -456,8 +502,17 @@ export class PalatialClient {
     if (route) {
       result.generation_route = route;
       result.generation_route_means = route === 'mad_max'
-        ? 'Built by the Mad Max research and authoring route. To request the same route on a new asset use shape_model=parametric with effort=mad_max; mad_max is not a shape_model value.'
+        ? 'Built by the Mad Max research and authoring route. For a new MCP request use mode=parametric with effort=mad_max. Legacy clients use shape_model=parametric with effort=mad_max; mad_max is not a shape_model value.'
         : `Built with the ${route} shape model.`;
+    }
+    if (status === 'INIT') {
+      try {
+        const asset = await this.request(`assets/${assetId}`);
+        const job = await this.generationJob(assetId, asset);
+        if (job) result.generation_job = job;
+      } catch (error) {
+        result.generation_job_check = { status: 'unavailable', message: safeMessage(error, this.apiKey), action: 'Native research status could not be verified. Inspect the same asset in the dashboard; do not recreate it to check progress.' };
+      }
     }
     if (status === 'READY') result.ready_means = 'Outputs are available; inspect validation evidence and test in your target simulator.';
     if (status === 'PROCESSING_FAILED') result.failure_guidance = {
@@ -472,7 +527,23 @@ export class PalatialClient {
 
   async getAssetDetails(assetId) {
     assetIdSchema.parse(assetId);
-    return addBillingGuidance(await this.request(`assets/${assetId}`), this.base.origin, assetId);
+    const asset = addBillingGuidance(await this.request(`assets/${assetId}`), this.base.origin, assetId);
+    const job = await this.generationJob(assetId, asset);
+    return job ? { ...asset, generation_job: job } : asset;
+  }
+  async generationJob(assetId, asset) {
+    assetIdSchema.parse(assetId);
+    const id = asset?.parameters?.agentBuildJobId;
+    if (typeof id !== 'string' || !assetIdSchema.safeParse(id).success) return null;
+    try {
+      const job = await this.request(`mad-max/jobs/${encodeURIComponent(id)}`);
+      if (job.id !== id || job.assetId !== assetId) throw new Error('Generation job does not match this asset.');
+      const keys = ['id', 'assetId', 'assetStatus', 'status', 'automation', 'progress', 'error', 'message', 'question', 'completion', 'recoveries', 'billing'];
+      return { ...safeBillingValue(Object.fromEntries(keys.filter(key => job[key] !== undefined).map(key => [key, job[key]])), this.apiKey),
+        guidance: job.status === 'failed' ? 'The native research/build job failed; the asset status may still be INIT. Preserve both IDs and report its error. Do not create a replacement or retry automatically.' : 'Research/build status is separate from the asset and Queue status. A question or automation.blocked needs attention; inspect this same job in the dashboard.' };
+    } catch (error) {
+      return { id, status: 'unavailable', message: safeMessage(error, this.apiKey), guidance: 'Native generation status could not be verified; the asset status remains authoritative for its own pipeline. Inspect the same asset in the dashboard.' };
+    }
   }
   async listAssets({ search, status, limit = 20, skip = 0 } = {}) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100 || !Number.isInteger(skip) || skip < 0) throw new Error('limit must be 1-100 and skip must be non-negative.');

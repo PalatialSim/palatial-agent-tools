@@ -10,12 +10,14 @@ import { VERSION } from '../src/version.js';
 import { checkForUpdate, applyUpdate } from '../src/update.js';
 import { readGuide, GUIDE_TOPICS } from '../src/guide.js';
 import { runSetup } from '../src/setup.js';
+import { checkDocs } from '../src/docs.js';
 
 const HELP = `Palatial Agent Tools ${VERSION} (Node.js 22+)
 
 palatial-agent login                      Enter your workspace API key privately
 palatial-agent logout                     Delete the locally saved API key
 palatial-agent doctor                     Read-only authentication/network check
+palatial-agent docs                       Check docs.palatial.cloud for changes
 palatial-agent update                     Check the latest release and print an install command
 palatial-agent update --apply             Install the latest release globally
 palatial-agent setup --client codex       Register the MCP server in Codex CLI
@@ -75,6 +77,7 @@ async function main() {
   if (values.help || !command) { console.log(HELP); return; }
   if (positionals.length > 1) throw new Error('Unexpected positional arguments. Run palatial-agent --help.');
   if (command === 'mcp') { await serveStdio(); return; }
+  if (command === 'docs') return checkDocs();
   if (command === 'guide') {
     // The guidance is a document a person reads, so it prints as Markdown
     // rather than as a JSON string full of escaped newlines. It needs no key.
@@ -108,7 +111,7 @@ async function main() {
   }
   if (!['doctor', 'create', 'reprocess', 'status', 'download', 'cancel'].includes(command)) throw new Error('Unknown command. Run palatial-agent --help.');
   const client = new PalatialClient({ apiKey: await getApiKey(), baseUrl: process.env.PALATIAL_API_URL || DEFAULT_API_URL });
-  if (command === 'doctor') return { ...(await client.doctor()), version: VERSION, update: await checkForUpdate() };
+  if (command === 'doctor') return { ...(await client.doctor()), version: VERSION, update: await checkForUpdate(), docs: await checkDocs() };
   if (command === 'create' || command === 'reprocess') {
     if (!values.request) throw new Error('Provide --request pointing to a JSON file.');
     if (command === 'reprocess' && !values['asset-id']) throw new Error('Provide --asset-id.');

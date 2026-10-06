@@ -547,3 +547,44 @@ test('feedback edits reject invalid intent locally and forward exact feedback, s
   await client.reprocess('asset-a', body);
   assert.deepEqual(calls, [body]);
 });
+
+test('INIT reads report native research failure without rewriting the asset status or submitting work', async t => {
+  const calls = [];
+  const { client } = await fixture(t, async (url, init) => {
+    calls.push({ path: url.pathname, method: init.method });
+    if (url.pathname.endsWith('/status')) return json({ status: 'INIT', generationAgent: 'mad_max' });
+    if (url.pathname.endsWith('/assets/asset-1')) return json({ id: 'asset-1', parameters: { agentBuildJobId: 'job-1' } });
+    return json({ id: 'job-1', assetId: 'asset-1', status: 'failed', assetStatus: 'INIT', error: 'product_research_evidence_missing', message: 'No usable product view; no 3D build started.', internalCredential: 'do-not-copy' });
+  });
+  const result = await client.getAsset('asset-1');
+  assert.equal(result.status, 'INIT');
+  assert.equal(result.generation_job.status, 'failed');
+  assert.equal(result.generation_job.error, 'product_research_evidence_missing');
+  assert.match(result.generation_job.guidance, /Do not create a replacement/);
+  assert.equal(result.generation_job.internalCredential, undefined);
+  assert.deepEqual(calls.map(c => c.method), ['GET', 'GET', 'GET']);
+  assert.equal(calls.at(-1).path, '/api/v1/external/mad-max/jobs/job-1');
+});
+
+test('job reads preserve details when inaccessible and refuse a mismatched asset binding', async t => {
+  for (const jobResponse of [json({ message: 'missing' }, 404), json({ id: 'job-1', assetId: 'other-asset', status: 'ready' })]) {
+    const asset = { id: 'asset-1', status: { status: 'INIT' }, parameters: { agentBuildJobId: 'job-1' } };
+    const { client } = await fixture(t, async url => url.pathname.endsWith('/assets/asset-1') ? json(asset) : jobResponse);
+    const result = await client.getAssetDetails('asset-1');
+    assert.equal(result.status.status, 'INIT');
+    assert.equal(result.generation_job.status, 'unavailable');
+    assert.equal(result.generation_job.assetId, undefined);
+  }
+});
+
+test('unbound or invalid job IDs do not trigger a native request and job metadata redacts secrets', async t => {
+  let calls = 0;
+  const { client } = await fixture(t, async () => { calls++; return json({ ok: true }); });
+  assert.equal(await client.generationJob('asset-1', { parameters: { agentBuildJobId: '../escape' } }), null);
+  assert.equal(await client.generationJob('asset-1', {}), null);
+  assert.equal(calls, 0);
+  const { client: bound } = await fixture(t, async () => json({ id: 'job-1', assetId: 'asset-1', status: 'failed', message: `source failed ${client.apiKey} https://example.test/path?secret=value`, automation: { mode: 'automatic', blocked: { accessToken: 'hidden' } } }));
+  const job = await bound.generationJob('asset-1', { parameters: { agentBuildJobId: 'job-1' } });
+  assert.equal(JSON.stringify(job).includes('secret=value'), false);
+  assert.equal(job.automation.blocked.accessToken, '[REDACTED]');
+});

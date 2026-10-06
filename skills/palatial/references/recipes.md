@@ -12,13 +12,17 @@ The user describes the object and nothing else exists yet.
   "source": "text",
   "name": "Storage bin",
   "description": "A rigid plastic storage bin, 600 by 400 by 320 mm, textured polypropylene, no lid, no moving parts. For warehouse picking simulation.",
-  "engine": ["isaac_sim"],
-  "units": "mm",
-  "enable_parts_segmentation": false
+  "engine": [
+    "isaac_sim"
+  ],
+  "mode": "diffusion",
+  "parameters": {
+    "structure": "single_object"
+  }
 }
 ```
 
-`enable_parts_segmentation: false` is there because the bin is one solid object.
+`parameters.structure: single_object` is there because the bin is one solid object.
 Without it the default splits the result into parts.
 
 ## One image
@@ -30,8 +34,11 @@ A single photo or render of the object.
   "source": "image",
   "name": "Handheld scanner",
   "description": "A handheld barcode scanner roughly 180 mm long with a pistol grip, rigid, trigger does not need to move.",
-  "engine": ["isaac_sim"],
-  "image_path": "./references/scanner.jpg"
+  "engine": [
+    "isaac_sim"
+  ],
+  "image_path": "./references/scanner.jpg",
+  "mode": "diffusion"
 }
 ```
 
@@ -47,42 +54,51 @@ Named views of one object. Two is enough, four is the maximum here.
   "source": "image",
   "name": "Office chair",
   "description": "A five-castor office chair, about 1.1 m tall, fabric seat, with a swivelling seat and castors that roll.",
-  "engine": ["isaac_sim", "mujoco"],
-  "shape_model": "diffusion",
+  "engine": [
+    "isaac_sim",
+    "mujoco"
+  ],
   "views": {
     "front": "./references/chair-front.jpg",
     "back": "./references/chair-back.jpg",
     "left": "./references/chair-left.jpg"
   },
-  "create_articulation": true
+  "mode": "diffusion",
+  "parameters": {
+    "structure": "articulated_parts"
+  }
 }
 ```
 
 ## Many photos, parametric
 
-A phone walkaround of one object. `image_paths` works only with `parametric`.
+A phone walkaround of one object. Parametric Low takes up to 50 photos.
 
 ```json
 {
   "source": "image",
   "name": "Tool cabinet",
   "description": "A steel tool cabinet about 900 mm tall with three drawers that open and close on rails.",
-  "engine": ["isaac_sim"],
-  "shape_model": "parametric",
+  "engine": [
+    "isaac_sim"
+  ],
   "image_paths": [
     "./references/cabinet-01.jpg",
     "./references/cabinet-02.jpg",
     "./references/cabinet-03.jpg",
     "./references/cabinet-04.jpg"
   ],
-  "create_articulation": true
+  "mode": "parametric",
+  "effort": "low",
+  "parameters": {
+    "articulation": true
+  }
 }
 ```
 
-For a research-and-authoring build instead of the low-effort parametric pipeline,
-add `"effort": "mad_max"` to a text or image request with
-`"shape_model": "parametric"`. That route costs more and takes longer. Omit
-`effort` for the pipeline default.
+For Mad Max, use `mode: parametric` with `effort: mad_max` and remove
+`parameters`: research decides the build settings. Use one engine and at most
+8 photos (7 with a scanned GLB reference_mesh_path).
 
 ## CAD
 
@@ -94,7 +110,9 @@ to follow.
   "source": "cad",
   "name": "Parallel gripper",
   "description": "A two-finger parallel gripper. The fingers travel along the rail; the body is fixed.",
-  "engine": ["isaac_sim"],
+  "engine": [
+    "isaac_sim"
+  ],
   "mesh_path": "./cad/gripper.step",
   "image_path": "./references/gripper.png",
   "datasheet_path": "./cad/gripper-spec.pdf",
@@ -118,7 +136,9 @@ The user supplied a mesh they are happy with and only wants it simulation-ready.
   "source": "cad",
   "name": "Conveyor roller",
   "description": "A powered conveyor roller already modelled to spec. Keep the geometry and the appearance exactly as supplied; the roller spins on its axle.",
-  "engine": ["isaac_sim"],
+  "engine": [
+    "isaac_sim"
+  ],
   "mesh_path": "./cad/roller.usdc",
   "create_articulation": true,
   "physics_validation_only": true
@@ -137,25 +157,26 @@ texture inside the uploaded bytes. Other direct mesh formats cannot prove
 external texture sidecars from one uploaded file. With no reference image,
 they can instead stay untextured.
 
-## A soft object
-
-Cloth, garments, cable, and rope deform instead of holding a shape.
+## A rigid object for Newton
 
 ```json
 {
   "source": "text",
-  "name": "Cotton tote bag",
-  "description": "An empty cotton tote bag, about 380 by 420 mm, two woven handles, soft unlined fabric that drapes.",
+  "name": "Rigid storage bin",
+  "description": "A rigid open polypropylene bin, 20 cm wide, 15 cm deep and 12 cm tall, no moving parts.",
   "engine": ["newton"],
-  "body_type": "soft_bodies",
-  "newton_solver": "vbd",
-  "enable_parts_segmentation": false
+  "mode": "parametric",
+  "effort": "low",
+  "parameters": {
+    "articulation": false,
+    "collision_quality": "auto",
+    "newton_solver": "mujoco"
+  }
 }
 ```
 
-Soft bodies simulate in Newton, so `engine` says `newton` and the solver is
-`vbd`, the only one soft bodies accept. A soft object is one piece, so parts
-segmentation is off. Leave `body_type` out entirely for ordinary solid objects.
+The MCP omits the collision override for auto, using the API's current medium
+choice on Low. A rigid object needs no body_type. Mad Max chooses proxies itself.
 
 ## A hard polygon budget
 
@@ -166,11 +187,15 @@ Only when the user gives a number. Strict mode takes exactly one target.
   "source": "text",
   "name": "Pallet",
   "description": "A standard EUR wooden pallet, 1200 by 800 by 144 mm, rigid.",
-  "engine": ["isaac_sim"],
-  "units": "mm",
-  "enable_parts_segmentation": false,
-  "decimation_mode": "strict",
-  "decimation_target_faces": 20000
+  "engine": [
+    "isaac_sim"
+  ],
+  "mode": "diffusion",
+  "parameters": {
+    "structure": "single_object",
+    "decimation_mode": "strict",
+    "decimation_target_faces": 20000
+  }
 }
 ```
 
@@ -184,3 +209,36 @@ palatial_download_asset       { "asset_id": "...", "output_dir": "./assets/palle
 Download only once the status is `READY`, and into a directory the user named.
 The tool writes the ZIP plus a receipt holding the SHA-256 and byte count, and
 refuses to overwrite anything already there.
+
+## Mad Max using your own photos
+
+```json
+{
+  "source": "image",
+  "name": "Tool cabinet Mad Max",
+  "description": "Match this three-drawer steel tool cabinet, 900 mm tall. Its drawers open on rails.",
+  "mode": "parametric",
+  "effort": "mad_max",
+  "engine": ["isaac_sim"],
+  "image_path": "./references/cabinet.jpg",
+  "product_research": "specs_only"
+}
+```
+
+## Product video
+
+```json
+{
+  "source": "image",
+  "name": "Desk lamp from video",
+  "description": "A desk lamp with a weighted base, hinged two-part arm and tilting cone shade. Match the movement shown in the video.",
+  "mode": "parametric",
+  "effort": "low",
+  "engine": ["mujoco"],
+  "video_path": "./references/lamp.mp4",
+  "product_research": "specs_only"
+}
+```
+
+Video research settles the build settings, so parameters is omitted. The same
+rule applies when mode is diffusion or effort is mad_max.
