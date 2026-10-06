@@ -9,6 +9,9 @@
 - Simplify the MCP to rigid assets without body_type, auto_scale or replace_glass.
   Offer auto/low/medium/high/sdf collision quality; auto omits the API override
   (currently medium for Diffusion/Low). Keep legacy client requests compatible.
+- Surface native research/build job status on INIT and detailed asset reads,
+  including failures hidden by an asset still reporting INIT. Preserve both
+  states, validate job/asset binding and report inaccessible job status as unknown.
 - Add MP4/MOV video input and Mad Max scanned GLB references; enforce mode,
   research, photo-count, engine and face-budget limits.
 - Check docs.palatial.cloud on every MCP startup with persistent article hashes,

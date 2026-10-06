@@ -505,6 +505,15 @@ export class PalatialClient {
         ? 'Built by the Mad Max research and authoring route. For a new MCP request use mode=parametric with effort=mad_max. Legacy clients use shape_model=parametric with effort=mad_max; mad_max is not a shape_model value.'
         : `Built with the ${route} shape model.`;
     }
+    if (status === 'INIT') {
+      try {
+        const asset = await this.request(`assets/${assetId}`);
+        const job = await this.generationJob(assetId, asset);
+        if (job) result.generation_job = job;
+      } catch (error) {
+        result.generation_job_check = { status: 'unavailable', message: safeMessage(error, this.apiKey), action: 'Native research status could not be verified. Inspect the same asset in the dashboard; do not recreate it to check progress.' };
+      }
+    }
     if (status === 'READY') result.ready_means = 'Outputs are available; inspect validation evidence and test in your target simulator.';
     if (status === 'PROCESSING_FAILED') result.failure_guidance = {
       message: 'Processing failed. Preserve this asset ID and inspect the dashboard or available validation evidence.',
@@ -518,7 +527,23 @@ export class PalatialClient {
 
   async getAssetDetails(assetId) {
     assetIdSchema.parse(assetId);
-    return addBillingGuidance(await this.request(`assets/${assetId}`), this.base.origin, assetId);
+    const asset = addBillingGuidance(await this.request(`assets/${assetId}`), this.base.origin, assetId);
+    const job = await this.generationJob(assetId, asset);
+    return job ? { ...asset, generation_job: job } : asset;
+  }
+  async generationJob(assetId, asset) {
+    assetIdSchema.parse(assetId);
+    const id = asset?.parameters?.agentBuildJobId;
+    if (typeof id !== 'string' || !assetIdSchema.safeParse(id).success) return null;
+    try {
+      const job = await this.request(`mad-max/jobs/${encodeURIComponent(id)}`);
+      if (job.id !== id || job.assetId !== assetId) throw new Error('Generation job does not match this asset.');
+      const keys = ['id', 'assetId', 'assetStatus', 'status', 'automation', 'progress', 'error', 'message', 'question', 'completion', 'recoveries', 'billing'];
+      return { ...safeBillingValue(Object.fromEntries(keys.filter(key => job[key] !== undefined).map(key => [key, job[key]])), this.apiKey),
+        guidance: job.status === 'failed' ? 'The native research/build job failed; the asset status may still be INIT. Preserve both IDs and report its error. Do not create a replacement or retry automatically.' : 'Research/build status is separate from the asset and Queue status. A question or automation.blocked needs attention; inspect this same job in the dashboard.' };
+    } catch (error) {
+      return { id, status: 'unavailable', message: safeMessage(error, this.apiKey), guidance: 'Native generation status could not be verified; the asset status remains authoritative for its own pipeline. Inspect the same asset in the dashboard.' };
+    }
   }
   async listAssets({ search, status, limit = 20, skip = 0 } = {}) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100 || !Number.isInteger(skip) || skip < 0) throw new Error('limit must be 1-100 and skip must be non-negative.');

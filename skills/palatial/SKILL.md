@@ -44,6 +44,14 @@ Palatial key and consume no generation tokens.
    SHA-256 receipt into a directory the user chose. A later paused run can use
    an earlier export only while the server exposes its materialized `export.key`.
 
+If an asset remains INIT, inspect generation_job from get_asset or
+get_asset_details. A failed native job is a failure even while the asset
+remains INIT; report its error and preserve both IDs. A question or an
+automation block needs attention in the dashboard. Reads do not retry it.
+Mad Max researches a real product: supply a useful identity, product page
+or photo. A generic description can fail with product_research_evidence_missing
+when research cannot retain a usable product view, before any 3D build starts.
+
 For several assets at once, poll with `palatial_batch_get_statuses` instead of
 one call per asset. For a stuck job, `palatial_get_pipeline_progress` shows
 which stage it is on.
