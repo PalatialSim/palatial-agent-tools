@@ -84,7 +84,7 @@ export function createServer({ clientFactory, updateChecker = checkForUpdate, do
       asset_id: assetIdSchema,
       feedback: z.string().trim().min(1).max(2000),
       name: z.string().min(4).max(50).optional(),
-      description: z.string().min(1).max(500).optional(),
+      description: z.string().min(1).max(2000, 'Description is too long (max 2000 characters)').optional(),
       parameters: z.record(z.string(), z.unknown()).optional()
     }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }

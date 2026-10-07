@@ -23,7 +23,7 @@ export const reprocessSchema = z.object({
 const flatCreateSchema = z.object({
   source: z.enum(['text', 'image', 'cad']).describe('Input type: text prompt, one or more reference images, or a CAD mesh with an optional reference image.'),
   name: assetName.describe('Asset name, 4-50 characters: letters, digits, spaces, underscores, hyphens, and periods.'),
-  description: z.string().trim().min(1).max(500).describe('What to build, including dimensions, materials, articulation, and intended use when known.'),
+  description: z.string().trim().min(1).max(2000, 'Description is too long (max 2000 characters)').describe('What to build, including dimensions, materials, articulation, and intended use when known.'),
   workspace: z.string().regex(/^[a-fA-F0-9]{24}$/, 'Workspace must be a 24-character MongoDB ObjectId.').describe('All sources: optional workspace ID; omit to use the API-key workspace.').optional(),
   engine: z.array(engine).min(1).max(3).default(['isaac_sim']).describe('All sources: simulator profiles; isaac_sim, mujoco, or newton; defaults to isaac_sim.').optional(),
   image_path: z.string().describe('Image: one PNG/JPEG/WebP input; CAD: optional PNG/JPEG/WebP reference for texture generation; use instead of views.').optional(),
@@ -569,7 +569,7 @@ export class PalatialClient {
     const body = z.object({
       feedback: z.string().trim().min(1).max(2000),
       name: z.string().min(4).max(50).optional(),
-      description: z.string().min(1).max(500).optional(),
+      description: z.string().min(1).max(2000, 'Description is too long (max 2000 characters)').optional(),
       parameters: z.record(z.string(), z.unknown()).optional()
     }).strict().parse(input);
     const result = await this.request(`assets/${assetId}/variants`, { method: 'POST', body });
