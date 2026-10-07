@@ -62,7 +62,7 @@ which stage it is on.
   `palatial_create_asset`, `palatial_create_variant`, and
   `palatial_reprocess_asset` charge only for successfully completed stages.
   Reads and export itself do not consume tokens.
-- New generations need a route start minimum: Diffusion 20, Parametric Low 40,
+- New generations need a route start minimum: Diffusion 20, Parametric Low 20,
   Mad Max 80, or CAD to Sim 4 tokens. The minimum admits the run; the estimate
   is not prepaid. A `low_recommended_balance` warning recommending 10 or 20
   tokens is advisory.
