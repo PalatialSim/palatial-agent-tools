@@ -55,7 +55,7 @@ a primitive collider on Diffusion/Low.
 | --- | --- | --- | --- | --- |
 | `source` | `text`, `image`, `cad` | required | all | Decides which file fields are legal. See the source rules below. |
 | `name` | 4 to 50 characters | required | all | Letters, digits, spaces, underscores, hyphens, periods. |
-| `description` | 1 to 500 characters | required | all | What to build, including dimensions, materials, articulation, and intended use. For `source: image` this is the only place size and orientation can be stated. |
+| `description` | 1 to 2000 characters | required | all | What to build, including dimensions, materials, articulation, and intended use. For `source: image` this is the only place size and orientation can be stated. |
 
 ## Common
 
