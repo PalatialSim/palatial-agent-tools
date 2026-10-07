@@ -102,7 +102,9 @@ reprocess; independent versions use `palatial_create_variant`.
 A researching job (`effort: mad_max`, or a create with a video) can fail or be
 stopped in its model build, its delivery or its completion. Call
 `palatial_reprocess_asset` without `from` and the same asset retries that work
-at the Dashboard retry price. A model retry starts paid work, so confirm
+the same way as the Dashboard retry. There is no fixed price: it needs at least
+80 tokens to start, each completed step is charged, and it pauses when tokens
+run out and resumes after a top-up. A model retry starts paid work, so confirm
 first. When the job offers no retry, the call says so, and a new asset is the
 way to build it again. Passing `from` always reprocesses that pipeline stage
 instead.
