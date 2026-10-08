@@ -39,7 +39,8 @@ Palatial key and consume no generation tokens.
    `asset_id`. It does not wait for the asset to be built.
 2. Save that `asset_id` in your reply and in any file you are writing. It is the
    only handle to the job.
-3. `palatial_get_asset` polls it. Generation takes minutes, not seconds.
+3. `palatial_get_asset` polls it. Runtime depends on the chosen generation mode;
+   see the mode guidance below.
 4. When status is `READY`, `palatial_download_asset` saves the export ZIP and a
    SHA-256 receipt into a directory the user chose. A later paused run can use
    an earlier export only while the server exposes its materialized `export.key`.
@@ -117,16 +118,24 @@ it is the only place dimensions can go.
 For new text/image requests, choose `mode` and put its build settings inside
 `parameters`. Read `references/parameters.md` for the allowed settings.
 
-- `mode: diffusion` is fastest and cheapest and suits organic shapes. It takes
-  one photo or 2-4 named views. `parameters.structure` chooses `single_object`,
-  `static_parts` (default), or `articulated_parts`.
-- `mode: parametric`, `effort: low` (default) suits manufactured objects and
-  moving parts. It takes 1-50 photos and authors rigid parts. Choose joints with
+- **Diffusion** (`mode: diffusion`) is the best choice for image-accurate,
+  visually convincing objects when approximate scale is acceptable. It is
+  especially good for organic objects and shapes, and gives control over
+  articulation. It takes one photo or 2-4 named views. `parameters.structure`
+  chooses `single_object`, `static_parts` (default), or `articulated_parts`.
+- **Parametric Low** (`mode: parametric`, `effort: low`, the
+  default effort for Parametric) is good for household objects and articulated
+  objects, especially simple mechanisms, with control over scale. Detailed
+  prompts specifying dimensions, parts and intended motion help guide the
+  result. It takes 1-50 photos and authors rigid parts. Choose joints with
   `parameters.articulation` and an authored face budget with `parameters.face_budget`.
-- `mode: parametric`, `effort: mad_max` researches and authors the product. It
-  chooses structure, density and appearance itself, so omit `parameters` or
-  send `{}`. It takes exactly one engine and at most 8 photos (7 with a scanned
-  GLB `reference_mesh_path`). `mode: mad_max` is accepted shorthand.
+- **Mad Max** (`mode: parametric`, `effort: mad_max`) focuses on research and
+  reconstruction at the highest quality and generally takes multiple hours to
+  complete. Choose it when that reconstruction quality is the priority and the
+  task allows the time. It chooses structure, density and appearance itself,
+  so omit `parameters` or send `{}`. It takes exactly one engine and at most
+  8 photos (7 with a scanned GLB `reference_mesh_path`). `mode: mad_max` is
+  accepted shorthand.
 
 A `video_path` works on every image route and requires empty `parameters`:
 research settles the build from the clip. MP4/MOV, at most 300 MiB and 60 seconds.
@@ -154,7 +163,7 @@ A finished asset reports how it was built as `generationAgent`: `diffusion`,
 carries the route field and its server-owned progress metadata.
 
 Use that label to select the equivalent create mode. `mad_max` corresponds to
-`mode: parametric` with `effort: mad_max`; `parametric` corresponds to Low.
+`mode: parametric` with `effort: mad_max`; `parametric` corresponds to Parametric Low.
 Read the current request rules before selecting its build settings.
 
 ## Writing the rest of the request
