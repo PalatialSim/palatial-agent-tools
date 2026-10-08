@@ -104,7 +104,7 @@ structure: articulated_parts or Parametric Low articulation: true.
 
 | Field | Values | Default | Sources | Notes |
 | --- | --- | --- | --- | --- |
-| `effort` | `low`, `mad_max` | `low` when parametric | `text`, `image` | Requires `mode: parametric` . `low` runs the parametric pipeline. `mad_max` researches the described product and authors the model; it costs more and takes longer. **Rejected for CAD.** |
+| `effort` | `low`, `mad_max` | `low` when parametric | `text`, `image` | Requires `mode: parametric`. `low` runs Parametric Low. `mad_max` focuses on research and reconstruction at the highest quality and generally takes multiple hours. See the skill's generation-mode guidance for selection criteria. **Rejected for CAD.** |
 | `product_research` | `on`, `specs_only`, `off` | `on` | `text`, `image` | How much research Mad Max or any video build does. Narrowed modes require photos or video. `on` researches the real product on the web, its pages and its product photos. `specs_only` reads the web for identity and specifications but uses no web images, so the model is built only from your images. `off` looks nothing up. Use `specs_only` or `off` when your own photos show the exact unit and web photos of similar products could mislead the build. |
 | `apply_textures` | boolean | `true` with a CAD reference image, `false` without one | `cad` | Generate textures from the reference image. `true` requires `image_path`. When it is off, there is no texture generation. |
 
