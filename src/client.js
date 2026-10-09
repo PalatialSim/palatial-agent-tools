@@ -21,7 +21,11 @@ export const reprocessSchema = z.object({
 }).strict().refine(value => !value.feedback || value.from, 'Feedback edits require a pipeline stage in from.');
 
 const flatCreateSchema = z.object({
-  source: z.enum(['text', 'image', 'cad']).describe('Input type: text prompt, one or more reference images, or a CAD mesh with an optional reference image.'),
+  source: z.enum(['text', 'image', 'cad', 'files']).describe('Input type: text prompt, one or more reference images, a CAD mesh with an optional reference image, or files: any mix of photos, 3D files and PDF datasheets, each 3D file with the purpose it serves.'),
+  files: z.array(z.object({
+    path: z.string().min(1).describe('Local path to a PNG/JPEG/WebP photo, a 3D file (GLB, glTF, OBJ, STL, PLY, FBX, STEP, IGES, USD) or a PDF datasheet.'),
+    purpose: z.enum(['exact_geometry', 'shape_reference', 'unused']).describe('3D files only. exact_geometry keeps this shape (the CAD build, at most one); shape_reference guides a Mad Max build (GLB up to 20 MiB, needs mode=mad_max); unused leaves it out. Omit to let Palatial decide: a lone 3D file, or one that can only be built as-is, is exact_geometry; a GLB sent with photos must be declared.').optional()
+  }).strict()).min(1).max(60).describe('files source only: every input in one list. The 3D-file purposes decide the build route, with the same rules as the Palatial Dashboard.').optional(),
   name: assetName.describe('Asset name, 4-50 characters: letters, digits, spaces, underscores, hyphens, and periods.'),
   description: z.string().trim().min(1).max(2000, 'Description is too long (max 2000 characters)').describe('What to build, including dimensions, materials, articulation, and intended use when known.'),
   workspace: z.string().regex(/^[a-fA-F0-9]{24}$/, 'Workspace must be a 24-character MongoDB ObjectId.').describe('All sources: optional workspace ID; omit to use the API-key workspace.').optional(),
@@ -79,7 +83,7 @@ const mcpParameters = modeCreateSchema.shape.parameters.unwrap()
 export const mcpCreateSchema = modeCreateSchema.omit({ shape_model: true, texture_model: true, body_type: true, replace_glass: true, auto_scale: true })
   .extend({ parameters: mcpParameters, collision_quality: mcpCollisionQuality, newton_solver: mcpNewtonSolver }).superRefine((p, ctx) => {
   validateMode(p, ctx);
-  if (p.source !== 'cad' && !p.mode) ctx.addIssue({ code: 'custom', path: ['mode'], message: 'Text/image MCP requests require mode: diffusion, parametric, or mad_max.' });
+  if (p.source !== 'cad' && p.source !== 'files' && !p.mode) ctx.addIssue({ code: 'custom', path: ['mode'], message: 'Text/image MCP requests require mode: diffusion, parametric, or mad_max.' });
 });
 
 // The public API does not yet accept the product's "auto" collision label.
@@ -93,6 +97,7 @@ export function mcpCreateInput(input) {
 }
 
 const DIRECT_MESH_EXTENSIONS = new Set(['.obj', '.glb', '.gltf', '.stl', '.ply', '.fbx']);
+const MODEL_EXTENSIONS = new Set(['.glb', '.gltf', '.obj', '.stl', '.ply', '.fbx', '.dae', '.3ds', '.step', '.stp', '.iges', '.igs', '.usd', '.usdz']);
 const AXIS_ONLY_CAD_EXTENSIONS = new Set(['.step', '.stp', '.iges', '.igs']);
 const SOURCE_AUTHORED_CAD_EXTENSIONS = new Set(['.usd', '.usda', '.usdc', '.usdz']);
 
@@ -104,6 +109,20 @@ export function validateCreate(input) {
   const { model, effort } = createRoute(p);
   const settings = p.parameters || p;
   const views = Object.entries(p.views || {}).filter(([, file]) => file);
+  if (p.source === 'files') {
+    if (!p.files?.length) throw new Error('source=files requires files.');
+    const perType = ['image_path', 'image_paths', 'views', 'mesh_path', 'datasheet_path', 'reference_mesh_path'].filter(field => p[field] !== undefined);
+    if (perType.length) throw new Error(`source=files takes every input in files; remove ${perType.join(', ')}.`);
+    const names = p.files.map(file => path.basename(file.path));
+    if (new Set(names).size !== names.length) throw new Error('Files in files must have distinct file names.');
+    for (const file of p.files) {
+      const ext = path.extname(file.path).toLowerCase();
+      if (file.purpose && !MODEL_EXTENSIONS.has(ext)) throw new Error(`Only 3D files take a purpose; ${path.basename(file.path)} is not one.`);
+      if (file.purpose === 'shape_reference' && ext !== '.glb') throw new Error('A shape_reference must be a GLB.');
+    }
+    return p;
+  }
+  if (p.files) throw new Error('files is accepted only with source=files.');
   if (p.source === 'text' && (p.image_path || p.image_paths || views.length || p.mesh_path || p.datasheet_path || p.video_path)) throw new Error('Text generation does not accept input files except a Mad Max reference_mesh_path.');
   if (p.video_path && p.source !== 'image') throw new Error('video_path is accepted only for image input.');
   if (p.reference_mesh_path && (p.source === 'cad' || model !== 'parametric' || effort !== 'mad_max')) throw new Error('reference_mesh_path is accepted only for text/image Mad Max.');
@@ -429,7 +448,7 @@ export class PalatialClient {
 
   async create(input) {
     const p = validateCreate(input);
-    const { source, image_path, image_paths, views, mesh_path, datasheet_path, video_path, reference_mesh_path, ...parameters } = p;
+    const { source, image_path, image_paths, views, mesh_path, datasheet_path, video_path, reference_mesh_path, files, ...parameters } = p;
     let body = parameters;
     if (source !== 'text' || reference_mesh_path) {
       body = new FormData();
@@ -444,6 +463,7 @@ export class PalatialClient {
         if (kind === 'pdf' && ext !== '.pdf') throw new Error('Datasheets must be PDF.');
         if (kind === 'video' && !['.mp4', '.mov'].includes(ext)) throw new Error('Product videos must be MP4 or MOV.');
         if (kind === 'reference_mesh' && ext !== '.glb') throw new Error('Mad Max reference meshes must be GLB.');
+        if (kind === 'any' && !['.png', '.jpg', '.jpeg', '.webp', '.pdf'].includes(ext) && !MODEL_EXTENSIONS.has(ext)) throw new Error(`${path.basename(absolute)} is not a supported input: use a PNG/JPEG/WebP photo, a 3D file, or a PDF.`);
         const info = await stat(absolute);
         const maxMiB = kind === 'video' ? 300 : 256;
         if (!info.isFile() || info.size === 0 || info.size > maxMiB * 1024 ** 2) throw new Error(`Input must be a nonempty regular file of at most ${maxMiB} MiB.`);
@@ -461,6 +481,12 @@ export class PalatialClient {
         if (datasheet_path) await addFile('datasheet', datasheet_path, 'pdf');
       }
       if (reference_mesh_path) await addFile('reference_mesh', reference_mesh_path, 'reference_mesh');
+      if (source === 'files') {
+        for (const file of files) await addFile('files', file.path, 'any');
+        if (video_path) await addFile('video', video_path, 'video');
+        const declared = files.filter(file => file.purpose).map(file => ({ name: path.basename(file.path), purpose: file.purpose }));
+        if (declared.length) body.append('inputs', JSON.stringify(declared));
+      }
     }
     // Persist intent before the network write. This is recovery evidence, not
     // backend idempotency: an ambiguous submission must never be auto-retried.
@@ -471,7 +497,7 @@ export class PalatialClient {
     await writeFile(requestReceipt, JSON.stringify(intent, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
     let result;
     try {
-      result = await this.request(`assets/create/${{ text: 'texttosim', image: 'imagetosim', cad: 'cadtosim' }[source]}`, { method: 'POST', body });
+      result = await this.request(source === 'files' ? 'assets/create' : `assets/create/${{ text: 'texttosim', image: 'imagetosim', cad: 'cadtosim' }[source]}`, { method: 'POST', body });
     } catch (error) {
       // A 4xx rejection is definitive, unlike a lost response.
       const httpStatus = error.http_status ?? error.status;

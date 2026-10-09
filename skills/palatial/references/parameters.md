@@ -53,7 +53,7 @@ a primitive collider on Diffusion/Low.
 
 | Field | Values | Default | Sources | Notes |
 | --- | --- | --- | --- | --- |
-| `source` | `text`, `image`, `cad` | required | all | Decides which file fields are legal. See the source rules below. |
+| `source` | `text`, `image`, `cad`, `files` | required | all | Decides which file fields are legal. See the source rules below. |
 | `name` | 4 to 50 characters | required | all | Letters, digits, spaces, underscores, hyphens, periods. |
 | `description` | 1 to 2000 characters | required | all | What to build, including dimensions, materials, articulation, and intended use. For `source: image` this is the only place size and orientation can be stated. |
 
@@ -76,6 +76,7 @@ a primitive collider on Diffusion/Low.
 | `reconstruct` | boolean | ignored | `image` | Legacy API field. The current Queue ignores it: one image does not trigger synthetic view generation, and supplied views are processed directly. Omit this field. The client rejects it with `mad_max` effort. |
 | `mesh_path` | path to the mesh file | none | `cad` | Required for CAD. |
 | `datasheet_path` | path to a PDF | none | `cad` | Optional specification sheet. |
+| `files` | 1 to 60 entries, each a `path` and an optional `purpose` | none | `files` | Every input in one list: PNG, JPEG or WebP photos, 3D files and PDF datasheets. `purpose` applies to 3D files only: `exact_geometry` (keep this shape; the CAD build; at most one, with up to one photo and one PDF), `shape_reference` (a GLB of at most 20 MiB guiding a Mad Max build; needs `mode: mad_max`), or `unused`. Omitted purposes follow the Dashboard rules: a lone 3D file, or one that can only be built as-is, is `exact_geometry`; a GLB with photos must be declared. `video_path` may accompany photos; PDFs need an `exact_geometry` file. File names must be distinct. |
 
 Each local input must be a nonempty regular file of at most 256 MiB (300 MiB for video). References must be
 PNG, JPEG, or WebP; datasheets must be PDF.
