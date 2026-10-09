@@ -616,11 +616,13 @@ test('a files create leaves undeclared purposes to the server and refuses mixing
   await writeFile(step, 'ISO-10303-21;');
   await client.create({ ...basic, source: 'files', files: [{ path: step }], up_direction: 'z' });
   assert.equal(bodies[0].get('inputs'), null);
+  await client.create({ ...basic, source: 'files', mode: 'mad_max', files: [{ path: step, purpose: 'shape_reference' }] });
+  assert.deepEqual(JSON.parse(bodies[1].get('inputs')), [{ name: 'frame.step', purpose: 'shape_reference' }]);
   for (const [input, message] of [
     [{ ...basic, source: 'files' }, /requires files/],
     [{ ...basic, source: 'files', files: [{ path: step }], mesh_path: step }, /remove mesh_path/],
     [{ ...basic, source: 'files', files: [{ path: '/a/photo.jpg', purpose: 'unused' }] }, /Only 3D files take a purpose/],
-    [{ ...basic, source: 'files', files: [{ path: step, purpose: 'shape_reference' }] }, /must be a GLB/],
+    [{ ...basic, source: 'files', files: [{ path: '/a/model.usd', purpose: 'shape_reference' }] }, /must be a GLB, STEP, OBJ, STL or PLY/],
     [{ ...basic, source: 'files', files: [{ path: '/a/x.glb' }, { path: '/b/x.glb' }] }, /distinct file names/],
     [{ ...basic, files: [{ path: step }] }, /only with source=files/]
   ]) assert.throws(() => validateCreate(input), message);
