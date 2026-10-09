@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — inputs with declared purposes
+
+- Add `source: files` to `palatial_create_asset`: photos, 3D files and PDF
+  datasheets in one `files` list, each 3D file with an optional `purpose`
+  (`exact_geometry`, `shape_reference` or `unused`). It posts to the API's
+  unified `POST /external/assets/create`, which chooses the route from the
+  purposes with the same rules as the Palatial Dashboard and refuses an unclear
+  purpose with `BUILD_INPUT_PURPOSE_REQUIRED`. Release this only after that
+  endpoint serves the target environment; `text`, `image` and `cad` are unchanged.
+
 ## 0.1.9 — create modes and live documentation checks
 
 - Add explicit create modes with route-specific, typed parameters. The MCP

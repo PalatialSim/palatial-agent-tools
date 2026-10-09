@@ -588,3 +588,40 @@ test('unbound or invalid job IDs do not trigger a native request and job metadat
   assert.equal(JSON.stringify(job).includes('secret=value'), false);
   assert.equal(job.automation.blocked.accessToken, '[REDACTED]');
 });
+
+test('a files create sends every input to the unified endpoint with the declared 3D purposes', async t => {
+  const calls = [];
+  const { dir, client } = await fixture(t, async (url, init) => { calls.push({ url: String(url), body: init.body }); return json({ id: 'files-asset' }, 201); });
+  const scan = path.join(dir, 'chair-scan.glb');
+  const photo = path.join(dir, 'chair-front.jpg');
+  const old = path.join(dir, 'old.glb');
+  await writeFile(scan, 'glb fixture');
+  await writeFile(photo, 'photo fixture');
+  await writeFile(old, 'glb fixture');
+  const result = await client.create({ ...basic, source: 'files', mode: 'mad_max', files: [
+    { path: scan, purpose: 'shape_reference' }, { path: photo }, { path: old, purpose: 'unused' }
+  ] });
+  assert.equal(result.asset_id, 'files-asset');
+  assert.match(calls[0].url, /assets\/create$/);
+  const body = calls[0].body;
+  assert.deepEqual(body.getAll('files').map(file => file.name), ['chair-scan.glb', 'chair-front.jpg', 'old.glb']);
+  assert.deepEqual(JSON.parse(body.get('inputs')), [{ name: 'chair-scan.glb', purpose: 'shape_reference' }, { name: 'old.glb', purpose: 'unused' }]);
+  assert.equal(body.get('mode'), 'mad_max');
+});
+
+test('a files create leaves undeclared purposes to the server and refuses mixing per-type fields', async t => {
+  const bodies = [];
+  const { dir, client } = await fixture(t, async (_url, init) => { bodies.push(init.body); return json({ id: 'files-cad' }, 201); });
+  const step = path.join(dir, 'frame.step');
+  await writeFile(step, 'ISO-10303-21;');
+  await client.create({ ...basic, source: 'files', files: [{ path: step }], up_direction: 'z' });
+  assert.equal(bodies[0].get('inputs'), null);
+  for (const [input, message] of [
+    [{ ...basic, source: 'files' }, /requires files/],
+    [{ ...basic, source: 'files', files: [{ path: step }], mesh_path: step }, /remove mesh_path/],
+    [{ ...basic, source: 'files', files: [{ path: '/a/photo.jpg', purpose: 'unused' }] }, /Only 3D files take a purpose/],
+    [{ ...basic, source: 'files', files: [{ path: step, purpose: 'shape_reference' }] }, /must be a GLB/],
+    [{ ...basic, source: 'files', files: [{ path: '/a/x.glb' }, { path: '/b/x.glb' }] }, /distinct file names/],
+    [{ ...basic, files: [{ path: step }] }, /only with source=files/]
+  ]) assert.throws(() => validateCreate(input), message);
+});

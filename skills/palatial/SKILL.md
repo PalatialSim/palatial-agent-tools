@@ -108,6 +108,14 @@ which stage it is on.
 | Several angles of one object | `image` | `views` or `image_paths`, within the route limits |
 | A product video | `image` | `video_path`, optionally with photos |
 | A CAD or mesh file | `cad` | `mesh_path`; `image_path` is optional |
+| Photos and 3D files together, or 3D files whose role you must state | `files` | `files`, each 3D file with its `purpose` when it is not obvious |
+
+With `source: files`, say what each 3D file is for: `exact_geometry` keeps its
+shape (the CAD build), `shape_reference` makes a GLB a shape guide for a Mad Max
+build, and `unused` leaves it out. A lone 3D file, or one that can only be built
+as-is, defaults to `exact_geometry`. A GLB sent with photos has no default: the
+API refuses it with `BUILD_INPUT_PURPOSE_REQUIRED` and lists the purposes each
+file may take, so ask the user rather than guessing.
 
 Put real dimensions, materials, articulation, and intended use in
 `description`. It is the single most important field, and for `source: image`

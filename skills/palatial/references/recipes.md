@@ -127,6 +127,32 @@ so this request intentionally omits `units`. Direct mesh formats such as OBJ,
 GLB, GLTF, STL, PLY, and FBX require both `units` and `up_direction`. USD-family
 files use authored stage metadata and reject both fields.
 
+## Photos and a 3D file together
+
+The user has photos of a chair and a rough GLB scan of it. Say what the scan is
+for. Here it guides a Mad Max build; `exact_geometry` would build from the scan
+as-is instead, and `unused` would build from the photos alone.
+
+```json
+{
+  "source": "files",
+  "name": "Dining chair",
+  "description": "A solid oak dining chair, 45 cm wide and 90 cm tall.",
+  "mode": "mad_max",
+  "engine": [
+    "isaac_sim"
+  ],
+  "files": [
+    { "path": "./chair-scan.glb", "purpose": "shape_reference" },
+    { "path": "./chair-front.jpg" },
+    { "path": "./chair-side.jpg" }
+  ]
+}
+```
+
+Without a `purpose` on the GLB this request is refused with
+`BUILD_INPUT_PURPOSE_REQUIRED`, which lists what the scan may be used for.
+
 ## A CAD model that is already correct
 
 The user supplied a mesh they are happy with and only wants it simulation-ready.
