@@ -111,9 +111,10 @@ which stage it is on.
 | Photos and 3D files together, or 3D files whose role you must state | `files` | `files`, each 3D file with its `purpose` when it is not obvious |
 
 With `source: files`, say what each 3D file is for: `exact_geometry` keeps its
-shape (the CAD build), `shape_reference` makes a GLB a shape guide for a Mad Max
-build, and `unused` leaves it out. A lone 3D file, or one that can only be built
-as-is, defaults to `exact_geometry`. A GLB sent with photos has no default: the
+shape (the CAD build), `shape_reference` makes a GLB, STEP, OBJ, STL or PLY file
+a shape guide for a Mad Max build, and `unused` leaves it out. A lone 3D file, or
+one that can only be built as-is, defaults to `exact_geometry`. A GLB, STEP, OBJ,
+STL or PLY file sent with photos has no default: the
 API refuses it with `BUILD_INPUT_PURPOSE_REQUIRED` and lists the purposes each
 file may take, so ask the user rather than guessing.
 

@@ -24,7 +24,7 @@ const flatCreateSchema = z.object({
   source: z.enum(['text', 'image', 'cad', 'files']).describe('Input type: text prompt, one or more reference images, a CAD mesh with an optional reference image, or files: any mix of photos, 3D files and PDF datasheets, each 3D file with the purpose it serves.'),
   files: z.array(z.object({
     path: z.string().min(1).describe('Local path to a PNG/JPEG/WebP photo, a 3D file (GLB, glTF, OBJ, STL, PLY, FBX, STEP, IGES, USD) or a PDF datasheet.'),
-    purpose: z.enum(['exact_geometry', 'shape_reference', 'unused']).describe('3D files only. exact_geometry keeps this shape (the CAD build, at most one); shape_reference guides a Mad Max build (GLB up to 20 MiB, needs mode=mad_max); unused leaves it out. Omit to let Palatial decide: a lone 3D file, or one that can only be built as-is, is exact_geometry; a GLB sent with photos must be declared.').optional()
+    purpose: z.enum(['exact_geometry', 'shape_reference', 'unused']).describe('3D files only. exact_geometry keeps this shape (the CAD build, at most one); shape_reference guides a Mad Max build (GLB, STEP, OBJ, STL or PLY up to 20 MiB; non-GLB files are converted; needs mode=mad_max); unused leaves it out. Omit to let Palatial decide: a lone 3D file, or one that can only be built as-is, is exact_geometry; a GLB, STEP, OBJ, STL or PLY file sent with photos must be declared.').optional()
   }).strict()).min(1).max(60).describe('files source only: every input in one list. The 3D-file purposes decide the build route, with the same rules as the Palatial Dashboard.').optional(),
   name: assetName.describe('Asset name, 4-50 characters: letters, digits, spaces, underscores, hyphens, and periods.'),
   description: z.string().trim().min(1).max(2000, 'Description is too long (max 2000 characters)').describe('What to build, including dimensions, materials, articulation, and intended use when known.'),
@@ -97,6 +97,7 @@ export function mcpCreateInput(input) {
 }
 
 const DIRECT_MESH_EXTENSIONS = new Set(['.obj', '.glb', '.gltf', '.stl', '.ply', '.fbx']);
+const SHAPE_REFERENCE_EXTENSIONS = new Set(['.glb', '.step', '.stp', '.obj', '.stl', '.ply']);
 const MODEL_EXTENSIONS = new Set(['.glb', '.gltf', '.obj', '.stl', '.ply', '.fbx', '.dae', '.3ds', '.step', '.stp', '.iges', '.igs', '.usd', '.usdz']);
 const AXIS_ONLY_CAD_EXTENSIONS = new Set(['.step', '.stp', '.iges', '.igs']);
 const SOURCE_AUTHORED_CAD_EXTENSIONS = new Set(['.usd', '.usda', '.usdc', '.usdz']);
@@ -118,7 +119,7 @@ export function validateCreate(input) {
     for (const file of p.files) {
       const ext = path.extname(file.path).toLowerCase();
       if (file.purpose && !MODEL_EXTENSIONS.has(ext)) throw new Error(`Only 3D files take a purpose; ${path.basename(file.path)} is not one.`);
-      if (file.purpose === 'shape_reference' && ext !== '.glb') throw new Error('A shape_reference must be a GLB.');
+      if (file.purpose === 'shape_reference' && !SHAPE_REFERENCE_EXTENSIONS.has(ext)) throw new Error('A shape_reference must be a GLB, STEP, OBJ, STL or PLY file.');
     }
     return p;
   }

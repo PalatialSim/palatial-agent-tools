@@ -9,6 +9,8 @@
   purposes with the same rules as the Palatial Dashboard and refuses an unclear
   purpose with `BUILD_INPUT_PURPOSE_REQUIRED`. Release this only after that
   endpoint serves the target environment; `text`, `image` and `cad` are unchanged.
+- A `shape_reference` may also be a STEP, OBJ, STL or PLY file; the API converts it
+  to a GLB before the Mad Max build reads it.
 
 ## 0.1.9 — create modes and live documentation checks
 
