@@ -10,7 +10,7 @@
   need generate, multipart operations, recover or retry-start.
 - Preserve stable scene request UUIDs and explicit spending authorization.
   Previously uploaded source descriptors and legacy list/recover/retry client
-  methods remain for compatibility, but are not advertised as primary MCP tools.
+  methods and cached deprecated tool calls remain compatible, while fresh MCP discovery omits them.
 - Make download version optional while retaining accepted SHA-256 version,
   ETag, byte count, package digest and cached-receipt verification.
 - Rewrite the packaged scenes guide around the four-operation flow and cover

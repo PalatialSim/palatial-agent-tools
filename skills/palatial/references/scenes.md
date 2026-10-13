@@ -28,8 +28,8 @@ The primary scene tools match the four API operations:
 `palatial_answer_scene` is optional for callers using `auto_continue: false`.
 Answer the exact current `input.expected_head`; a stale answer conflicts.
 Fault recovery and start retries belong to the service. Do not create a replacement
-scene or use a new UUID after uncertainty. List/recover/retry client methods remain
-for compatibility, but are no longer advertised as MCP tools.
+scene or use a new UUID after uncertainty. List/recover/retry client methods and cached deprecated MCP calls remain
+for compatibility, but are no longer advertised in MCP discovery.
 
 ## Example
 

@@ -298,7 +298,7 @@ and optional `answerScene` map to `POST workspaces/:workspaceId/scene-generation
 `GET scene-generations/:sceneId`, `POST .../stop`, `GET .../download` and
 `POST .../answer`. API JSON uses `autoContinue`. Download version is optional.
 Legacy `listScenes`, `recoverScene`, `retrySceneStart` and uploaded source descriptors
-remain client compatibility methods, but recovery and retries belong to the service
+remain client compatibility methods; cached deprecated MCP names also remain callable. Recovery and retries belong to the service
 and are absent from the advertised MCP tools. All routes are relative to
 `/api/v1/external/` and use the same API-key authentication as assets.
 See the [scene guide](skills/palatial/references/scenes.md) for limits and examples.

@@ -329,3 +329,33 @@ test('combined inline bytes stay bounded and remaining small files use signed up
   await client.createScene({ ...input, source_paths: filenames });
   assert.equal(uploaded, 20 * 1024 ** 2);
 });
+
+test('cached deprecated scene tool names remain callable but stay absent from every discovery', async t => {
+  const calls = [];
+  const mcp = await connect(t, api(async (url, options) => {
+    calls.push({ path: url.pathname, body: options.body ? JSON.parse(options.body) : null });
+    return response({ scene_id: sceneId, status: 'running' });
+  }));
+  const legacy = ['palatial_list_scenes', 'palatial_recover_scene', 'palatial_retry_scene_start'];
+  assert.ok(!(await mcp.listTools()).tools.some(tool => legacy.includes(tool.name)));
+  for (const [name, args] of [
+    ['palatial_list_scenes', { workspace }],
+    ['palatial_recover_scene', { scene_id: sceneId, expected_head: version }],
+    ['palatial_retry_scene_start', { scene_id: sceneId, confirm_spend: true }]
+  ]) assert.notEqual((await mcp.callTool({ name, arguments: args })).isError, true);
+  assert.equal(calls.length, 3);
+  assert.deepEqual(calls[1].body, { expected_head: version });
+  assert.deepEqual(calls[2].body, { confirm_spend: true });
+  assert.ok(!(await mcp.listTools()).tools.some(tool => legacy.includes(tool.name)));
+  assert.equal((await mcp.callTool({ name: legacy[2], arguments: { scene_id: sceneId, confirm_spend: false } })).isError, true);
+  assert.equal((await mcp.callTool({ name: legacy[1], arguments: { scene_id: sceneId, expected_head: 'invalid' } })).isError, true);
+  assert.equal(calls.length, 3);
+});
+
+test('hidden legacy recovery still reports server refusals without retrying', async t => {
+  let calls = 0;
+  const mcp = await connect(t, api(async () => { calls++; return new Response(JSON.stringify({ code: 'SCENE_HEAD_CONFLICT', message: 'Read the current scene.' }), { status: 409 }); }));
+  const result = await mcp.callTool({ name: 'palatial_recover_scene', arguments: { scene_id: sceneId, expected_head: version } });
+  assert.equal(result.isError, true); assert.match(result.content[0].text, /SCENE_HEAD_CONFLICT/);
+  assert.equal(calls, 1);
+});

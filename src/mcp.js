@@ -1,8 +1,9 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { PalatialClient, PalatialApiError, mcpCreateSchema, mcpCreateInput, reprocessSchema, assetIdSchema, DEFAULT_API_URL } from './client.js';
-import { createSceneSchema, sceneIdSchema, answerSceneSchema, downloadSceneSchema } from './scenes.js';
+import { createSceneSchema, sceneIdSchema, listScenesSchema, answerSceneSchema, recoverSceneSchema, retrySceneStartSchema, downloadSceneSchema } from './scenes.js';
 import { getApiKey } from './auth.js';
 import { VERSION } from './version.js';
 import { checkForUpdate } from './update.js';
@@ -16,6 +17,16 @@ export function createServer({ clientFactory, updateChecker = checkForUpdate, do
   const server = new McpServer({ name: 'palatial', version: VERSION }, {
     instructions: docsInstructions + 'Use Palatial when the user requests simulation-ready 3D assets from text, images, or CAD, or scenes from videos, photos or floor plans. Read palatial_guide topic=scenes before creating a scene; scene charges require explicit confirm_spend authorization and a stable request_id. Read palatial_guide before the first palatial_create_asset call of a session, and read its parameters topic before setting any create field beyond source, name, description, and engine; the create parameters have cross-field rules that reject a request. New-generation admission uses route minimums (Diffusion 20, Parametric Low 40, Mad Max 80, CAD to Sim 4 tokens); a positive balance alone is sufficient only for continuation or reprocessing when the server permits it. Charges settle only as stages complete; the estimated total is not prepaid. Low recommended balance warnings are advisory. At zero or negative balance, an already-running stage may finish and the next stage waits. A normal PROCESSING_PAUSED checkpoint (billing.paused=false, run.awaitingContinue=true) continues automatically in about a minute while the balance is above 0; a credit pause (billing.paused=true, pauseReason=insufficient_credits) needs a posted top-up before the same asset resumes. Show billing_guidance and preserve asset IDs; never retry generation, create a replacement, or start checkout automatically. Export itself is free; the server decides whether a materialized export key is available. A failed asset requires explicit user confirmation and allow_failed_export. An export is not proof of simulator acceptance. This connector contains no proprietary generation prompts.'
   });
+  // Keep deprecated tools callable for clients with cached names, while fresh
+  // discovery advertises the primary workflow. Wrap only the SDK's public list
+  // handler registration; native tools/call validation remains untouched.
+  const deprecatedSceneTools = new Set(['palatial_list_scenes', 'palatial_recover_scene', 'palatial_retry_scene_start']);
+  const registerRequestHandler = server.server.setRequestHandler.bind(server.server);
+  server.server.setRequestHandler = (schema, handler) => registerRequestHandler(schema,
+    schema === ListToolsRequestSchema ? async (...args) => {
+      const result = await handler(...args);
+      return { ...result, tools: result.tools.filter(tool => !deprecatedSceneTools.has(tool.name)) };
+    } : handler);
   const invoke = (fn, { arrayKey = 'data' } = {}) => async input => {
     try {
       const result = await fn(await client(), input);
@@ -45,6 +56,7 @@ export function createServer({ clientFactory, updateChecker = checkForUpdate, do
       return { isError: true, content: [{ type: 'text', text: error instanceof Error ? error.message : 'Palatial guide is unavailable.' }] };
     }
   });
+  server.server.setRequestHandler = registerRequestHandler;
   for (const entry of GUIDE_TOPICS) {
     server.registerResource(`palatial-guide-${entry.topic}`, `palatial://guide/${entry.topic}`, { title: entry.title, description: entry.description, mimeType: 'text/markdown' }, async uri => ({
       contents: [{ uri: uri.href, mimeType: 'text/markdown', text: (await readGuide(entry.topic)).text }]
@@ -89,6 +101,21 @@ export function createServer({ clientFactory, updateChecker = checkForUpdate, do
     inputSchema: z.object({ scene_id: sceneIdSchema }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true }
   }, invoke((c, input) => c.cancelScene(input.scene_id)));
+  server.registerTool('palatial_list_scenes', {
+    description: 'Deprecated compatibility tool. New callers track the scene ID returned by create using palatial_get_scene.',
+    inputSchema: listScenesSchema,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  }, invoke((c, input) => c.listScenes(input)));
+  server.registerTool('palatial_recover_scene', {
+    description: 'Deprecated compatibility tool. Scene recovery belongs to the service. Retains exact checkpoint validation for existing clients.',
+    inputSchema: recoverSceneSchema,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  }, invoke((c, input) => c.recoverScene(input)));
+  server.registerTool('palatial_retry_scene_start', {
+    description: 'Deprecated compatibility tool. Start recovery belongs to the service. Existing clients still require spending authorization and server proof that no native execution occurred.',
+    inputSchema: retrySceneStartSchema,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  }, invoke((c, input) => c.retrySceneStart(input)));
   server.registerTool('palatial_download_scene', {
     description: 'Download the accepted scene ZIP, optionally selecting an exact download.version to a local output_dir. Preserves existing files and writes a SHA-256 receipt. Bounded by the client download limit, 2 GiB by default. Downloads do not establish simulator acceptance and do not generate a new export.',
     inputSchema: downloadSceneSchema,
