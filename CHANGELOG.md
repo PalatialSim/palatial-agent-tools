@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — public scene lifecycle and declared input purposes
+## 0.1.10 — scene create-and-start and declared input purposes
 
 - Converge the scene MCP surface to create-and-start, status, Stop and download,
   plus optional manual answers. New creates call the shared Nest one-shot start

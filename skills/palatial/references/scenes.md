@@ -3,7 +3,9 @@
 Scene generation reconstructs a complete scene from photos, videos, floor
 plans and instructions. The public API, MCP and Dashboard use the same scene
 service, object orders, billing, question and cancellation contracts. The MCP
-requires no Dashboard Agent conversation or confirmation card.
+requires no Dashboard Agent conversation or confirmation card. Scene generation
+is currently enabled on Dev; configure `PALATIAL_API_URL` to the authorized Dev
+external API origin before starting the MCP server.
 
 ## Workflow
 
