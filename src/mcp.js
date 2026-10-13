@@ -1,4 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { PalatialClient, PalatialApiError, mcpCreateSchema, mcpCreateInput, reprocessSchema, assetIdSchema, DEFAULT_API_URL } from './client.js';
@@ -16,6 +17,16 @@ export function createServer({ clientFactory, updateChecker = checkForUpdate, do
   const server = new McpServer({ name: 'palatial', version: VERSION }, {
     instructions: docsInstructions + 'Use Palatial when the user requests simulation-ready 3D assets from text, images, or CAD, or scenes from videos, photos or floor plans. Read palatial_guide topic=scenes before creating a scene; scene charges require explicit confirm_spend authorization and a stable request_id. Read palatial_guide before the first palatial_create_asset call of a session, and read its parameters topic before setting any create field beyond source, name, description, and engine; the create parameters have cross-field rules that reject a request. New-generation admission uses route minimums (Diffusion 20, Parametric Low 40, Mad Max 80, CAD to Sim 4 tokens); a positive balance alone is sufficient only for continuation or reprocessing when the server permits it. Charges settle only as stages complete; the estimated total is not prepaid. Low recommended balance warnings are advisory. At zero or negative balance, an already-running stage may finish and the next stage waits. A normal PROCESSING_PAUSED checkpoint (billing.paused=false, run.awaitingContinue=true) continues automatically in about a minute while the balance is above 0; a credit pause (billing.paused=true, pauseReason=insufficient_credits) needs a posted top-up before the same asset resumes. Show billing_guidance and preserve asset IDs; never retry generation, create a replacement, or start checkout automatically. Export itself is free; the server decides whether a materialized export key is available. A failed asset requires explicit user confirmation and allow_failed_export. An export is not proof of simulator acceptance. This connector contains no proprietary generation prompts.'
   });
+  // Keep deprecated tools callable for clients with cached names, while fresh
+  // discovery advertises the primary workflow. Wrap only the SDK's public list
+  // handler registration; native tools/call validation remains untouched.
+  const deprecatedSceneTools = new Set(['palatial_list_scenes', 'palatial_recover_scene', 'palatial_retry_scene_start']);
+  const registerRequestHandler = server.server.setRequestHandler.bind(server.server);
+  server.server.setRequestHandler = (schema, handler) => registerRequestHandler(schema,
+    schema === ListToolsRequestSchema ? async (...args) => {
+      const result = await handler(...args);
+      return { ...result, tools: result.tools.filter(tool => !deprecatedSceneTools.has(tool.name)) };
+    } : handler);
   const invoke = (fn, { arrayKey = 'data' } = {}) => async input => {
     try {
       const result = await fn(await client(), input);
@@ -45,6 +56,7 @@ export function createServer({ clientFactory, updateChecker = checkForUpdate, do
       return { isError: true, content: [{ type: 'text', text: error instanceof Error ? error.message : 'Palatial guide is unavailable.' }] };
     }
   });
+  server.server.setRequestHandler = registerRequestHandler;
   for (const entry of GUIDE_TOPICS) {
     server.registerResource(`palatial-guide-${entry.topic}`, `palatial://guide/${entry.topic}`, { title: entry.title, description: entry.description, mimeType: 'text/markdown' }, async uri => ({
       contents: [{ uri: uri.href, mimeType: 'text/markdown', text: (await readGuide(entry.topic)).text }]
@@ -70,7 +82,7 @@ export function createServer({ clientFactory, updateChecker = checkForUpdate, do
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
   }, invoke((c, input) => c.create(mcpCreateInput(input))));
   server.registerTool('palatial_create_scene', {
-    description: 'Create and start a scene from local videos, photos or floor plans and instructions, without an Agent conversation or confirmation card. Read palatial_guide topic=scenes first. Requires explicit user spending authorization in confirm_spend=true and a stable UUID request_id. Creates a draft, uploads named files, then starts the shared scene director and object orders. An identical replay after start returns the existing scene; changed inputs conflict. Preserve request_id and scene_id after uncertainty; never retry with a new UUID. Poll palatial_get_scene for progress, object states, director/object cost and questions. mock_mad_max is Dev-only fixture object modeling; director charges still apply.',
+    description: 'Create and start a scene from local videos, photos or floor plans and instructions, without an Agent conversation or confirmation card. Read palatial_guide topic=scenes first. Requires explicit user spending authorization in confirm_spend=true and a stable UUID request_id. Uses one create-and-start request for HTTPS URLs or named local files. Large local files use the returned signed upload flow; completion starts automatically. Set auto_continue=true to continue checkpoints and continuation questions automatically. An identical replay after start returns the existing scene; changed inputs conflict. Preserve request_id and scene_id after uncertainty; never retry with a new UUID. Poll palatial_get_scene for progress, object states, director/object cost and questions. mock_mad_max is Dev-only fixture object modeling; director charges still apply.',
     inputSchema: createSceneSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   }, invoke((c, input) => c.createScene(input)));
@@ -79,11 +91,6 @@ export function createServer({ clientFactory, updateChecker = checkForUpdate, do
     inputSchema: z.object({ scene_id: sceneIdSchema }).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   }, invoke((c, input) => c.getScene(input.scene_id)));
-  server.registerTool('palatial_list_scenes', {
-    description: 'List scenes in an API-key-authorized workspace. Continue pagination with next_cursor as before.',
-    inputSchema: listScenesSchema,
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
-  }, invoke((c, input) => c.listScenes(input)));
   server.registerTool('palatial_answer_scene', {
     description: 'Answer a needs_input scene question with instruction and the exact expected_head from its current input. A stale answer conflicts; reread before answering. Continuing may incur the already-authorized scene charges. Do not regenerate the scene to answer.',
     inputSchema: answerSceneSchema,
@@ -94,18 +101,23 @@ export function createServer({ clientFactory, updateChecker = checkForUpdate, do
     inputSchema: z.object({ scene_id: sceneIdSchema }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true }
   }, invoke((c, input) => c.cancelScene(input.scene_id)));
+  server.registerTool('palatial_list_scenes', {
+    description: 'Deprecated compatibility tool. New callers track the scene ID returned by create using palatial_get_scene.',
+    inputSchema: listScenesSchema,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  }, invoke((c, input) => c.listScenes(input)));
   server.registerTool('palatial_recover_scene', {
-    description: 'Explicitly recover an existing scene native checkpoint using its exact expected_head, when the user asks to recover and the server proves the checkpoint is recoverable. May continue already-authorized scene charges. Read current actions and input.expected_head first; recovery input may have a null question. If the head is absent, report recovery unavailable rather than guessing. Failed status alone is not proof. Refusal requires inspecting the reported state, never creating a replacement automatically.',
+    description: 'Deprecated compatibility tool. Scene recovery belongs to the service. Retains exact checkpoint validation for existing clients.',
     inputSchema: recoverSceneSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   }, invoke((c, input) => c.recoverScene(input)));
   server.registerTool('palatial_retry_scene_start', {
-    description: 'Retry the frozen confirmed scene start with explicit user authorization and confirm_spend=true. The server must prove that no native execution occurred before it permits retry; failed status alone does not make retry safe. Preserves the same scene, inputs and billing contract. Read the current actions first and report any gate refusal; do not replace the scene automatically.',
+    description: 'Deprecated compatibility tool. Start recovery belongs to the service. Existing clients still require spending authorization and server proof that no native execution occurred.',
     inputSchema: retrySceneStartSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   }, invoke((c, input) => c.retrySceneStart(input)));
   server.registerTool('palatial_download_scene', {
-    description: 'Download a scene ZIP for the exact accepted download.version to a local output_dir. Preserves existing files and writes a SHA-256 receipt. Bounded by the client download limit, 2 GiB by default. Downloads do not establish simulator acceptance and do not generate a new export.',
+    description: 'Download the accepted scene ZIP, optionally selecting an exact download.version to a local output_dir. Preserves existing files and writes a SHA-256 receipt. Bounded by the client download limit, 2 GiB by default. Downloads do not establish simulator acceptance and do not generate a new export.',
     inputSchema: downloadSceneSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   }, invoke((c, input) => c.downloadScene(input)));
