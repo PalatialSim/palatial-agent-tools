@@ -5,6 +5,7 @@ import { mkdir, open, readFile, stat, unlink, writeFile } from 'node:fs/promises
 import path from 'node:path';
 import { z } from 'zod';
 import { createRoute, modeFields, validateMode } from './create-modes.js';
+import { createScene, getScene, listScenes, answerScene, cancelScene, recoverScene, retrySceneStart, downloadScene } from './scenes.js';
 
 export const DEFAULT_API_URL = 'https://dashboard.palatial.cloud/api/v1/external/';
 const engine = z.enum(['isaac_sim', 'mujoco', 'newton']);
@@ -394,14 +395,15 @@ export class PalatialClient {
     this.receiptDir = receiptDir;
   }
 
-  async request(route, { method = 'GET', body, raw = false } = {}) {
+  async request(route, { method = 'GET', body, binaryBody, raw = false } = {}) {
     const url = new URL(route, this.base);
     if (url.origin !== this.base.origin || !url.pathname.startsWith(this.base.pathname)) throw new Error('Request is outside the configured API.');
     const headers = { 'x-api-key': this.apiKey, Accept: 'application/json' };
-    if (body && !(body instanceof FormData)) headers['Content-Type'] = 'application/json';
+    if (binaryBody !== undefined) { headers['Content-Type'] = 'application/octet-stream'; headers['Content-Length'] = String(binaryBody.byteLength); }
+    else if (body && !(body instanceof FormData)) headers['Content-Type'] = 'application/json';
     let response;
     try {
-      response = await this.fetch(url, { method, headers, body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined, redirect: raw ? 'manual' : 'error', signal: AbortSignal.timeout(this.timeoutMs) });
+      response = await this.fetch(url, { method, headers, body: binaryBody !== undefined ? binaryBody : body instanceof FormData ? body : body ? JSON.stringify(body) : undefined, redirect: raw ? 'manual' : 'error', signal: AbortSignal.timeout(this.timeoutMs) });
     } catch (error) {
       const uncertain = method !== 'GET' ? ' The server may have accepted the request. Check your workspace before submitting again; this client does not retry mutations.' : '';
       throw new Error(safeMessage(error, this.apiKey) + uncertain);
@@ -440,6 +442,15 @@ export class PalatialClient {
     if (raw) return response;
     try { return sanitizeBillingFields(await response.json(), this.apiKey); } catch { throw new Error('Palatial returned an invalid JSON response. For a create request, inspect your workspace before submitting again.'); }
   }
+
+  createScene(input) { return createScene(this, input); }
+  getScene(sceneId) { return getScene(this, sceneId); }
+  listScenes(input) { return listScenes(this, input); }
+  answerScene(input) { return answerScene(this, input); }
+  cancelScene(sceneId) { return cancelScene(this, sceneId); }
+  recoverScene(input) { return recoverScene(this, input); }
+  retrySceneStart(input) { return retrySceneStart(this, input); }
+  downloadScene(input) { return downloadScene(this, input); }
 
   async doctor() {
     const workspaces = await this.request('workspaces');

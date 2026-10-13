@@ -15,6 +15,7 @@ export const GUIDE_TOPICS = [
   { topic: 'overview', file: 'SKILL.md', title: 'Palatial asset generation', description: 'Workflow, credit rules, and how to choose a source and generation mode.' },
   { topic: 'parameters', file: 'references/parameters.md', title: 'palatial_create_asset parameters', description: 'Every create parameter, its default, the sources that accept it, and the rules that reject a request.' },
   { topic: 'recipes', file: 'references/recipes.md', title: 'Worked requests', description: 'A complete create request for text, single image, multiview, parametric, and CAD.' },
+  { topic: 'scenes', file: 'references/scenes.md', title: 'Scene generation', description: 'Create, track, answer questions, stop and download scenes through the public API.' },
   { topic: 'troubleshooting', file: 'references/troubleshooting.md', title: 'When something goes wrong', description: 'Failed, canceled, and paused jobs, partial exports, variant versus reprocess, and auth errors.' }
 ];
 

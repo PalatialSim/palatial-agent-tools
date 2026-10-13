@@ -1,6 +1,6 @@
 ---
 name: palatial
-description: Generate simulation-ready 3D assets from text, images, or CAD with the Palatial MCP tools, and choose the right palatial_create_asset parameters. Use when a task needs a 3D asset for Isaac Sim, MuJoCo, or Newton, or when creating, tracking, reprocessing, or downloading a Palatial asset.
+description: Generate simulation-ready 3D assets from text, images, or CAD with the Palatial MCP tools, and choose the right palatial_create_asset parameters. Use when a task needs a 3D asset for Isaac Sim, MuJoCo, or Newton, or when creating, tracking, reprocessing, or downloading a Palatial asset or scene from video, photos or a floor plan.
 ---
 
 # Palatial asset generation
@@ -196,3 +196,11 @@ partial exports, and the difference between reprocessing and creating a variant.
 Give the user the asset ID, the current status, and where any downloaded file
 landed. If you set any parameter beyond name, description, and engine, say
 which and why. State plainly what you did not verify.
+
+## Scenes
+
+For a complete scene reconstructed from videos, photos or a floor plan, read
+`palatial_guide` with `topic: scenes` before calling `palatial_create_scene`.
+Use the scene tools to track object orders, answer questions, stop work and
+download the accepted scene package. The scene ID also opens the same scene
+in the Dashboard Viewer.

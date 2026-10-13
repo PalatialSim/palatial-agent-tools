@@ -242,7 +242,7 @@ test('the CLI prints the guidance as readable Markdown, with no key and no API c
 test('an unusable guide topic fails loudly and names the topics that exist', () => {
   const result = cli('guide', '--topic', 'everything');
   assert.equal(result.status, 1);
-  assert.match(JSON.parse(result.stderr).error, /overview, parameters, recipes, troubleshooting/);
+  assert.match(JSON.parse(result.stderr).error, /overview, parameters, recipes, scenes, troubleshooting/);
 });
 
 test('help lists the guide command and every topic it accepts', () => {

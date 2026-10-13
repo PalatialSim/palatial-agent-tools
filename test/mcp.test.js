@@ -18,7 +18,7 @@ test('real MCP protocol lists tools and calls the shared client without a model'
   await server.connect(a); await client.connect(b);
   t.after(async () => { await client.close(); await server.close(); });
   const list = await client.listTools();
-  assert.equal(list.tools.length, 13);
+  assert.equal(list.tools.length, 21);
   assert.equal(list.tools.find(x => x.name === 'palatial_download_asset').annotations.readOnlyHint, false);
   const result = await client.callTool({ name: 'palatial_get_asset', arguments: { asset_id: 'asset-test' } });
   assert.equal(result.structuredContent.asset_id, 'asset-test');
@@ -129,7 +129,7 @@ test('guidance reaches any client as a tool, and as resources where they are sup
   const tool = (await client.listTools()).tools.find(item => item.name === 'palatial_guide');
   assert.equal(tool.annotations.readOnlyHint, true);
   assert.match(tool.description, /parameters/);
-  assert.deepEqual(tool.inputSchema.properties.topic.enum, ['overview', 'parameters', 'recipes', 'troubleshooting']);
+  assert.deepEqual(tool.inputSchema.properties.topic.enum, ['overview', 'parameters', 'recipes', 'scenes', 'troubleshooting']);
 
   // Guidance must arrive without arguments: a model that ignores the topic
   // still has to land on the workflow rather than on an error.
@@ -147,7 +147,7 @@ test('guidance reaches any client as a tool, and as resources where they are sup
   assert.equal(unknown.isError, true);
 
   const resources = (await client.listResources()).resources;
-  assert.deepEqual(resources.map(item => item.uri).sort(), ['palatial://guide/overview', 'palatial://guide/parameters', 'palatial://guide/recipes', 'palatial://guide/troubleshooting']);
+  assert.deepEqual(resources.map(item => item.uri).sort(), ['palatial://guide/overview', 'palatial://guide/parameters', 'palatial://guide/recipes', 'palatial://guide/scenes', 'palatial://guide/troubleshooting']);
   const read = await client.readResource({ uri: 'palatial://guide/troubleshooting' });
   assert.equal(read.contents[0].mimeType, 'text/markdown');
   assert.match(read.contents[0].text, /PROCESSING_FAILED/);
@@ -174,7 +174,7 @@ test('packaged CLI speaks stdio MCP and lists tools without authentication', asy
   const client = new Client({ name: 'stdio-test', version: '1.0' });
   await client.connect(transport);
   t.after(() => client.close());
-  assert.equal((await client.listTools()).tools.length, 13);
+  assert.equal((await client.listTools()).tools.length, 21);
   const result = await client.callTool({ name: 'palatial_doctor', arguments: {} });
   assert.equal(result.isError, true);
   assert.match(result.content[0].text, /not authenticated/);
