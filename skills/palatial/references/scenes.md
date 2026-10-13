@@ -92,7 +92,7 @@ contain only letters, digits, periods, underscores or hyphens. A floor plan
 names an input filename exactly. The provider validates media content.
 
 The client validates all local files before creating anything. Small files use
-inline upload in the create-and-start request. Files above 32 MiB obtain signed
+inline upload in the create-and-start request. Files above the combined 32 MiB inline budget obtain signed
 storage upload instructions from that request; the client streams the files without
 sending the API key to storage. The service automatically starts when the uploaded
 bytes and checksum are verified. No caller-side generate or multipart operation is

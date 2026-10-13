@@ -144,9 +144,11 @@ export async function createScene(client, input) {
   const files = [];
   for (const filename of p.source_paths || []) files.push(await inspectSource(filename));
   const sources = [...(p.sources || [])];
+  let inlineBytes = 0;
   for (const file of files) {
     const source = { filename: file.filename, media_type: file.mediaType, bytes: file.bytes, sha256: file.sha256 };
-    if (file.bytes <= inlineLimit) {
+    if (inlineBytes + file.bytes <= inlineLimit) {
+      inlineBytes += file.bytes;
       const bytes = await readFile(file.path);
       if (bytes.length !== file.bytes || createHash('sha256').update(bytes).digest('hex') !== file.sha256) throw new Error('Scene source changed before upload.');
       source.base64 = bytes.toString('base64');
@@ -160,7 +162,7 @@ export async function createScene(client, input) {
   const sceneId = sceneIdSchema.parse(state.scene_id);
   try {
     for (const upload of state.uploads || []) {
-      const file = files.find(file => file.filename === upload.filename && file.bytes > inlineLimit);
+      const file = files.find(file => file.filename === upload.filename && !sources.find(source => source.filename === file.filename)?.base64);
       if (!file || upload.method !== 'PUT' || !upload.url || new URL(upload.url).protocol !== 'https:' || upload.headers?.['Content-Type'] !== file.mediaType) throw new Error('Invalid scene upload instructions.');
       // Signed storage transfers never carry the API key or follow redirects.
       if (await fileDigest(file.path) !== file.sha256) throw new Error('Scene source changed before upload.');

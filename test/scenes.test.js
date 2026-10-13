@@ -305,3 +305,27 @@ test('signed upload failure preserves identity without retries or leaking storag
   });
   assert.equal(requests, 2);
 });
+
+test('combined inline bytes stay bounded and remaining small files use signed uploads', async t => {
+  const directory = await temporary(t);
+  const filenames = [path.join(directory, 'one.mp4'), path.join(directory, 'two.mp4')];
+  for (const filename of filenames) {
+    const file = await import('node:fs/promises').then(fs => fs.open(filename, 'w'));
+    await file.truncate(20 * 1024 ** 2); await file.close();
+  }
+  let uploaded = 0;
+  const client = api(async (url, options) => {
+    if (new URL(url).pathname.endsWith('/start')) {
+      const sources = JSON.parse(options.body).sources;
+      assert.ok(sources[0].base64); assert.equal(sources[1].base64, undefined);
+      return response({ scene_id: sceneId, uploads: [{ filename: 'two.mp4', method: 'PUT', url: 'https://storage.example/two', headers: { 'Content-Type': 'video/mp4' } }] });
+    }
+    if (new URL(url).host === 'storage.example') {
+      for await (const chunk of options.body) uploaded += chunk.length;
+      return new Response(null, { status: 200 });
+    }
+    return response({ scene_id: sceneId, status: 'running' });
+  });
+  await client.createScene({ ...input, source_paths: filenames });
+  assert.equal(uploaded, 20 * 1024 ** 2);
+});
