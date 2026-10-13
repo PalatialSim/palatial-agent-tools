@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { PalatialClient, PalatialApiError, mcpCreateSchema, mcpCreateInput, reprocessSchema, assetIdSchema, DEFAULT_API_URL } from './client.js';
+import { createSceneSchema, sceneIdSchema, listScenesSchema, answerSceneSchema, recoverSceneSchema, retrySceneStartSchema, downloadSceneSchema } from './scenes.js';
 import { getApiKey } from './auth.js';
 import { VERSION } from './version.js';
 import { checkForUpdate } from './update.js';
@@ -13,7 +14,7 @@ export function createServer({ clientFactory, updateChecker = checkForUpdate, do
   const docsInstructions = `Live reference: ${API_DOCS_URL}. Startup documentation check: ${startupDocs.status}; ${startupDocs.changed_pages?.length || 0} changed pages. Call palatial_check_docs to inspect startup changes and refresh the live site. Read changed pages before using affected options, and report mismatches with the installed schema. For new text/image creates, prefer mode=diffusion or mode=parametric with effort=low/mad_max and route-specific parameters; Mad Max and every video build take no build parameters. `;
   const client = clientFactory || (async () => new PalatialClient({ apiKey: await getApiKey(), baseUrl: process.env.PALATIAL_API_URL || DEFAULT_API_URL }));
   const server = new McpServer({ name: 'palatial', version: VERSION }, {
-    instructions: docsInstructions + 'Use Palatial when the user requests simulation-ready 3D assets from text, images, or CAD. Read palatial_guide before the first palatial_create_asset call of a session, and read its parameters topic before setting any create field beyond source, name, description, and engine; the create parameters have cross-field rules that reject a request. New-generation admission uses route minimums (Diffusion 20, Parametric Low 40, Mad Max 80, CAD to Sim 4 tokens); a positive balance alone is sufficient only for continuation or reprocessing when the server permits it. Charges settle only as stages complete; the estimated total is not prepaid. Low recommended balance warnings are advisory. At zero or negative balance, an already-running stage may finish and the next stage waits. A normal PROCESSING_PAUSED checkpoint (billing.paused=false, run.awaitingContinue=true) continues automatically in about a minute while the balance is above 0; a credit pause (billing.paused=true, pauseReason=insufficient_credits) needs a posted top-up before the same asset resumes. Show billing_guidance and preserve asset IDs; never retry generation, create a replacement, or start checkout automatically. Export itself is free; the server decides whether a materialized export key is available. A failed asset requires explicit user confirmation and allow_failed_export. An export is not proof of simulator acceptance. This connector contains no proprietary generation prompts.'
+    instructions: docsInstructions + 'Use Palatial when the user requests simulation-ready 3D assets from text, images, or CAD, or scenes from videos, photos or floor plans. Read palatial_guide topic=scenes before creating a scene; scene charges require explicit confirm_spend authorization and a stable request_id. Read palatial_guide before the first palatial_create_asset call of a session, and read its parameters topic before setting any create field beyond source, name, description, and engine; the create parameters have cross-field rules that reject a request. New-generation admission uses route minimums (Diffusion 20, Parametric Low 40, Mad Max 80, CAD to Sim 4 tokens); a positive balance alone is sufficient only for continuation or reprocessing when the server permits it. Charges settle only as stages complete; the estimated total is not prepaid. Low recommended balance warnings are advisory. At zero or negative balance, an already-running stage may finish and the next stage waits. A normal PROCESSING_PAUSED checkpoint (billing.paused=false, run.awaitingContinue=true) continues automatically in about a minute while the balance is above 0; a credit pause (billing.paused=true, pauseReason=insufficient_credits) needs a posted top-up before the same asset resumes. Show billing_guidance and preserve asset IDs; never retry generation, create a replacement, or start checkout automatically. Export itself is free; the server decides whether a materialized export key is available. A failed asset requires explicit user confirmation and allow_failed_export. An export is not proof of simulator acceptance. This connector contains no proprietary generation prompts.'
   });
   const invoke = (fn, { arrayKey = 'data' } = {}) => async input => {
     try {
@@ -68,6 +69,46 @@ export function createServer({ clientFactory, updateChecker = checkForUpdate, do
     inputSchema: mcpCreateSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
   }, invoke((c, input) => c.create(mcpCreateInput(input))));
+  server.registerTool('palatial_create_scene', {
+    description: 'Create and start a scene from local videos, photos or floor plans and instructions, without an Agent conversation or confirmation card. Read palatial_guide topic=scenes first. Requires explicit user spending authorization in confirm_spend=true and a stable UUID request_id. Creates a draft, uploads named files, then starts the shared scene director and object orders. An identical replay after start returns the existing scene; changed inputs conflict. Preserve request_id and scene_id after uncertainty; never retry with a new UUID. Poll palatial_get_scene for progress, object states, director/object cost and questions. mock_mad_max is Dev-only fixture object modeling; director charges still apply.',
+    inputSchema: createSceneSchema,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  }, invoke((c, input) => c.createScene(input)));
+  server.registerTool('palatial_get_scene', {
+    description: 'Read scene status, outcome, per-object states, director and object costs, token charges, pending input, available actions and accepted download version. Unknown or incomplete costs are not zero. A needs_input question must be answered with its exact input.expected_head. Reads never resume or regenerate a scene.',
+    inputSchema: z.object({ scene_id: sceneIdSchema }).strict(),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  }, invoke((c, input) => c.getScene(input.scene_id)));
+  server.registerTool('palatial_list_scenes', {
+    description: 'List scenes in an API-key-authorized workspace. Continue pagination with next_cursor as before.',
+    inputSchema: listScenesSchema,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  }, invoke((c, input) => c.listScenes(input)));
+  server.registerTool('palatial_answer_scene', {
+    description: 'Answer a needs_input scene question with instruction and the exact expected_head from its current input. A stale answer conflicts; reread before answering. Continuing may incur the already-authorized scene charges. Do not regenerate the scene to answer.',
+    inputSchema: answerSceneSchema,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  }, invoke((c, input) => c.answerScene(input)));
+  server.registerTool('palatial_cancel_scene', {
+    description: 'Stop the scene director and its object builds. Idempotent; repeated calls use the same scene. Inspect cancellation for partial failures or unconfirmed object operations and report them; a stop request does not prove every object was canceled. Completed work remains charged.',
+    inputSchema: z.object({ scene_id: sceneIdSchema }).strict(),
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true }
+  }, invoke((c, input) => c.cancelScene(input.scene_id)));
+  server.registerTool('palatial_recover_scene', {
+    description: 'Explicitly recover an existing scene native checkpoint using its exact expected_head, when the user asks to recover and the server proves the checkpoint is recoverable. May continue already-authorized scene charges. Read current actions and input.expected_head first; recovery input may have a null question. If the head is absent, report recovery unavailable rather than guessing. Failed status alone is not proof. Refusal requires inspecting the reported state, never creating a replacement automatically.',
+    inputSchema: recoverSceneSchema,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  }, invoke((c, input) => c.recoverScene(input)));
+  server.registerTool('palatial_retry_scene_start', {
+    description: 'Retry the frozen confirmed scene start with explicit user authorization and confirm_spend=true. The server must prove that no native execution occurred before it permits retry; failed status alone does not make retry safe. Preserves the same scene, inputs and billing contract. Read the current actions first and report any gate refusal; do not replace the scene automatically.',
+    inputSchema: retrySceneStartSchema,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  }, invoke((c, input) => c.retrySceneStart(input)));
+  server.registerTool('palatial_download_scene', {
+    description: 'Download a scene ZIP for the exact accepted download.version to a local output_dir. Preserves existing files and writes a SHA-256 receipt. Bounded by the client download limit, 2 GiB by default. Downloads do not establish simulator acceptance and do not generate a new export.',
+    inputSchema: downloadSceneSchema,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  }, invoke((c, input) => c.downloadScene(input)));
   server.registerTool('palatial_get_asset', {
     description: 'Check an existing Palatial asset by its ID. INIT also reads its bound research/build job; generation_job can report a failure or question while the asset remains INIT. Keep native job, asset and Queue status distinct. READY means outputs are available. A normal PROCESSING_PAUSED checkpoint between stages (billing.paused=false, run.awaitingContinue=true) continues automatically in about a minute while the balance is above 0; keep polling the same asset and do not reprocess or create. For a credit pause, report billing_guidance: a posted top-up must make the shared net balance positive, then processing resumes on the same asset. Running stages can finish at a nonpositive balance. For PROCESSING_FAILED, inspect failure_guidance and ask before requesting a partial export; only successfully completed stages are charged. Do not automatically regenerate or export.',
     inputSchema: z.object({ asset_id: assetIdSchema }).strict(),

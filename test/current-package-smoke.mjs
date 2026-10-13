@@ -33,11 +33,14 @@ try {
   const client = new Client({ name: 'current-package-smoke', version: '1.0' });
   await client.connect(transport);
   try {
-    assert.equal((await client.listTools()).tools.length, 13);
+    assert.equal((await client.listTools()).tools.length, 21);
     const result = await client.callTool({ name: 'palatial_guide', arguments: { topic: 'parameters' } });
     assert.match(result.content[0].text, /collision_quality/);
     const resource = await client.readResource({ uri: 'palatial://guide/parameters' });
     assert.match(resource.contents[0].text, /shape_model/);
+    const scenes = await client.callTool({ name: 'palatial_guide', arguments: { topic: 'scenes' } });
+    assert.match(scenes.content[0].text, /palatial_create_scene/);
+    assert.match(scenes.content[0].text, /confirm_spend/);
   } finally {
     await client.close();
   }

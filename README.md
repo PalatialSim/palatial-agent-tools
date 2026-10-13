@@ -278,3 +278,28 @@ check the latest GitHub Release and print the installation command. Use
 `palatial-agent update --apply` for an explicit global update. Restart Codex or
 Claude Code after updating; an existing MCP process keeps running its previous
 version until restarted. See [CHANGELOG.md](CHANGELOG.md) for release notes.
+
+### Scene generation
+
+Read `palatial_guide` with `topic: scenes` before reconstructing a scene from
+videos, photos or floor plans. `palatial_create_scene` requires the workspace,
+a stable UUID `request_id`, instructions and explicit `confirm_spend: true`.
+It uploads only named local files and starts the shared Dashboard scene service.
+Use `palatial_get_scene` and `palatial_list_scenes` for progress, object states,
+cost and pending questions; `palatial_answer_scene` answers the current question
+with its exact head; `palatial_cancel_scene` reports cancellation, including
+partial failures. `palatial_recover_scene` recovers an existing checkpoint;
+`palatial_retry_scene_start` requires server proof that no native execution
+occurred. `palatial_download_scene` downloads the accepted version and
+writes a SHA-256 receipt. See the [scene guide](skills/palatial/references/scenes.md)
+for limits, simulator intent, spending and recovery rules.
+
+The API client exposes the equivalent `createScene`, `getScene`, `listScenes`,
+`answerScene`, `cancelScene`, `recoverScene`, `retrySceneStart` and
+`downloadScene` methods. Scene creation uses
+`POST workspaces/:workspaceId/scene-generations`, source uploads and
+`POST scene-generations/:sceneId/generate`; subsequent operations use
+`GET scene-generations/:sceneId`, `POST .../answer`, `POST .../stop` and
+`POST .../recover`, `POST .../retry-start` and
+`GET .../download?version=sha256:...`. All routes are relative to the configured
+`/api/v1/external/` base and use the same `x-api-key` authentication as assets.
