@@ -26,7 +26,7 @@ export const sceneSourceSchema = z.object({
   key: z.string().min(1).max(1024), filename: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/), mediaType: z.string().min(1).max(128),
   sha256: z.string().regex(/^[a-f0-9]{64}$/), bytes: z.number().int().positive().max(1_000_000_000)
 }).strict();
-export const createSceneSchema = z.object({
+export const legacyCreateSceneSchema = z.object({
   workspace: sceneIdSchema.describe('Workspace ID authorized by the configured API key.'),
   request_id: z.string().uuid().describe('Stable UUID for this scene. Preserve it across uncertain outcomes; do not generate a replacement UUID to retry.'),
   description: z.string().trim().min(1).max(4000).describe('Scene reconstruction instructions, dimensions and intended use, up to 4000 characters.'),
@@ -41,11 +41,20 @@ export const createSceneSchema = z.object({
   if (new Set(names).size !== names.length) ctx.addIssue({ code: 'custom', message: 'Scene sources must have distinct filenames.' });
   if (input.floor_plan && !names.includes(input.floor_plan)) ctx.addIssue({ code: 'custom', path: ['floor_plan'], message: 'floor_plan must name one of the scene sources.' });
 });
+const startSourceSchema = z.object({
+  filename: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/),
+  media_type: z.enum(['image/png', 'image/jpeg', 'image/webp', 'application/pdf', 'video/mp4', 'video/quicktime', 'video/webm']),
+  url: z.url().refine(value => new URL(value).protocol === 'https:', 'Source URL must use HTTPS.')
+}).strict();
+export const createSceneSchema = legacyCreateSceneSchema.safeExtend({
+  sources: z.array(z.union([startSourceSchema, sceneSourceSchema])).max(32).describe('HTTPS source URLs with filename and media_type. Previously uploaded descriptors are deprecated.').optional(),
+  auto_continue: z.boolean().default(false).describe('Automatically continue checkpoints and continuation questions with the original instructions. Defaults to false.')
+});
 export const listScenesSchema = z.object({ workspace: sceneIdSchema, limit: z.number().int().min(1).max(100).optional(), before: sceneIdSchema.describe('Pagination cursor returned as next_cursor.').optional() }).strict();
 export const answerSceneSchema = z.object({ scene_id: sceneIdSchema, expected_head: sceneDigestSchema.describe('Exact input.expected_head from the latest scene read; prevents answering a stale question.'), instruction: z.string().trim().min(1).max(4000).describe('Answer or clarification for the current scene question, up to 4000 characters.') }).strict();
 export const recoverSceneSchema = z.object({ scene_id: sceneIdSchema, expected_head: sceneDigestSchema.describe('Exact input.expected_head from the current scene report, including a recovery checkpoint with no question; the server validates recoverability.') }).strict();
 export const retrySceneStartSchema = z.object({ scene_id: sceneIdSchema, confirm_spend: z.literal(true).describe('Explicit spending authorization for retrying the frozen confirmed start; the server must prove no native execution occurred.') }).strict();
-export const downloadSceneSchema = z.object({ scene_id: sceneIdSchema, output_dir: z.string().min(1), version: sceneDigestSchema.describe('Exact download.version from the scene read. Downloads only an accepted delivery receipt.') }).strict();
+export const downloadSceneSchema = z.object({ scene_id: sceneIdSchema, output_dir: z.string().min(1), version: sceneDigestSchema.describe('Optional exact download.version. Omit to download the current accepted package.').optional() }).strict();
 
 const sourceTypes = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm' };
 const inlineLimit = 32 * 1024 ** 2;
@@ -98,8 +107,8 @@ async function uploadSource(client, sceneId, source, requestId) {
   } finally { await file.close(); }
 }
 
-export async function createScene(client, input) {
-  const p = createSceneSchema.parse(input);
+export async function createSceneLegacy(client, input) {
+  const p = legacyCreateSceneSchema.parse(input);
   // Validate every local source before creating a server-side draft.
   const files = [];
   for (const filename of p.source_paths || []) files.push(await inspectSource(filename));
@@ -124,6 +133,49 @@ export async function createScene(client, input) {
     throw error;
   }
 }
+export async function createScene(client, input) {
+  const p = createSceneSchema.parse(input);
+  // Old owned-source request files retain their original compatibility path.
+  if (p.sources?.some(source => 'key' in source)) {
+    if (p.auto_continue || p.sources.some(source => !('key' in source))) throw new Error('Deprecated owned sources cannot be combined with URLs or auto_continue. Use source_paths or URL sources.');
+    const { auto_continue, ...legacy } = p;
+    return createSceneLegacy(client, legacy);
+  }
+  const files = [];
+  for (const filename of p.source_paths || []) files.push(await inspectSource(filename));
+  const sources = [...(p.sources || [])];
+  for (const file of files) {
+    const source = { filename: file.filename, media_type: file.mediaType, bytes: file.bytes, sha256: file.sha256 };
+    if (file.bytes <= inlineLimit) {
+      const bytes = await readFile(file.path);
+      if (bytes.length !== file.bytes || createHash('sha256').update(bytes).digest('hex') !== file.sha256) throw new Error('Scene source changed before upload.');
+      source.base64 = bytes.toString('base64');
+    }
+    sources.push(source);
+  }
+  const state = await client.request(`workspaces/${p.workspace}/scene-generations/start`, { method: 'POST', body: {
+    request_id: p.request_id, description: p.description, sources, autoContinue: p.auto_continue,
+    confirm_spend: p.confirm_spend, ...(p.floor_plan ? { floor_plan: p.floor_plan } : {}), ...(p.options ? { options: p.options } : {})
+  } });
+  const sceneId = sceneIdSchema.parse(state.scene_id);
+  try {
+    for (const upload of state.uploads || []) {
+      const file = files.find(file => file.filename === upload.filename && file.bytes > inlineLimit);
+      if (!file || upload.method !== 'PUT' || !upload.url || new URL(upload.url).protocol !== 'https:' || upload.headers?.['Content-Type'] !== file.mediaType) throw new Error('Invalid scene upload instructions.');
+      // Signed storage transfers never carry the API key or follow redirects.
+      if (await fileDigest(file.path) !== file.sha256) throw new Error('Scene source changed before upload.');
+      const stream = createReadStream(file.path);
+      try {
+        const result = await client.fetch(upload.url, { method: 'PUT', headers: { 'Content-Type': file.mediaType, 'Content-Length': String(file.bytes) }, body: stream, duplex: 'half', redirect: 'error', signal: AbortSignal.timeout(120000) });
+        if (!result.ok) throw new Error(`Scene source upload failed (HTTP ${result.status}).`);
+      } finally { stream.destroy(); }
+    }
+    // Upload completion starts the shared service automatically; never call generate.
+    return state.uploads?.length ? await getScene(client, sceneId) : state;
+  } catch (error) {
+    throw new Error(`Scene upload did not complete. Scene ${sceneId} belongs to request_id ${p.request_id}; preserve both IDs and replay the original inputs. No automatic retry was made.`);
+  }
+}
 export function getScene(client, sceneId) { return client.request(route(sceneId)); }
 export function listScenes(client, input) {
   const { workspace, ...query } = listScenesSchema.parse(input);
@@ -134,7 +186,8 @@ export function cancelScene(client, sceneId) { return client.request(`${route(sc
 export function recoverScene(client, input) { const { scene_id, ...body } = recoverSceneSchema.parse(input); return client.request(`${route(scene_id)}/recover`, { method: 'POST', body }); }
 export function retrySceneStart(client, input) { const { scene_id, ...body } = retrySceneStartSchema.parse(input); return client.request(`${route(scene_id)}/retry-start`, { method: 'POST', body }); }
 export async function downloadScene(client, input) {
-  const { scene_id, output_dir, version } = downloadSceneSchema.parse(input);
+  const { scene_id, output_dir, version: requestedVersion } = downloadSceneSchema.parse(input);
+  const version = requestedVersion || sceneDigestSchema.parse((await getScene(client, scene_id)).download?.version);
   const directory = path.resolve(output_dir);
   const stem = `${scene_id}-scene-${version.slice(7, 19)}`;
   const destination = path.join(directory, `${stem}.zip`);

@@ -2,7 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { PalatialClient, PalatialApiError, mcpCreateSchema, mcpCreateInput, reprocessSchema, assetIdSchema, DEFAULT_API_URL } from './client.js';
-import { createSceneSchema, sceneIdSchema, listScenesSchema, answerSceneSchema, recoverSceneSchema, retrySceneStartSchema, downloadSceneSchema } from './scenes.js';
+import { createSceneSchema, sceneIdSchema, answerSceneSchema, downloadSceneSchema } from './scenes.js';
 import { getApiKey } from './auth.js';
 import { VERSION } from './version.js';
 import { checkForUpdate } from './update.js';
@@ -70,7 +70,7 @@ export function createServer({ clientFactory, updateChecker = checkForUpdate, do
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
   }, invoke((c, input) => c.create(mcpCreateInput(input))));
   server.registerTool('palatial_create_scene', {
-    description: 'Create and start a scene from local videos, photos or floor plans and instructions, without an Agent conversation or confirmation card. Read palatial_guide topic=scenes first. Requires explicit user spending authorization in confirm_spend=true and a stable UUID request_id. Creates a draft, uploads named files, then starts the shared scene director and object orders. An identical replay after start returns the existing scene; changed inputs conflict. Preserve request_id and scene_id after uncertainty; never retry with a new UUID. Poll palatial_get_scene for progress, object states, director/object cost and questions. mock_mad_max is Dev-only fixture object modeling; director charges still apply.',
+    description: 'Create and start a scene from local videos, photos or floor plans and instructions, without an Agent conversation or confirmation card. Read palatial_guide topic=scenes first. Requires explicit user spending authorization in confirm_spend=true and a stable UUID request_id. Uses one create-and-start request for HTTPS URLs or named local files. Large local files use the returned signed upload flow; completion starts automatically. Set auto_continue=true to continue checkpoints and continuation questions automatically. An identical replay after start returns the existing scene; changed inputs conflict. Preserve request_id and scene_id after uncertainty; never retry with a new UUID. Poll palatial_get_scene for progress, object states, director/object cost and questions. mock_mad_max is Dev-only fixture object modeling; director charges still apply.',
     inputSchema: createSceneSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   }, invoke((c, input) => c.createScene(input)));
@@ -79,11 +79,6 @@ export function createServer({ clientFactory, updateChecker = checkForUpdate, do
     inputSchema: z.object({ scene_id: sceneIdSchema }).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   }, invoke((c, input) => c.getScene(input.scene_id)));
-  server.registerTool('palatial_list_scenes', {
-    description: 'List scenes in an API-key-authorized workspace. Continue pagination with next_cursor as before.',
-    inputSchema: listScenesSchema,
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
-  }, invoke((c, input) => c.listScenes(input)));
   server.registerTool('palatial_answer_scene', {
     description: 'Answer a needs_input scene question with instruction and the exact expected_head from its current input. A stale answer conflicts; reread before answering. Continuing may incur the already-authorized scene charges. Do not regenerate the scene to answer.',
     inputSchema: answerSceneSchema,
@@ -94,18 +89,8 @@ export function createServer({ clientFactory, updateChecker = checkForUpdate, do
     inputSchema: z.object({ scene_id: sceneIdSchema }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true }
   }, invoke((c, input) => c.cancelScene(input.scene_id)));
-  server.registerTool('palatial_recover_scene', {
-    description: 'Explicitly recover an existing scene native checkpoint using its exact expected_head, when the user asks to recover and the server proves the checkpoint is recoverable. May continue already-authorized scene charges. Read current actions and input.expected_head first; recovery input may have a null question. If the head is absent, report recovery unavailable rather than guessing. Failed status alone is not proof. Refusal requires inspecting the reported state, never creating a replacement automatically.',
-    inputSchema: recoverSceneSchema,
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
-  }, invoke((c, input) => c.recoverScene(input)));
-  server.registerTool('palatial_retry_scene_start', {
-    description: 'Retry the frozen confirmed scene start with explicit user authorization and confirm_spend=true. The server must prove that no native execution occurred before it permits retry; failed status alone does not make retry safe. Preserves the same scene, inputs and billing contract. Read the current actions first and report any gate refusal; do not replace the scene automatically.',
-    inputSchema: retrySceneStartSchema,
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
-  }, invoke((c, input) => c.retrySceneStart(input)));
   server.registerTool('palatial_download_scene', {
-    description: 'Download a scene ZIP for the exact accepted download.version to a local output_dir. Preserves existing files and writes a SHA-256 receipt. Bounded by the client download limit, 2 GiB by default. Downloads do not establish simulator acceptance and do not generate a new export.',
+    description: 'Download the accepted scene ZIP, optionally selecting an exact download.version to a local output_dir. Preserves existing files and writes a SHA-256 receipt. Bounded by the client download limit, 2 GiB by default. Downloads do not establish simulator acceptance and do not generate a new export.',
     inputSchema: downloadSceneSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   }, invoke((c, input) => c.downloadScene(input)));

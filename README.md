@@ -281,25 +281,24 @@ version until restarted. See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ### Scene generation
 
-Read `palatial_guide` with `topic: scenes` before reconstructing a scene from
-videos, photos or floor plans. `palatial_create_scene` requires the workspace,
-a stable UUID `request_id`, instructions and explicit `confirm_spend: true`.
-It uploads only named local files and starts the shared Dashboard scene service.
-Use `palatial_get_scene` and `palatial_list_scenes` for progress, object states,
-cost and pending questions; `palatial_answer_scene` answers the current question
-with its exact head; `palatial_cancel_scene` reports cancellation, including
-partial failures. `palatial_recover_scene` recovers an existing checkpoint;
-`palatial_retry_scene_start` requires server proof that no native execution
-occurred. `palatial_download_scene` downloads the accepted version and
-writes a SHA-256 receipt. See the [scene guide](skills/palatial/references/scenes.md)
-for limits, simulator intent, spending and recovery rules.
+Read `palatial_guide` with `topic: scenes` before creating a scene. The four
+primary tools are `palatial_create_scene`, `palatial_get_scene`,
+`palatial_cancel_scene` and `palatial_download_scene`; `palatial_answer_scene`
+is optional for callers using `auto_continue: false` (the default).
 
-The API client exposes the equivalent `createScene`, `getScene`, `listScenes`,
-`answerScene`, `cancelScene`, `recoverScene`, `retrySceneStart` and
-`downloadScene` methods. Scene creation uses
-`POST workspaces/:workspaceId/scene-generations`, source uploads and
-`POST scene-generations/:sceneId/generate`; subsequent operations use
-`GET scene-generations/:sceneId`, `POST .../answer`, `POST .../stop` and
-`POST .../recover`, `POST .../retry-start` and
-`GET .../download?version=sha256:...`. All routes are relative to the configured
-`/api/v1/external/` base and use the same `x-api-key` authentication as assets.
+Creation accepts local `source_paths` or HTTPS `sources` with filename,
+media_type and url. It uses one create-and-start request, and transparently
+streams large files through returned signed uploads. Upload completion starts
+automatically. Enable `auto_continue: true` to continue checkpoints and
+continuation questions. Preserve the stable UUID `request_id` after uncertainty.
+Explicit `confirm_spend: true` requires authorized director and object charges.
+
+The client methods `createScene`, `getScene`, `cancelScene`, `downloadScene`
+and optional `answerScene` map to `POST workspaces/:workspaceId/scene-generations/start`,
+`GET scene-generations/:sceneId`, `POST .../stop`, `GET .../download` and
+`POST .../answer`. API JSON uses `autoContinue`. Download version is optional.
+Legacy `listScenes`, `recoverScene`, `retrySceneStart` and uploaded source descriptors
+remain client compatibility methods, but recovery and retries belong to the service
+and are absent from the advertised MCP tools. All routes are relative to
+`/api/v1/external/` and use the same API-key authentication as assets.
+See the [scene guide](skills/palatial/references/scenes.md) for limits and examples.

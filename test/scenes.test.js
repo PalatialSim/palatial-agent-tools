@@ -9,7 +9,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { PalatialClient } from '../src/client.js';
 import { createServer } from '../src/mcp.js';
-import { createSceneSchema, answerSceneSchema, sceneSourceSchema } from '../src/scenes.js';
+import { createSceneSchema, createSceneLegacy, answerSceneSchema, sceneSourceSchema } from '../src/scenes.js';
 
 const workspace = '0123456789abcdef01234567';
 const sceneId = 'abcdef0123456789abcdef01';
@@ -34,7 +34,8 @@ async function connect(t, client) {
 test('scene MCP tools use closed schemas, stable identity and explicit authorization', async t => {
   const mcp = await connect(t, {});
   const tools = (await mcp.listTools()).tools.filter(tool => /palatial_.*scene/.test(tool.name));
-  assert.equal(tools.length, 8);
+  assert.equal(tools.length, 5);
+  assert.ok(!tools.some(tool => /recover|retry|list/.test(tool.name)));
   const create = tools.find(tool => tool.name === 'palatial_create_scene');
   assert.equal(create.inputSchema.additionalProperties, false);
   assert.ok(create.inputSchema.required.includes('request_id'));
@@ -63,8 +64,7 @@ test('registered MCP API-key scene workflow creates, uploads, answers, downloads
     calls.push({ method: req.method, path: req.url, body });
     res.setHeader('content-type', 'application/json');
     if (req.url.endsWith('/download?version=' + encodeURIComponent(version))) { res.setHeader('content-type', 'application/zip'); res.setHeader('ETag', `"${version}"`); res.setHeader('Content-Length', zip.length); res.end(zip); return; }
-    if (req.method === 'POST' && req.url.endsWith('/sources')) { assert.equal(body.base64, Buffer.from('photo').toString('base64')); state.revision++; res.end(JSON.stringify({ source })); return; }
-    if (req.url.endsWith('/generate')) { assert.equal(body.expected_revision, 1); assert.equal(body.confirm_spend, true); assert.equal(body.options.object_build_mode, 'mock_mad_max'); state = { ...state, status: 'needs_input', sources: body.sources, confirmed_request_revision: body.expected_revision, input: { question: 'What is the bench width?', expected_head: version } }; }
+    if (req.url.endsWith('/start')) { assert.equal(body.sources[0].base64, Buffer.from('photo').toString('base64')); assert.equal(body.autoContinue, false); assert.equal(body.confirm_spend, true); assert.equal(body.options.object_build_mode, 'mock_mad_max'); state = { ...state, status: 'needs_input', sources: body.sources, input: { question: 'What is the bench width?', expected_head: version } }; }
     else if (req.url.endsWith('/answer')) { assert.equal(body.expected_head, version); state = { ...state, status: 'delivered', input: null, download: { version }, cost: { director: 1.5, objects: 0, total: 1.5 }, objects: [{ status: 'delivered' }] }; }
     else if (req.url.endsWith('/stop')) state = { ...state, cancellation: { requested: true, unconfirmedOperationIds: ['pending-child'] } };
     if (req.url.includes('/workspaces/') && req.method === 'GET') res.end(JSON.stringify({ scenes: [state], next_cursor: null }));
@@ -79,13 +79,12 @@ test('registered MCP API-key scene workflow creates, uploads, answers, downloads
   const question = await call('palatial_get_scene', { scene_id: sceneId });
   assert.equal(question.input.question, 'What is the bench width?');
   assert.equal((await call('palatial_answer_scene', { scene_id: sceneId, expected_head: question.input.expected_head, instruction: 'The bench is 2 meters wide.' })).status, 'delivered');
-  assert.equal((await call('palatial_list_scenes', { workspace, limit: 1, before: sceneId })).scenes.length, 1);
   const receipt = await call('palatial_download_scene', { scene_id: sceneId, version, output_dir: path.join(directory, 'export') });
   assert.equal(receipt.sha256, hash(zip));
   assert.equal((await readFile(receipt.file)).length, zip.length);
   assert.deepEqual((await call('palatial_cancel_scene', { scene_id: sceneId })).cancellation.unconfirmedOperationIds, ['pending-child']);
-  assert.ok(calls.some(call => call.path.endsWith(`scene-generations?limit=1&before=${sceneId}`)));
-  assert.equal(calls.filter(call => call.path.endsWith('/generate')).length, 1);
+  assert.equal(calls.filter(call => call.path.endsWith('/start')).length, 1);
+  assert.ok(!calls.some(call => /sources|generate$/.test(call.path)));
 });
 
 test('all local input files are checked before creating a scene draft', async t => {
@@ -104,7 +103,7 @@ test('started replay sends original expected revision and matching owned sources
   const calls = [];
   const state = { scene_id: sceneId, status: 'running', revision: 9, confirmed_request_revision: 2, sources: [source] };
   const client = api(async (url, opts) => { calls.push({ route: url.pathname, body: opts.body && JSON.parse(opts.body) }); return response(state); });
-  assert.equal((await client.createScene({ ...input, source_paths: [photo] })).scene_id, sceneId);
+  assert.equal((await createSceneLegacy(client, { ...input, source_paths: [photo] })).scene_id, sceneId);
   const generate = calls.find(call => call.route.endsWith('/generate'));
   assert.equal(generate.body.expected_revision, 2);
   assert.deepEqual(generate.body.sources, [source]);
@@ -115,14 +114,14 @@ test('request_id reuse with changed local content conflicts without another uplo
   const directory = await temporary(t); const photo = path.join(directory, 'room.png'); await writeFile(photo, 'changed');
   const calls = [];
   const client = api(async url => { calls.push(url.pathname); return response({ scene_id: sceneId, status: 'running', revision: 2, confirmed_request_revision: 1, sources: [source] }); });
-  await assert.rejects(client.createScene({ ...input, source_paths: [photo] }), /request_id conflicts/);
+  await assert.rejects(createSceneLegacy(client, { ...input, source_paths: [photo] }), /request_id conflicts/);
   assert.ok(!calls.some(call => /sources|generate$/.test(call)));
 });
 
 test('server rejects changed replay options and the error preserves the scene handle', async () => {
   const state = { scene_id: sceneId, status: 'running', confirmed_request_revision: 1, sources: [] };
   const client = api(async url => url.pathname.endsWith('/generate') ? new Response(JSON.stringify({ code: 'SCENE_REQUEST_CONFLICT', message: 'The request ID belongs to different scene input.' }), { status: 409 }) : response(state));
-  await assert.rejects(client.createScene(input), error => { assert.match(error.message, /SCENE_REQUEST_CONFLICT/); assert.match(error.message, new RegExp(sceneId)); assert.match(error.message, /No automatic retry/); return true; });
+  await assert.rejects(createSceneLegacy(client, input), error => { assert.match(error.message, /SCENE_REQUEST_CONFLICT/); assert.match(error.message, new RegExp(sceneId)); assert.match(error.message, /No automatic retry/); return true; });
 });
 
 test('multipart uploads resume completed parts with exact binary lengths and complete checksum', async t => {
@@ -136,7 +135,7 @@ test('multipart uploads resume completed parts with exact binary lengths and com
     if (url.pathname.endsWith('/complete')) { const body = JSON.parse(options.body); assert.equal(body.sha256, hash(bytes)); assert.deepEqual(body.parts.map(part => part.partNumber), [1, 2, 3]); return response({ source: { ...source, filename: 'video.mp4', mediaType: 'video/mp4', sha256: hash(bytes), bytes: bytes.length } }); }
     return response({ scene_id: sceneId, status: 'draft', revision: 0 });
   });
-  await client.createScene({ ...input, source_paths: [filename] });
+  await createSceneLegacy(client, { ...input, source_paths: [filename] });
   assert.deepEqual(parts, [2, 3]);
   assert.match(uploadId, /^[a-f0-9]{32}$/);
 });
@@ -145,7 +144,7 @@ test('failed upload returns recoverable identity without starting or automatical
   const directory = await temporary(t); const filename = path.join(directory, 'room.png'); await writeFile(filename, 'photo');
   const calls = [];
   const client = api(async url => { calls.push(url.pathname); if (url.pathname.endsWith('/sources')) throw new Error('upload connection lost test-key https://storage.example/file?token=secret'); return response({ scene_id: sceneId, status: 'draft', revision: 0 }); });
-  await assert.rejects(client.createScene({ ...input, source_paths: [filename] }), error => { assert.match(error.message, new RegExp(sceneId)); assert.match(error.message, new RegExp(requestId)); assert.doesNotMatch(error.message, /test-key|token=secret/); return true; });
+  await assert.rejects(createSceneLegacy(client, { ...input, source_paths: [filename] }), error => { assert.match(error.message, new RegExp(sceneId)); assert.match(error.message, new RegExp(requestId)); assert.doesNotMatch(error.message, /test-key|token=secret/); return true; });
   assert.equal(calls.filter(route => route.endsWith('/sources')).length, 1);
   assert.ok(!calls.some(route => route.endsWith('/generate')));
 });
@@ -239,26 +238,70 @@ test('cached archive cannot claim another version even when its receipt matches 
   await assert.rejects(client.downloadScene(args), /receipt is invalid/);
 });
 
-test('registered scene recovery tools preserve checkpoint and explicit confirmed-start authorization', async t => {
+test('deprecated recovery client methods remain callable without advertising recovery tools', async () => {
   const calls = [];
-  const mcp = await connect(t, api(async (url, options) => { calls.push({ path: url.pathname, body: JSON.parse(options.body) }); return response({ scene_id: sceneId, status: 'running' }); }));
-  const recovered = await mcp.callTool({ name: 'palatial_recover_scene', arguments: { scene_id: sceneId, expected_head: version } });
-  assert.notEqual(recovered.isError, true);
-  const retried = await mcp.callTool({ name: 'palatial_retry_scene_start', arguments: { scene_id: sceneId, confirm_spend: true } });
-  assert.notEqual(retried.isError, true);
-  assert.deepEqual(calls, [
-    { path: `/api/v1/external/scene-generations/${sceneId}/recover`, body: { expected_head: version } },
-    { path: `/api/v1/external/scene-generations/${sceneId}/retry-start`, body: { confirm_spend: true } }
-  ]);
-  assert.equal((await mcp.callTool({ name: 'palatial_retry_scene_start', arguments: { scene_id: sceneId, confirm_spend: false } })).isError, true);
+  const client = api(async (url, options) => { calls.push({ path: url.pathname, body: JSON.parse(options.body) }); return response({ scene_id: sceneId, status: 'running' }); });
+  await client.recoverScene({ scene_id: sceneId, expected_head: version });
+  await client.retrySceneStart({ scene_id: sceneId, confirm_spend: true });
   assert.equal(calls.length, 2);
 });
 
-test('recovery gate refusal is visible and never triggers an automatic start or replacement', async t => {
+test('one-shot URL start forwards autoContinue and never calls legacy endpoints', async () => {
   const calls = [];
-  const mcp = await connect(t, api(async url => { calls.push(url.pathname); return new Response(JSON.stringify({ code: 'SCENE_RECOVERY_UNAVAILABLE', message: 'No recoverable native checkpoint is available.' }), { status: 409 }); }));
-  const result = await mcp.callTool({ name: 'palatial_recover_scene', arguments: { scene_id: sceneId, expected_head: version } });
-  assert.equal(result.isError, true);
-  assert.match(result.content[0].text, /SCENE_RECOVERY_UNAVAILABLE/);
-  assert.deepEqual(calls, [`/api/v1/external/scene-generations/${sceneId}/recover`]);
+  const client = api(async (url, options) => { calls.push({ path: url.pathname, body: JSON.parse(options.body) }); return response({ scene_id: sceneId, status: 'running' }); });
+  await client.createScene({ ...input, auto_continue: true, sources: [{ filename: 'room.png', media_type: 'image/png', url: 'https://example.com/room.png' }] });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].path, `/api/v1/external/workspaces/${workspace}/scene-generations/start`);
+  assert.equal(calls[0].body.autoContinue, true);
+  assert.equal(calls[0].body.sources[0].url, 'https://example.com/room.png');
+  assert.equal(createSceneSchema.safeParse({ ...input, sources: [{ filename: 'room.png', media_type: 'image/png', url: 'file:///private/photo' }] }).success, false);
+});
+
+test('large source streams only to signed storage and upload completion needs no generate', async t => {
+  const directory = await temporary(t); const filename = path.join(directory, 'video.mp4');
+  const bytes = Buffer.alloc(33 * 1024 ** 2, 7); await writeFile(filename, bytes);
+  const calls = [];
+  const client = api(async (url, options) => {
+    const uri = new URL(url); calls.push(uri.pathname);
+    if (uri.pathname.endsWith('/start')) {
+      const body = JSON.parse(options.body);
+      assert.deepEqual(body.sources, [{ filename: 'video.mp4', media_type: 'video/mp4', bytes: bytes.length, sha256: hash(bytes) }]);
+      return response({ scene_id: sceneId, status: 'uploading', uploads: [{ filename: 'video.mp4', method: 'PUT', url: 'https://storage.example/video', headers: { 'Content-Type': 'video/mp4' }, expires_in: 3600 }] });
+    }
+    if (uri.host === 'storage.example') {
+      assert.equal(options.headers['x-api-key'], undefined); assert.equal(options.redirect, 'error');
+      let size = 0; const digest = createHash('sha256');
+      for await (const chunk of options.body) { size += chunk.length; digest.update(chunk); }
+      assert.equal(size, bytes.length); assert.equal(digest.digest('hex'), hash(bytes));
+      return new Response(null, { status: 200 });
+    }
+    return response({ scene_id: sceneId, status: 'running' });
+  });
+  assert.equal((await client.createScene({ ...input, source_paths: [filename] })).status, 'running');
+  assert.equal(calls.length, 3);
+  assert.ok(!calls.some(route => /source-uploads|generate$/.test(route)));
+});
+
+test('download without a version resolves the current accepted delivery', async t => {
+  const directory = await temporary(t); const calls = [];
+  const client = api(async url => { calls.push(url.pathname); return url.pathname.endsWith('/download') ? new Response(zip, { headers: { 'content-type': 'application/zip', etag: `"${version}"`, 'content-length': String(zip.length) } }) : response({ download: { version } }); });
+  assert.equal((await client.downloadScene({ scene_id: sceneId, output_dir: directory })).version, version);
+  assert.equal(calls.length, 2);
+});
+
+test('signed upload failure preserves identity without retries or leaking storage URL', async t => {
+  const directory = await temporary(t); const filename = path.join(directory, 'video.mp4');
+  const file = await import('node:fs/promises').then(fs => fs.open(filename, 'w'));
+  await file.truncate(33 * 1024 ** 2); await file.close();
+  let requests = 0;
+  const client = api(async (url, options) => {
+    requests++;
+    if (new URL(url).pathname.endsWith('/start')) return response({ scene_id: sceneId, uploads: [{ filename: 'video.mp4', method: 'PUT', url: 'https://storage.example/video?signature=private', headers: { 'Content-Type': 'video/mp4' } }] });
+    throw new Error('Storage failed https://storage.example/video?signature=private');
+  });
+  await assert.rejects(client.createScene({ ...input, source_paths: [filename] }), error => {
+    assert.match(error.message, new RegExp(sceneId)); assert.match(error.message, new RegExp(requestId));
+    assert.doesNotMatch(error.message, /signature|storage.example/); return true;
+  });
+  assert.equal(requests, 2);
 });

@@ -2,26 +2,21 @@
 
 ## Unreleased — public scene lifecycle and declared input purposes
 
-- Add eight MCP tools and equivalent API client methods for scene creation,
-  status and progress, listing, questions, Stop, native checkpoint recovery,
-  confirmed-start retry, and accepted-version ZIP downloads. They call the
-  shared Nest scene services without a Dashboard conversation or confirmation
-  card. Scene endpoint availability follows the shared scene gate, currently
-  enabled on Dev; configure the API origin for that environment.
-- Require explicit scene spending authorization and a stable request UUID.
-  Replays preserve the scene and original confirmed request revision; changed
-  inputs conflict. Upload only named local sources, using resumable multipart
-  uploads above 32 MiB with the shared source limits.
-- Bind downloaded packages and cached receipts to the accepted SHA-256 version,
-  verifying ETag, Content-Length, byte count and file digest. Preserve existing
-  output files and report unknown costs and partial cancellation honestly.
-- Add the packaged scenes guide with source, simulator-intent, billing,
-  question, recovery and retry contracts. Recovery requires the reported native
-  head; a confirmed-start retry requires server proof of no native execution.
-- Cover the registered MCP and API-key HTTP scene lifecycle, replay conflicts,
-  multipart continuation, input bounds, download integrity, cache receipts and
-  recovery refusals. The packed smoke verifies CLI and MCP version consistency
-  and packaged scene guidance.
+- Converge the scene MCP surface to create-and-start, status, Stop and download,
+  plus optional manual answers. New creates call the shared Nest one-shot start
+  endpoint with local files or HTTPS source URLs and optional `auto_continue`.
+- Stream large local files to the returned signed storage URL without forwarding
+  the API key. Upload completion automatically starts the scene; callers never
+  need generate, multipart operations, recover or retry-start.
+- Preserve stable scene request UUIDs and explicit spending authorization.
+  Previously uploaded source descriptors and legacy list/recover/retry client
+  methods remain for compatibility, but are not advertised as primary MCP tools.
+- Make download version optional while retaining accepted SHA-256 version,
+  ETag, byte count, package digest and cached-receipt verification.
+- Rewrite the packaged scenes guide around the four-operation flow and cover
+  inline/URL start, signed streaming and failure identity, manual answers,
+  cancellation, download integrity and deprecated client compatibility.
+
 
 
 - Add `source: files` to `palatial_create_asset`: photos, 3D files and PDF
