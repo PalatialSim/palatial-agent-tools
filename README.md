@@ -13,7 +13,7 @@ You need Node.js 22 or newer, a Palatial workspace API key, and Codex CLI or Cla
 Install the versioned package from the official GitHub Release:
 
 ```sh
-npm install --global https://github.com/PalatialSim/palatial-agent-tools/releases/download/v0.1.10/palatial-agent-tools-0.1.10.tgz
+npm install --global https://github.com/PalatialSim/palatial-agent-tools/releases/download/v0.1.11/palatial-agent-tools-0.1.11.tgz
 palatial-agent --version
 palatial-agent login
 palatial-agent doctor
@@ -48,6 +48,16 @@ To configure both clients, run `palatial-agent setup --client both`. Preview eve
 The client runs over **stdio**: your coding agent starts it as a local process. You do not need Docker, a local GPU, an inbound port, or your own hosted MCP server. Internet access to Palatial and its export storage is required.
 
 ## Generation modes
+
+Use `palatial_create_auto` to let Palatial choose the generation route and all
+required settings from a description, local `file_paths` or HTTPS `source_urls`.
+Optional `engine` and `quality` (`speed`, `balanced`, `accuracy`) express goals.
+`dryRun: true` returns the selected mode, settings and reason without creating or
+charging. For submission, preserve a stable `request_id`: identical replays reuse
+the asset; changed inputs conflict. If omitted, the client generates an ID once
+and saves a recovery receipt before the request. Read `palatial_guide` overview
+and recipes for examples. The server owns selection; the client contains no
+routing rules.
 
 Text/image MCP calls use `mode: diffusion` or `mode: parametric` with
 `effort: low` or `mad_max`. Route-specific settings go in `parameters`.

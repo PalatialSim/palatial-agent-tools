@@ -3,6 +3,62 @@
 Complete `palatial_create_asset` arguments for each source. Copy the shape,
 replace the content, and leave out anything the user did not ask for.
 
+## Let Palatial choose
+
+Use `palatial_create_auto` when the user provides evidence and wants the server
+to choose the generation method and settings. A free preview from text:
+
+```json
+{
+  "description": "A rigid plastic storage bin, 600 by 400 by 320 mm, no lid or moving parts, for warehouse picking simulation.",
+  "engine": ["isaac_sim"],
+  "quality": "speed",
+  "dryRun": true
+}
+```
+
+The result contains `selection` with `mode`, optional `effort`, effective
+`settings` and the reason. It creates no asset and consumes no tokens.
+To create directly from a photo, call the same tool with a stable ID:
+
+```json
+{
+  "name": "Handheld scanner",
+  "description": "A rigid handheld barcode scanner, roughly 180 mm long. The trigger does not need to move.",
+  "file_paths": ["./references/scanner.jpg"],
+  "engine": ["isaac_sim"],
+  "quality": "balanced",
+  "request_id": "97aa90d4-8b58-40c3-a0d0-142c30563f39"
+}
+```
+
+`source_urls` can replace or accompany local files with HTTPS photo or CAD/3D
+URLs. Sources are limited to 20 MiB each and 64 MiB total. The server validates
+the selected route's input limits. For CAD use `file_paths: ["./models/assembly.step"]` and a description
+of the intended use; the server chooses the CAD route and required settings.
+Supply the actual `source_up_axis` for STEP/IGES and OBJ/STL/PLY/FBX, plus
+`meters_per_unit` for OBJ/STL/PLY/FBX; missing source-frame metadata returns
+`CAD_SOURCE_FRAME_REQUIRED` with a remedy before any asset creation or charge.
+
+```json
+{
+  "description": "Preserve this assembly for Isaac Sim.",
+  "file_paths": ["./models/assembly.step"],
+  "source_up_axis": "z",
+  "engine": ["isaac_sim"],
+  "dryRun": true
+}
+```
+
+The STEP example assumes the source is Z-up; confirm that value from the file.
+GLB/glTF use their normative Y-up/meters frame and USD keeps its authored frame.
+Do not supply `source`, `mode`, `effort`, or `parameters` to automatic creation.
+The submit result retains `selection` and includes `asset_id`, `request_id`,
+and `receipt_file`. Preserve the ID and exact inputs after a timeout: an
+identical replay returns the same asset; changed inputs conflict. Poll
+`palatial_get_asset` to check progress. Selection failures are typed errors with
+`remedy` or `hint` corrections, not successful choices of a fallback mode.
+
 ## Text
 
 The user describes the object and nothing else exists yet.

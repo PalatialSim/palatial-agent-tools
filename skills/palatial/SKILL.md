@@ -35,6 +35,29 @@ Palatial key and consume no generation tokens.
 
 ## The one workflow
 
+When the user wants Palatial to choose the generation method and settings,
+use `palatial_create_auto` with their description, local `file_paths` or HTTPS
+`source_urls`, and optionally `engine` and `quality` (`speed`, `balanced`, or
+`accuracy`). Do not choose a mode or supply build settings yourself. The server
+uses the same selection policy as the Dashboard and returns `selection.mode`,
+`selection.effort` when applicable, `selection.settings`, and `selection.reason`.
+Read the automatic examples in `references/recipes.md`; CAD files may need
+`source_up_axis` and `meters_per_unit` describing their authored frame.
+
+- `dryRun: true` returns the selection without creating an asset, submitting a
+  job or charging tokens. It needs no `request_id` and writes no submission receipt.
+- Omit `dryRun` to create and submit directly, with ordinary creation validation,
+  stage billing and retry behavior. Keep `asset_id` and poll it as below.
+- Supply a stable `request_id` for each intended submission. The client sends
+  it as `Idempotency-Key`. If omitted, it generates one once and saves a local
+  receipt before the request. Identical replays reuse the same asset; changed
+  inputs with the same ID conflict. After a lost response, replay the original
+  inputs with that same ID rather than generating a replacement ID.
+- A selection error includes a typed `code` and a `remedy` (or `hint`) with the correction.
+  Report the error and correct the input; do not substitute a default route.
+  If a replay error includes `asset_id`, inspect that existing asset with
+  `palatial_get_asset`; preserve both the asset ID and `request_id`.
+
 1. `palatial_create_asset` submits the job and returns immediately with an
    `asset_id`. It does not wait for the asset to be built.
 2. Save that `asset_id` in your reply and in any file you are writing. It is the
@@ -86,11 +109,13 @@ which stage it is on.
   for a rejected create or treat its receipt as an accepted job.
 - **Never call create again to check on a job.** A second create is a second
   paid asset. Poll the ID you already have.
-- **Never retry a create whose outcome is unclear.** After a timeout, connection
+- **Never retry an explicit-mode create whose outcome is unclear.** After a timeout, connection
   loss, or unclear server response, the server may still have accepted it; the
   recovery receipt remains `submission_outcome_unknown`. Tell the user to check
   the Palatial dashboard before submitting anything else. A receipt alone does
   not imply an unclear outcome; a definite start-gate rejection is handled above.
+  Automatic creation can recover by replaying identical inputs with the original
+  `request_id`; never use a new ID to recover an uncertain automatic submission.
 - Confirm with the user before reprocessing, creating a variant, or generating
   a batch of assets from one request.
 - A failed asset may have a partial export. Ask first, then pass
