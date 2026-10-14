@@ -74,7 +74,7 @@ test('create tool explains API options in its MCP schema', async t => {
   assert.match(tool.inputSchema.properties.meters_per_unit.description, /Direct-mesh CAD/);
   assert.equal(tool.inputSchema.properties.agentic_articulation, undefined);
   assert.match(tool.inputSchema.properties.decimation_target_ratio.description, /mutually exclusive/);
-  assert.deepEqual(tool.inputSchema.properties.mode.enum, ['diffusion', 'parametric', 'mad_max']);
+  assert.deepEqual(tool.inputSchema.properties.mode.enum, ['auto', 'diffusion', 'parametric', 'mad_max']);
   assert.equal(tool.inputSchema.properties.parameters.properties.face_budget.minimum, 2000);
   assert.equal(tool.inputSchema.properties.parameters.properties.face_budget.maximum, 200000);
   assert.match(tool.inputSchema.properties.video_path.description, /300 MiB/);

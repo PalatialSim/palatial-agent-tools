@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.12 — automatic mode on existing creation APIs
+
+- Add `mode: auto` to the existing `palatial_create_asset` tool for text,
+  photos and CAD, with optional quality/engine goals and free `dryRun`.
+  Existing local file argument names are preserved and uploaded as unified
+  `files`; HTTPS source URLs are passed as `urls`.
+- Reuse the same automatic submission, idempotency identity, receipt and
+  typed-error handling for the primary tool and `palatial_create_auto` shortcut.
+  Both use the existing `/external/assets/create` with `mode: auto`.
+- Keep explicit-mode creation and legacy `shape_model: auto` semantics.
+  Automatic mode refuses manual settings, named views, video, shape guides and
+  file-purpose overrides instead of dropping inputs or selecting defaults.
+- Document the existing-API contract and automatic examples in the shared guide.
+  Release only after those API routes serve automatic mode in the target environment.
+
 ## 0.1.11 — automatic asset generation
 
 - Add `palatial_create_auto` and `PalatialClient.createAuto` to submit text,

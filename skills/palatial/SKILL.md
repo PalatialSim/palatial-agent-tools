@@ -36,13 +36,30 @@ Palatial key and consume no generation tokens.
 ## The one workflow
 
 When the user wants Palatial to choose the generation method and settings,
-use `palatial_create_auto` with their description, local `file_paths` or HTTPS
-`source_urls`, and optionally `engine` and `quality` (`speed`, `balanced`, or
-`accuracy`). Do not choose a mode or supply build settings yourself. The server
-uses the same selection policy as the Dashboard and returns `selection.mode`,
-`selection.effort` when applicable, `selection.settings`, and `selection.reason`.
-Read the automatic examples in `references/recipes.md`; CAD files may need
-`source_up_axis` and `meters_per_unit` describing their authored frame.
+use `palatial_create_asset` with `mode: auto`, their `source` and description
+or existing local input arguments (`image_path`, `image_paths`, `mesh_path`,
+or `files`). HTTPS `source_urls` work without local uploads. Set optional
+`engine` and `quality` (`speed`, `balanced`, or `accuracy`) goals, and no build
+settings. With media, `name` and `description` are optional; text-only input
+needs a description. The server uses the shared Dashboard selection policy and
+returns `selection.mode`, optional `selection.effort`, effective
+`selection.settings` and `selection.reason`, including fixed-setting reasons.
+Read `references/recipes.md`; CAD may need `source_up_axis` and
+`meters_per_unit` describing its authored frame.
+
+Automatic mode uses the existing unified `POST /external/assets/create`,
+with `mode: auto`, `files` uploads or `urls`. Existing `texttosim` and
+`imagetosim` API aliases also accept `mode: auto`. `palatial_create_auto`
+remains a compatibility shortcut using its existing `file_paths` arguments,
+and now calls the same unified API. The former `/create/auto` API is retained
+for compatibility; it is not needed for new callers.
+
+For MCP automatic requests, omit `parameters`, `effort`, legacy models,
+`product_research`, file-purpose overrides, video, shape guides and named views.
+Use explicit modes for those controls. This client refuses unsupported fields
+instead of dropping input or selecting a fallback. Legacy `shape_model: auto`
+keeps its previous provider/model behavior; it does not request the semantic
+selector. Use `mode: auto` to ask the server to choose a generation method.
 
 - `dryRun: true` returns the selection without creating an asset, submitting a
   job or charging tokens. It needs no `request_id` and writes no submission receipt.
@@ -58,7 +75,7 @@ Read the automatic examples in `references/recipes.md`; CAD files may need
   If a replay error includes `asset_id`, inspect that existing asset with
   `palatial_get_asset`; preserve both the asset ID and `request_id`.
 
-1. `palatial_create_asset` submits the job and returns immediately with an
+1. `palatial_create_asset` without `dryRun: true` submits the job and returns an
    `asset_id`. It does not wait for the asset to be built.
 2. Save that `asset_id` in your reply and in any file you are writing. It is the
    only handle to the job.

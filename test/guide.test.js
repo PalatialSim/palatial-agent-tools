@@ -52,9 +52,10 @@ test('the parameter reference structurally matches every create field and closed
 test('the parameter reference pins source applicability and effective defaults', async () => {
   const rows = parameterRows(await guideFile('references/parameters.md'));
   const expected = {
-    mode: ['required for text/image', '`text`, `image`'], parameters: ['route defaults', '`text`, `image`'],
+    mode: ['required for text/image', 'all'], parameters: ['route defaults', '`text`, `image`'],
     video_path: ['none', '`image`'], reference_mesh_path: ['none', '`text`, `image`'],
-    source: ['required', 'all'], name: ['required', 'all'], description: ['required', 'all'],
+    source: ['required', 'all'], name: ['required except auto', 'all'], description: ['required for explicit and text-only auto', 'all'],
+    quality: ['`balanced`', 'all'], dryRun: ['`false`', 'all'], request_id: ['generated once for auto submission', 'all'], source_urls: ['none', 'all'], source_up_axis: ['format-dependent for auto CAD', 'all'],
     engine: ['`["isaac_sim"]`', 'all'], workspace: ["the API key's workspace", 'all'],
     files: ['none', '`files`'],
     image_path: ['none', '`image`, `cad`'], image_paths: ['none', '`image`'], views: ['none', '`image`'], reconstruct: ['ignored', '`image`'], mesh_path: ['none', '`cad`'], datasheet_path: ['none', '`cad`'],
@@ -68,7 +69,7 @@ test('the parameter reference pins source applicability and effective defaults',
     texture_size: ['`4096`', 'all'], optimize_textures: ['`true`', 'all'], texture_max_resolution: ['`4096`', 'all'],
     decimation: ['see above', 'all'], decimation_mode: ['see above', 'all'], decimation_target_faces: ['none', 'all'], decimation_target_ratio: ['none', 'all'],
     triangle_count: ['`auto`', 'all'], mesh_density: ['`medium`', 'all'],
-    units: ['`m` for text; format-dependent for CAD', '`text`, `cad`'], meters_per_unit: ['none', '`cad`'], up_direction: ['`y` for text; format-dependent for CAD', '`text`, `cad`']
+    units: ['`m` for text; format-dependent for CAD', '`text`, `cad`'], meters_per_unit: ['none', '`cad`, automatic CAD input'], up_direction: ['`y` for text; format-dependent for CAD', '`text`, `cad`']
   };
   assert.deepEqual(Object.fromEntries([...rows].map(([field, cells]) => [field, [cells[2], cells[3]]])), expected);
 });

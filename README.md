@@ -13,7 +13,7 @@ You need Node.js 22 or newer, a Palatial workspace API key, and Codex CLI or Cla
 Install the versioned package from the official GitHub Release:
 
 ```sh
-npm install --global https://github.com/PalatialSim/palatial-agent-tools/releases/download/v0.1.11/palatial-agent-tools-0.1.11.tgz
+npm install --global https://github.com/PalatialSim/palatial-agent-tools/releases/download/v0.1.12/palatial-agent-tools-0.1.12.tgz
 palatial-agent --version
 palatial-agent login
 palatial-agent doctor
@@ -49,20 +49,27 @@ The client runs over **stdio**: your coding agent starts it as a local process. 
 
 ## Generation modes
 
-Use `palatial_create_auto` to let Palatial choose the generation route and all
-required settings from a description, local `file_paths` or HTTPS `source_urls`.
+Use `palatial_create_asset` with `mode: auto` to let Palatial choose the
+generation route and all required settings from a description, existing local
+input arguments (`image_path`, `image_paths`, `mesh_path`, `files`) or HTTPS
+`source_urls`. With media, `name` and `description` are optional.
 Optional `engine` and `quality` (`speed`, `balanced`, `accuracy`) express goals.
 `dryRun: true` returns the selected mode, settings and reason without creating or
 charging. For submission, preserve a stable `request_id`: identical replays reuse
 the asset; changed inputs conflict. If omitted, the client generates an ID once
 and saves a recovery receipt before the request. Read `palatial_guide` overview
 and recipes for examples. The server owns selection; the client contains no
-routing rules.
+routing rules. Automatic mode posts to the existing `/external/assets/create`
+with `mode: auto`, repeated `files` or `urls`. `palatial_create_auto` remains
+a compatibility tool with its existing `file_paths` input, using the same API.
+The old `/create/auto` API remains a compatibility wrapper. Legacy
+`shape_model: auto` retains its prior meaning.
 
-Text/image MCP calls use `mode: diffusion` or `mode: parametric` with
+Explicit text/image MCP calls use `mode: diffusion` or `mode: parametric` with
 `effort: low` or `mad_max`. Route-specific settings go in `parameters`.
 The MCP exposes no `shape_model` or `texture_model`: mode selects the builder
-and the backend chooses the painter. CAD has no mode and uses its supplied mesh.
+and the backend chooses the painter. Explicit CAD has no mode and uses its
+supplied mesh; automatic CAD uses mode=auto.
 The MCP builds rigid assets and omits body_type, auto_scale and replace_glass.
 Collision quality is auto/low/medium/high/sdf; prefer auto or omission. auto
 leaves the API override unset, currently medium on Diffusion/Low. Mad Max picks
