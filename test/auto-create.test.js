@@ -41,7 +41,7 @@ test('CAD source-frame metadata accepts only a named axis and a finite positive 
 test('JSON automatic CAD requests forward declared source frame without selecting build settings', async t => {
   const dir = await directory(t);
   const client = api(async (_url, options) => {
-    assert.deepEqual(JSON.parse(options.body), { source_up_axis: 'z', meters_per_unit: 0.001, urls: ['https://media.example/part.obj'], dryRun: true });
+    assert.deepEqual(JSON.parse(options.body), { source_up_axis: 'z', meters_per_unit: 0.001, urls: ['https://media.example/part.obj'], mode: 'auto', dryRun: true });
     return response({ selection: { ...selection, mode: 'cad' }, dryRun: true });
   }, dir);
   await client.createAuto({ source_urls: ['https://media.example/part.obj'], source_up_axis: 'z', meters_per_unit: 0.001, dryRun: true });
@@ -52,9 +52,9 @@ test('dryRun preserves the server selection, sends no idempotency header and wri
   let calls = 0;
   const client = api(async (url, options) => {
     calls++;
-    assert.equal(url.pathname, '/api/v1/external/assets/create/auto');
+    assert.equal(url.pathname, '/api/v1/external/assets/create');
     assert.equal(options.headers['Idempotency-Key'], undefined);
-    assert.deepEqual(JSON.parse(options.body), { description: 'A storage bin', quality: 'speed', engine: ['isaac_sim'], dryRun: true });
+    assert.deepEqual(JSON.parse(options.body), { description: 'A storage bin', quality: 'speed', engine: ['isaac_sim'], mode: 'auto', dryRun: true });
     return response({ selection, dryRun: true });
   }, dir);
   assert.deepEqual(await client.createAuto({ description: 'A storage bin', quality: 'speed', engine: ['isaac_sim'], dryRun: true, request_id: requestId }), { selection, dryRun: true });
@@ -255,7 +255,7 @@ test('registered automatic MCP path submits and replays through real HTTP with o
   const dir = await directory(t);
   const calls = []; const accepted = new Map(); let assets = 0;
   const server = createHttpServer(async (req, res) => {
-    assert.equal(req.url, '/api/v1/external/assets/create/auto');
+    assert.equal(req.url, '/api/v1/external/assets/create');
     assert.equal(req.headers['x-api-key'], 'test-key');
     const chunks = []; for await (const chunk of req) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks).toString());

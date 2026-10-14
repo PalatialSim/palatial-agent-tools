@@ -41,7 +41,13 @@ try {
   await client.connect(transport);
   try {
     assert.equal(client.getServerVersion().version, VERSION);
-    assert.equal((await client.listTools()).tools.length, 19);
+    const tools = (await client.listTools()).tools;
+    assert.equal(tools.length, 19);
+    const primaryCreate = tools.find(tool => tool.name === 'palatial_create_asset');
+    assert.ok(primaryCreate.inputSchema.properties.mode.enum.includes('auto'));
+    for (const field of ['quality', 'dryRun', 'request_id', 'source_urls', 'source_up_axis']) assert.ok(primaryCreate.inputSchema.properties[field]);
+    const overview = await client.callTool({ name: 'palatial_guide', arguments: { topic: 'overview' } });
+    assert.match(overview.content[0].text, /palatial_create_asset.*mode: auto/s);
     const result = await client.callTool({ name: 'palatial_guide', arguments: { topic: 'parameters' } });
     assert.match(result.content[0].text, /collision_quality/);
     const resource = await client.readResource({ uri: 'palatial://guide/parameters' });

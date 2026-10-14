@@ -17,11 +17,25 @@ export const autoCreateSchema = z.object({
   meters_per_unit: z.number().positive().finite().describe('CAD source metadata: meters represented by one source unit. Required for OBJ/STL/PLY/FBX. STEP/IGES retain canonical scale, GLB/glTF use meters and USD preserves authored units.').optional(),
   file_paths: z.array(z.string().min(1)).describe('Local photos or CAD/3D files to upload as repeated files, at most 20 MiB each and 64 MiB total. Only these named files are read. The server validates route input limits.').optional(),
   source_urls: z.array(sourceUrl).describe('HTTPS photo or CAD/3D source URLs. Palatial retrieves and validates the media; the client does not download them.').optional(),
-  dryRun: z.boolean().default(false).describe('Select a route and settings only: no asset creation, submission or token charge.').optional(),
+  dryRun: z.boolean().describe('Select a route and settings only: no asset creation, submission or token charge; defaults to false.').optional(),
   request_id: z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9_.:-]+$/).describe('Stable idempotency ID sent as Idempotency-Key for submission. Preserve it after uncertainty; identical replays reuse the asset, changed inputs conflict. Generated once when omitted and saved in the local receipt. Not needed for dryRun.').optional()
 }).strict().superRefine((input, ctx) => {
   if (!input.description && !input.file_paths?.length && !input.source_urls?.length) ctx.addIssue({ code: 'custom', message: 'Provide a description, a local file, or a source URL.' });
 });
+
+// The existing create tool uses its established file argument names. This is
+// an upload-contract adapter; the server still chooses every generation route.
+export function automaticCreateInput(input) {
+  const { source, mode, files, image_path, image_paths, mesh_path, ...goals } = input;
+  if (source === 'files' && (image_path !== undefined || image_paths !== undefined || mesh_path !== undefined)) throw new Error('AUTO_INPUT_INVALID: source=files takes all inputs in files; remove the per-type file arguments.');
+  if (source === 'text' && (image_path !== undefined || image_paths !== undefined || mesh_path !== undefined || files !== undefined)) throw new Error('AUTO_INPUT_INVALID: text input takes description or source_urls; use source=image, cad or files for local media.');
+  if (source !== 'files' && files !== undefined) throw new Error('AUTO_INPUT_INVALID: files is accepted only with source=files.');
+  if (source !== 'cad' && mesh_path !== undefined) throw new Error('AUTO_INPUT_INVALID: mesh_path is accepted only with source=cad; use files for mixed media.');
+  if (source === 'cad' && image_paths !== undefined) throw new Error('AUTO_INPUT_INVALID: CAD accepts image_path; use source=files for multiple local inputs.');
+  if (files?.some(file => file.purpose !== undefined)) throw new Error('AUTO_INPUT_FIELD_CONFLICT: automatic input takes no file-purpose overrides; omit purpose or choose an explicit creation mode.');
+  const paths = [...(files || []).map(file => file.path), ...(image_path ? [image_path] : []), ...(image_paths || []), ...(mesh_path ? [mesh_path] : [])];
+  return autoCreateSchema.parse({ ...Object.fromEntries(Object.entries(goals).filter(([, value]) => value !== undefined)), ...(paths.length ? { file_paths: paths } : {}) });
+}
 
 const sourceTypes = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp',
@@ -34,7 +48,7 @@ const sourceTypes = {
 
 async function requestBody(input) {
   const { file_paths, source_urls, request_id, ...fields } = input;
-  const parameters = { ...fields, ...(source_urls?.length ? { urls: source_urls } : {}) };
+  const parameters = { ...fields, mode: 'auto', dryRun: fields.dryRun ?? false, ...(source_urls?.length ? { urls: source_urls } : {}) };
   if (!file_paths?.length) return parameters;
   const body = new FormData();
   for (const [key, value] of Object.entries(parameters)) {
@@ -67,7 +81,7 @@ export async function createAuto(client, input) {
   const body = await requestBody(p);
   // Media intake and the selector's bounded model retry need more time than a
   // status read. Ordinary create/read calls retain their existing deadline.
-  if (p.dryRun) return client.request('assets/create/auto', { method: 'POST', body, timeoutMs: client.autoTimeoutMs });
+  if (p.dryRun) return client.request('assets/create', { method: 'POST', body, timeoutMs: client.autoTimeoutMs, structuredErrors: true });
   const requestId = p.request_id || randomUUID();
   // A receipt is written before submission so a lost response cannot lose the
   // server's idempotency identity. URLs and local source paths stay out of it.
@@ -77,7 +91,7 @@ export async function createAuto(client, input) {
   await writeFile(receipt, JSON.stringify(intent, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
   let result;
   try {
-    result = await client.request('assets/create/auto', { method: 'POST', body, idempotencyKey: requestId, timeoutMs: client.autoTimeoutMs });
+    result = await client.request('assets/create', { method: 'POST', body, idempotencyKey: requestId, timeoutMs: client.autoTimeoutMs, structuredErrors: true });
   } catch (error) {
     error.request_id = requestId;
     error.receipt_file = receipt;

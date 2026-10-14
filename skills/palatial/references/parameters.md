@@ -16,9 +16,16 @@ snapshot; read changed pages before using affected settings.
 
 | Field | Values | Default | Sources | Notes |
 | --- | --- | --- | --- | --- |
-| `mode` | `diffusion`, `parametric`, `mad_max` | required for text/image | `text`, `image` | Preferred for new requests. `mad_max` is shorthand for Parametric at Mad Max effort. CAD has no mode. |
+| `mode` | `auto`, `diffusion`, `parametric`, `mad_max` | required for text/image | all | auto delegates selection and all settings to the existing unified create API. Explicit CAD omits mode; automatic CAD uses auto. mad_max is shorthand for Parametric at Mad Max effort. |
 | `parameters` | object with `mesh_quality`, `collision_quality`, `triangle_count`, `mesh_density`, `decimation`, `decimation_mode`, `decimation_target_faces`, `decimation_target_ratio`, `texture_size`, `optimize_textures`, `texture_max_resolution`, `run_simulation`, `newton_solver`, `repair_mesh`, `structure`, `articulation`, `face_budget` | route defaults | `text`, `image` | Only the settings allowed for the chosen route; see below. JSON types stay numbers and booleans, including multipart uploads. |
 
+- **Auto:** supply inputs and optional engine/quality goals only. `dryRun` previews
+  the selected mode, effective settings and reason without creating or charging.
+  `request_id` is stable submission identity; identical replay reuses the asset.
+  Omit build fields, parameters (even `{}`), effort, product research, file-purpose
+  overrides, named views, video and shape guides; use explicit modes for them.
+  Legacy `shape_model: auto` retains its old provider/model behavior and does not
+  invoke the selector.
 - **Diffusion:** `structure` (`single_object`, `static_parts`, `articulated_parts`),
   mesh quality/density/triangle controls, decimation, texture generation/delivery,
   collision/physics, rigid solver and mesh repair.
@@ -49,13 +56,13 @@ Higher hull quality trades more detail for collision computation; it does not
 guarantee better simulator behaviour. Automatic selection does not guarantee
 a primitive collider on Diffusion/Low.
 
-## Always required
+## Source and description
 
 | Field | Values | Default | Sources | Notes |
 | --- | --- | --- | --- | --- |
 | `source` | `text`, `image`, `cad`, `files` | required | all | Decides which file fields are legal. See the source rules below. |
-| `name` | 4 to 50 characters | required | all | Letters, digits, spaces, underscores, hyphens, periods. |
-| `description` | 1 to 2000 characters | required | all | What to build, including dimensions, materials, articulation, and intended use. For `source: image` this is the only place size and orientation can be stated. |
+| `name` | 4 to 50 characters | required except auto | all | Letters, digits, spaces, underscores, hyphens, periods. |
+| `description` | 1 to 2000 characters | required for explicit and text-only auto | all | What to build, including dimensions, materials, articulation, and intended use. For `source: image` this is the only place size and orientation can be stated. |
 
 ## Common
 
@@ -63,6 +70,22 @@ a primitive collider on Diffusion/Low.
 | --- | --- | --- | --- | --- |
 | `engine` | 1 to 3 of `isaac_sim`, `mujoco`, `newton` | `["isaac_sim"]` | all | Simulator profiles to build for. Each added engine is more work, so ask rather than requesting all three. |
 | `workspace` | workspace ID | the API key's workspace | all | Only needed when the key spans several workspaces. |
+
+## Automatic goals and recovery
+
+| Field | Values | Default | Sources | Notes |
+| --- | --- | --- | --- | --- |
+| `quality` | `speed`, `balanced`, `accuracy` | `balanced` | all | mode=auto only: a preference, not a guarantee that a route or locked setting can change. |
+| `dryRun` | boolean | `false` | all | mode=auto only: selection without asset creation, submission, token charges or a local receipt. |
+| `request_id` | 1-128 letters, digits, periods, underscores, colons or hyphens | generated once for auto submission | all | mode=auto only: sent as Idempotency-Key, stored before submission and returned. Preserve the original ID and identical inputs after uncertainty. Not required for dryRun. |
+| `source_urls` | HTTPS media URLs | none | all | mode=auto only: forwarded as urls; server downloads and validates the sources. No credentials or URL fragments. |
+| `source_up_axis` | `x`, `y`, `z` | format-dependent for auto CAD | all | mode=auto only: authored CAD source metadata. STEP/IGES require the axis; OBJ/STL/PLY/FBX require axis and meters_per_unit. GLB/glTF use Y-up/meters; USD preserves authored frame. |
+
+The server validates at most 8 automatic sources, 20 MiB each and 64 MiB total.
+Refusals include a typed code and correction remedy; unsupported selections do
+not become a default route. Do not infer that every quality preference will
+produce a supported plan. Use `selection.settings` and fixed-setting reasons,
+not the preference alone, when describing the result.
 
 ## Input files
 
@@ -78,7 +101,7 @@ a primitive collider on Diffusion/Low.
 | `datasheet_path` | path to a PDF | none | `cad` | Optional specification sheet. |
 | `files` | 1 to 60 entries, each a `path` and an optional `purpose` | none | `files` | Every input in one list: PNG, JPEG or WebP photos, 3D files and PDF datasheets. `purpose` applies to 3D files only: `exact_geometry` (keep this shape; the CAD build; at most one, with up to one photo and one PDF), `shape_reference` (a GLB, STEP, OBJ, STL or PLY file of at most 20 MiB guiding a Mad Max build, converted to GLB when needed; needs `mode: mad_max`), or `unused`. Omitted purposes follow the Dashboard rules: a lone 3D file, or one that can only be built as-is, is `exact_geometry`; a GLB, STEP, OBJ, STL or PLY file with photos must be declared. `video_path` may accompany photos; PDFs need an `exact_geometry` file. File names must be distinct. |
 
-Each local input must be a nonempty regular file of at most 256 MiB (300 MiB for video). References must be
+Explicit-mode local input must be a nonempty regular file of at most 256 MiB (300 MiB for video). References must be
 PNG, JPEG, or WebP; datasheets must be PDF.
 
 ## What to build
@@ -186,7 +209,7 @@ appearance.
 | Field | Values | Default | Sources | Notes |
 | --- | --- | --- | --- | --- |
 | `units` | `m`, `cm`, `mm`, `inch`, `feet` | `m` for text; format-dependent for CAD | `text`, `cad` | One scale option for OBJ, GLB, GLTF, STL, PLY, and FBX; alternatively provide `meters_per_unit`. Omit for STEP/IGES and USD-family files. |
-| `meters_per_unit` | positive finite number | none | `cad` | Exact scale for a direct mesh, as an alternative to `units`; if both are set they must agree. Omit for STEP/IGES and USD-family files. |
+| `meters_per_unit` | positive finite number | none | `cad`, automatic CAD input | Exact scale for a direct mesh, as an alternative to `units`; if both are set they must agree. Omit for STEP/IGES and USD-family files. |
 | `up_direction` | `x`, `y`, `z` | `y` for text; format-dependent for CAD | `text`, `cad` | Required for OBJ, GLB, GLTF, STL, PLY, FBX, STEP, and IGES. Omit for USD-family files. |
 
 CAD source-frame rules come from the file format:
@@ -202,10 +225,11 @@ CAD source-frame rules come from the file format:
 **Both are rejected for `source: image`.** A photo carries no units, so state
 the dimensions and orientation in `description` instead.
 
-## Rules that reject a request
+## Explicit and legacy refusal rules
 
-The client checks these before spending anything, and returns an error that
-names the rule.
+These source/build rules apply to explicit and legacy requests. Automatic mode
+uses the input-only rules above and the server validates the actual media.
+The client checks these before spending anything and names the refused rule.
 
 - `text` accepts no photos/video; Mad Max accepts a GLB reference mesh. It rejects `apply_textures`.
 - `image` requires photos or a video. Pure Diffusion uses one image_path or 2-4 named views; Parametric or video builds can mix photo inputs within the route cap.

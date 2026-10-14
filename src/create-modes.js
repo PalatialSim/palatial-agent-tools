@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { autoCreateSchema, automaticCreateInput } from './auto-create.js';
 
 const DIFFUSION_FIELDS = ['mesh_quality', 'collision_quality', 'triangle_count', 'mesh_density', 'decimation', 'decimation_mode', 'decimation_target_faces', 'decimation_target_ratio', 'texture_size', 'optimize_textures', 'texture_max_resolution', 'run_simulation', 'body_type', 'newton_solver', 'repair_mesh', 'replace_glass', 'auto_scale'];
 const LOW_FIELDS = ['collision_quality', 'run_simulation', 'optimize_textures', 'replace_glass', 'newton_solver'];
@@ -8,7 +9,8 @@ const FLAT_FIELDS = [...DIFFUSION_FIELDS, 'shape_model', 'texture_model', 'quad_
 // which of these settings is meaningful, rather than silently dropping it.
 export function modeFields(flat) {
   return {
-    mode: z.enum(['diffusion', 'parametric', 'mad_max']).describe('Text/image: prefer an explicit mode. parametric uses effort low (default) or mad_max; mode mad_max is shorthand. CAD has no mode. Build settings go inside parameters.').optional(),
+    mode: z.enum(['auto', 'diffusion', 'parametric', 'mad_max']).describe('auto lets the server select the mode and all settings from text/photos/CAD; supply goals only. Explicit text/image modes are diffusion or parametric with effort low/mad_max; mad_max is shorthand. CAD uses auto or flat settings without mode.').optional(),
+    ...Object.fromEntries(['quality', 'dryRun', 'request_id', 'source_urls', 'source_up_axis'].map(field => [field, autoCreateSchema.shape[field]])),
     parameters: z.object({
       ...Object.fromEntries(DIFFUSION_FIELDS.map(field => [field, flat[field]])),
       structure: z.enum(['single_object', 'static_parts', 'articulated_parts']).describe('Diffusion only: one solid object, separate rigid parts (default), or parts with joints.').optional(),
@@ -24,6 +26,20 @@ export function createRoute(p) {
 
 export function validateMode(p, ctx) {
   const refuse = (code, message, path = []) => ctx.addIssue({ code: 'custom', message: `${code}: ${message}`, path });
+  if (p.mode === 'auto') {
+    const allowed = new Set(['mode', 'source', 'files', 'name', 'description', 'workspace', 'engine', 'image_path', 'image_paths', 'mesh_path', 'quality', 'dryRun', 'request_id', 'source_urls', 'source_up_axis', 'meters_per_unit']);
+    const conflicts = Object.keys(p).filter(field => p[field] !== undefined && !allowed.has(field));
+    if (conflicts.length) refuse('AUTO_INPUT_FIELD_CONFLICT', `Automatic creation takes inputs and goals, not ${conflicts.join(', ')}. Remove these fields or choose an explicit mode; named views use the explicit image path.`);
+    else {
+      try { automaticCreateInput(p); }
+      catch (error) { refuse('AUTO_INPUT_INVALID', error instanceof Error ? error.message : 'Provide a description or media input.'); }
+    }
+    return;
+  }
+  if (p.name === undefined) refuse('CREATE_NAME_REQUIRED', 'Explicit and legacy creation requires name; automatic naming requires mode=auto.', ['name']);
+  if (p.description === undefined) refuse('CREATE_DESCRIPTION_REQUIRED', 'Explicit and legacy creation requires description; media-only selection requires mode=auto.', ['description']);
+  const goals = ['quality', 'dryRun', 'request_id', 'source_urls', 'source_up_axis'].filter(field => p[field] !== undefined);
+  if (goals.length) refuse('CREATE_MODE_FIELD_CONFLICT', `${goals.join(', ')} requires mode=auto; omit these fields for explicit or legacy creation.`);
   if (!p.mode) {
     if (p.parameters !== undefined) refuse('CREATE_MODE_REQUIRED', 'parameters requires mode.', ['parameters']);
     if (p.video_path) {

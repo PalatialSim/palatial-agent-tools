@@ -6,7 +6,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { createRoute, modeFields, validateMode } from './create-modes.js';
 import { createScene, getScene, listScenes, answerScene, cancelScene, recoverScene, retrySceneStart, downloadScene } from './scenes.js';
-import { createAuto } from './auto-create.js';
+import { createAuto, automaticCreateInput } from './auto-create.js';
 
 export const DEFAULT_API_URL = 'https://dashboard.palatial.cloud/api/v1/external/';
 const engine = z.enum(['isaac_sim', 'mujoco', 'newton']);
@@ -28,8 +28,8 @@ const flatCreateSchema = z.object({
     path: z.string().min(1).describe('Local path to a PNG/JPEG/WebP photo, a 3D file (GLB, glTF, OBJ, STL, PLY, FBX, STEP, IGES, USD) or a PDF datasheet.'),
     purpose: z.enum(['exact_geometry', 'shape_reference', 'unused']).describe('3D files only. exact_geometry keeps this shape (the CAD build, at most one); shape_reference guides a Mad Max build (GLB, STEP, OBJ, STL or PLY up to 20 MiB; non-GLB files are converted; needs mode=mad_max); unused leaves it out. Omit to let Palatial decide: a lone 3D file, or one that can only be built as-is, is exact_geometry; a GLB, STEP, OBJ, STL or PLY file sent with photos must be declared.').optional()
   }).strict()).min(1).max(60).describe('files source only: every input in one list. The 3D-file purposes decide the build route, with the same rules as the Palatial Dashboard.').optional(),
-  name: assetName.describe('Asset name, 4-50 characters: letters, digits, spaces, underscores, hyphens, and periods.'),
-  description: z.string().trim().min(1).max(2000, 'Description is too long (max 2000 characters)').describe('What to build, including dimensions, materials, articulation, and intended use when known.'),
+  name: assetName.describe('Asset name, 4-50 characters. Required for explicit/legacy creation; mode=auto can supply it.').optional(),
+  description: z.string().trim().min(1).max(2000, 'Description is too long (max 2000 characters)').describe('What to build. Required for explicit/legacy creation or automatic text-only input; optional with automatic media.').optional(),
   workspace: z.string().regex(/^[a-fA-F0-9]{24}$/, 'Workspace must be a 24-character MongoDB ObjectId.').describe('All sources: optional workspace ID; omit to use the API-key workspace.').optional(),
   engine: z.array(engine).min(1).max(3).default(['isaac_sim']).describe('All sources: simulator profiles; isaac_sim, mujoco, or newton; defaults to isaac_sim.').optional(),
   image_path: z.string().describe('Image: one PNG/JPEG/WebP input; CAD: optional PNG/JPEG/WebP reference for texture generation; use instead of views.').optional(),
@@ -85,7 +85,7 @@ const mcpParameters = modeCreateSchema.shape.parameters.unwrap()
 export const mcpCreateSchema = modeCreateSchema.omit({ shape_model: true, texture_model: true, body_type: true, replace_glass: true, auto_scale: true })
   .extend({ parameters: mcpParameters, collision_quality: mcpCollisionQuality, newton_solver: mcpNewtonSolver }).superRefine((p, ctx) => {
   validateMode(p, ctx);
-  if (p.source !== 'cad' && p.source !== 'files' && !p.mode) ctx.addIssue({ code: 'custom', path: ['mode'], message: 'Text/image MCP requests require mode: diffusion, parametric, or mad_max.' });
+  if (p.source !== 'cad' && p.source !== 'files' && !p.mode) ctx.addIssue({ code: 'custom', path: ['mode'], message: 'Text/image MCP requests require mode: auto, diffusion, parametric, or mad_max.' });
 });
 
 // The public API does not yet accept the product's "auto" collision label.
@@ -93,6 +93,7 @@ export const mcpCreateSchema = modeCreateSchema.omit({ shape_model: true, textur
 // an invalid value or promising primitive selection on a hull-only route.
 export function mcpCreateInput(input) {
   const p = { ...input, ...(input.parameters ? { parameters: { ...input.parameters } } : {}) };
+  if (p.mode === 'auto') return p;
   if (p.collision_quality === 'auto') delete p.collision_quality;
   if (p.parameters?.collision_quality === 'auto') delete p.parameters.collision_quality;
   return p;
@@ -109,6 +110,7 @@ export function validateCreate(input) {
     throw new Error('mad_max is a generation route reported on finished assets (generationAgent), not a shape_model. To request it, send shape_model=parametric with effort=mad_max.');
   }
   const p = createSchema.parse(input);
+  if (p.mode === 'auto') return p;
   const { model, effort } = createRoute(p);
   const settings = p.parameters || p;
   const views = Object.entries(p.views || {}).filter(([, file]) => file);
@@ -397,7 +399,7 @@ export class PalatialClient {
     this.receiptDir = receiptDir;
   }
 
-  async request(route, { method = 'GET', body, binaryBody, raw = false, idempotencyKey, timeoutMs = this.timeoutMs } = {}) {
+  async request(route, { method = 'GET', body, binaryBody, raw = false, idempotencyKey, timeoutMs = this.timeoutMs, structuredErrors = false } = {}) {
     const url = new URL(route, this.base);
     if (url.origin !== this.base.origin || !url.pathname.startsWith(this.base.pathname)) throw new Error('Request is outside the configured API.');
     const headers = { 'x-api-key': this.apiKey, Accept: 'application/json' };
@@ -413,9 +415,10 @@ export class PalatialClient {
     }
     if (raw && response.status >= 300 && response.status < 400) return response;
     if (!response.ok) {
+      const preserveStructuredError = structuredErrors || route === 'assets/create/auto';
       const reason = { 400: 'Invalid request', 401: 'Invalid or expired API key', 403: 'Access denied or insufficient credits', 404: 'Asset or workspace not found', 409: 'Request conflicts with asset state', 429: 'Rate limit reached' }[response.status] || 'Service request failed';
       let payload;
-      if (response.status < 500 || route === 'assets/create/auto') {
+      if (response.status < 500 || preserveStructuredError) {
         try { payload = await response.json(); } catch { /* Non-JSON errors use the generic fallback. */ }
       }
       if ([402, 403, 409].includes(response.status)) {
@@ -425,7 +428,7 @@ export class PalatialClient {
         const record = { ...body, ...errorDetails, ...nestedDetails };
         if (['insufficient_tokens', 'insufficient_credits'].includes(record.code)) {
           const metadata = safeBillingValue(billingMetadata(record), this.apiKey);
-          const guidance = rejectedCreditGuidance(record, this.base.origin, route.startsWith('assets/create/'));
+          const guidance = rejectedCreditGuidance(record, this.base.origin, route === 'assets/create' || route.startsWith('assets/create/'));
           const tokens = Object.fromEntries(['balance', 'required', 'shortfall']
             .filter(key => Number.isFinite(record.tokens?.[key]) && (key === 'balance' || record.tokens[key] >= 0))
             .map(key => [key, record.tokens[key]]));
@@ -437,8 +440,8 @@ export class PalatialClient {
           });
         }
       }
-      const detail = response.status < 500 || route === 'assets/create/auto' ? apiErrorDetail(payload, this.apiKey) : '';
-      if (route === 'assets/create/auto' && typeof payload?.code === 'string' && /^[A-Za-z0-9_]{1,64}$/.test(payload.code)) {
+      const detail = response.status < 500 || preserveStructuredError ? apiErrorDetail(payload, this.apiKey) : '';
+      if (preserveStructuredError && typeof payload?.code === 'string' && /^[A-Za-z0-9_]{1,64}$/.test(payload.code)) {
         throw new PalatialApiError(`${reason} (HTTP ${response.status}).${detail}`, {
           http_status: response.status, code: payload.code,
           ...(typeof payload.hint === 'string' ? { hint: safeMessage(new Error(payload.hint), this.apiKey).slice(0, 2000) } : {}),
@@ -472,6 +475,7 @@ export class PalatialClient {
 
   async create(input) {
     const p = validateCreate(input);
+    if (p.mode === 'auto') return this.createAuto(automaticCreateInput(p));
     const { source, image_path, image_paths, views, mesh_path, datasheet_path, video_path, reference_mesh_path, files, ...parameters } = p;
     let body = parameters;
     if (source !== 'text' || reference_mesh_path) {
