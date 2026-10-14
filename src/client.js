@@ -364,7 +364,7 @@ export class PalatialApiError extends Error {
   }
 
   toJSON() {
-    const fields = ['http_status', 'code', 'reason', 'hint', 'remedy', 'request_id', 'receipt_file', 'billingMode', 'tokens', 'billing', 'warnings', 'billing_guidance'];
+    const fields = ['http_status', 'code', 'reason', 'hint', 'remedy', 'assetId', 'asset_id', 'request_id', 'receipt_file', 'billingMode', 'tokens', 'billing', 'warnings', 'billing_guidance'];
     return { message: this.message, ...Object.fromEntries(fields.filter(key => this[key] !== undefined).map(key => [key, this[key]])) };
   }
 }
@@ -384,7 +384,7 @@ async function sha256File(filename) {
 }
 
 export class PalatialClient {
-  constructor({ apiKey, baseUrl = DEFAULT_API_URL, fetchImpl = fetch, allowHttpForTests = false, timeoutMs = 30000, maxDownloadBytes = 2 * 1024 ** 3, receiptDir = process.env.PALATIAL_STATE_DIR || path.join(homedir(), '.local', 'state', 'palatial-agent') } = {}) {
+  constructor({ apiKey, baseUrl = DEFAULT_API_URL, fetchImpl = fetch, allowHttpForTests = false, timeoutMs = 30000, autoTimeoutMs = 180000, maxDownloadBytes = 2 * 1024 ** 3, receiptDir = process.env.PALATIAL_STATE_DIR || path.join(homedir(), '.local', 'state', 'palatial-agent') } = {}) {
     if (!apiKey?.trim()) throw new Error('Missing Palatial API key.');
     this.apiKey = apiKey.trim();
     this.base = new URL(baseUrl.endsWith('/') ? baseUrl : baseUrl + '/');
@@ -392,11 +392,12 @@ export class PalatialClient {
     if (this.base.protocol !== 'https:' && !(allowHttpForTests && ['localhost', '127.0.0.1', '[::1]'].includes(this.base.hostname) && this.base.protocol === 'http:')) throw new Error('Palatial API requires HTTPS.');
     this.fetch = fetchImpl;
     this.timeoutMs = timeoutMs;
+    this.autoTimeoutMs = autoTimeoutMs;
     this.maxDownloadBytes = maxDownloadBytes;
     this.receiptDir = receiptDir;
   }
 
-  async request(route, { method = 'GET', body, binaryBody, raw = false, idempotencyKey } = {}) {
+  async request(route, { method = 'GET', body, binaryBody, raw = false, idempotencyKey, timeoutMs = this.timeoutMs } = {}) {
     const url = new URL(route, this.base);
     if (url.origin !== this.base.origin || !url.pathname.startsWith(this.base.pathname)) throw new Error('Request is outside the configured API.');
     const headers = { 'x-api-key': this.apiKey, Accept: 'application/json' };
@@ -405,7 +406,7 @@ export class PalatialClient {
     else if (body && !(body instanceof FormData)) headers['Content-Type'] = 'application/json';
     let response;
     try {
-      response = await this.fetch(url, { method, headers, body: binaryBody !== undefined ? binaryBody : body instanceof FormData ? body : body ? JSON.stringify(body) : undefined, redirect: raw ? 'manual' : 'error', signal: AbortSignal.timeout(this.timeoutMs) });
+      response = await this.fetch(url, { method, headers, body: binaryBody !== undefined ? binaryBody : body instanceof FormData ? body : body ? JSON.stringify(body) : undefined, redirect: raw ? 'manual' : 'error', signal: AbortSignal.timeout(timeoutMs) });
     } catch (error) {
       const uncertain = method !== 'GET' ? ' The server may have accepted the request. Check your workspace before submitting again; this client does not retry mutations.' : '';
       throw new Error(safeMessage(error, this.apiKey) + uncertain);
@@ -441,7 +442,8 @@ export class PalatialClient {
         throw new PalatialApiError(`${reason} (HTTP ${response.status}).${detail}`, {
           http_status: response.status, code: payload.code,
           ...(typeof payload.hint === 'string' ? { hint: safeMessage(new Error(payload.hint), this.apiKey).slice(0, 2000) } : {}),
-          ...(typeof payload.remedy === 'string' ? { remedy: safeMessage(new Error(payload.remedy), this.apiKey).slice(0, 2000) } : {})
+          ...(typeof payload.remedy === 'string' ? { remedy: safeMessage(new Error(payload.remedy), this.apiKey).slice(0, 2000) } : {}),
+          ...(typeof payload.assetId === 'string' && assetIdSchema.safeParse(payload.assetId).success ? { assetId: payload.assetId, asset_id: payload.assetId } : {})
         });
       }
       const error = new Error(`${reason} (HTTP ${response.status}).${detail}${method !== 'GET' && response.status >= 500 ? ' Submission outcome is uncertain; inspect your workspace before retrying.' : ''}`);

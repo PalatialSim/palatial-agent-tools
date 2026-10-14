@@ -55,6 +55,8 @@ Read the automatic examples in `references/recipes.md`; CAD files may need
   inputs with that same ID rather than generating a replacement ID.
 - A selection error includes a typed `code` and a `remedy` (or `hint`) with the correction.
   Report the error and correct the input; do not substitute a default route.
+  If a replay error includes `asset_id`, inspect that existing asset with
+  `palatial_get_asset`; preserve both the asset ID and `request_id`.
 
 1. `palatial_create_asset` submits the job and returns immediately with an
    `asset_id`. It does not wait for the asset to be built.

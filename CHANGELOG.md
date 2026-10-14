@@ -12,6 +12,9 @@
 - Preserve typed selection errors and correction remedies, and document
   automatic selection, dry runs, input limits and replay recovery in the
   packaged MCP guide and Claude skill.
+- Keep an existing asset ID in replay errors so its status can be inspected;
+  allow automatic intake/selection three minutes without changing ordinary
+  create or read deadlines.
 - Release only after the target API serves `POST /external/assets/create/auto`.
 
 ## 0.1.10 — scene create-and-start and declared input purposes

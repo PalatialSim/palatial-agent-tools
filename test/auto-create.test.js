@@ -62,6 +62,24 @@ test('dryRun preserves the server selection, sends no idempotency header and wri
   assert.deepEqual(await readdir(dir), []);
 });
 
+test('automatic dryRun and submit use their own deadline while reads retain the configured deadline', async t => {
+  const dir = await directory(t);
+  const deadlines = [];
+  const original = AbortSignal.timeout;
+  AbortSignal.timeout = milliseconds => { deadlines.push(milliseconds); return new AbortController().signal; };
+  t.after(() => { AbortSignal.timeout = original; });
+  const client = new PalatialClient({ apiKey: 'test-key', timeoutMs: 1234, receiptDir: dir, fetchImpl: async (_url, options) => {
+    return response(options.method === 'GET' ? { status: 'READY' } : JSON.parse(options.body).dryRun ? { selection, dryRun: true } : { id: 'asset-deadline', selection, dryRun: false });
+  } });
+  await client.createAuto({ description: 'A bin', dryRun: true });
+  await client.createAuto({ description: 'A bin', request_id: requestId });
+  await client.getAsset('asset-deadline');
+  assert.deepEqual(deadlines, [180000, 180000, 1234]);
+  client.autoTimeoutMs = 45000;
+  await client.createAuto({ description: 'A bin', dryRun: true });
+  assert.equal(deadlines.at(-1), 45000);
+});
+
 test('URL inputs are forwarded to the server without downloading them locally', async t => {
   const dir = await directory(t);
   const urls = ['https://media.example/photo.png', 'https://media.example/assembly.step'];
@@ -188,6 +206,27 @@ test('submit rejection preserves typed error, request ID and definitive rejected
   });
   const file = (await readdir(dir))[0];
   assert.equal(JSON.parse(await readFile(path.join(dir, file), 'utf8')).status, 'rejected');
+});
+
+test('replay recovery errors retain the owned asset identity in the MCP result', async t => {
+  const dir = await directory(t);
+  const client = await connect(t, api(async () => response({ code: 'AUTO_SUBMISSION_FAILED', message: 'This request owns a failed submission.', assetId: 'asset-owned', remedy: 'Inspect the existing asset and use ordinary retry.' }, 409), dir));
+  const result = await client.callTool({ name: 'palatial_create_auto', arguments: { description: 'A bin', request_id: requestId } });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.asset_id, 'asset-owned');
+  assert.equal(result.structuredContent.assetId, 'asset-owned');
+  assert.equal(result.structuredContent.request_id, requestId);
+  assert.equal(result.structuredContent.code, 'AUTO_SUBMISSION_FAILED');
+});
+
+test('malformed replay asset identifiers stay out of typed errors', async t => {
+  const dir = await directory(t);
+  const client = api(async () => response({ code: 'AUTO_REQUEST_IN_PROGRESS', message: 'Request in progress.', assetId: '../unsafe' }, 409), dir);
+  await assert.rejects(client.createAuto({ description: 'A bin', request_id: requestId }), error => {
+    assert.equal(error.toJSON().asset_id, undefined);
+    assert.equal(error.toJSON().assetId, undefined);
+    return true;
+  });
 });
 
 test('selection service failure preserves its typed code and redacts credentials and URL queries', async t => {

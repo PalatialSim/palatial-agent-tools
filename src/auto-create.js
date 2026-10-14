@@ -65,7 +65,9 @@ async function requestBody(input) {
 export async function createAuto(client, input) {
   const p = autoCreateSchema.parse(input);
   const body = await requestBody(p);
-  if (p.dryRun) return client.request('assets/create/auto', { method: 'POST', body });
+  // Media intake and the selector's bounded model retry need more time than a
+  // status read. Ordinary create/read calls retain their existing deadline.
+  if (p.dryRun) return client.request('assets/create/auto', { method: 'POST', body, timeoutMs: client.autoTimeoutMs });
   const requestId = p.request_id || randomUUID();
   // A receipt is written before submission so a lost response cannot lose the
   // server's idempotency identity. URLs and local source paths stay out of it.
@@ -75,7 +77,7 @@ export async function createAuto(client, input) {
   await writeFile(receipt, JSON.stringify(intent, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
   let result;
   try {
-    result = await client.request('assets/create/auto', { method: 'POST', body, idempotencyKey: requestId });
+    result = await client.request('assets/create/auto', { method: 'POST', body, idempotencyKey: requestId, timeoutMs: client.autoTimeoutMs });
   } catch (error) {
     error.request_id = requestId;
     error.receipt_file = receipt;
