@@ -13,6 +13,8 @@ export const autoCreateSchema = z.object({
   workspace: z.string().regex(/^[a-fA-F0-9]{24}$/).describe('Optional workspace ID; defaults to the API-key workspace.').optional(),
   engine: z.array(z.enum(['isaac_sim', 'mujoco', 'newton'])).min(1).max(3).describe('Optional simulator targets; the server validates the selected route against them.').optional(),
   quality: z.enum(['speed', 'balanced', 'accuracy']).describe('Optional goal preference. The server chooses the route and all build settings.').optional(),
+  source_up_axis: z.enum(['x', 'y', 'z']).describe('CAD source metadata: the authored up axis. Required for STEP/IGES and OBJ/STL/PLY/FBX when not otherwise known. GLB/glTF use normative Y-up and USD preserves its authored frame.').optional(),
+  meters_per_unit: z.number().positive().finite().describe('CAD source metadata: meters represented by one source unit. Required for OBJ/STL/PLY/FBX. STEP/IGES retain canonical scale, GLB/glTF use meters and USD preserves authored units.').optional(),
   file_paths: z.array(z.string().min(1)).describe('Local photos or CAD/3D files to upload as repeated files, at most 20 MiB each and 64 MiB total. Only these named files are read. The server validates route input limits.').optional(),
   source_urls: z.array(sourceUrl).describe('HTTPS photo or CAD/3D source URLs. Palatial retrieves and validates the media; the client does not download them.').optional(),
   dryRun: z.boolean().default(false).describe('Select a route and settings only: no asset creation, submission or token charge.').optional(),

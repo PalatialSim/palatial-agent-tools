@@ -41,7 +41,8 @@ use `palatial_create_auto` with their description, local `file_paths` or HTTPS
 `accuracy`). Do not choose a mode or supply build settings yourself. The server
 uses the same selection policy as the Dashboard and returns `selection.mode`,
 `selection.effort` when applicable, `selection.settings`, and `selection.reason`.
-Read the automatic examples in `references/recipes.md`.
+Read the automatic examples in `references/recipes.md`; CAD files may need
+`source_up_axis` and `meters_per_unit` describing their authored frame.
 
 - `dryRun: true` returns the selection without creating an asset, submitting a
   job or charging tokens. It needs no `request_id` and writes no submission receipt.

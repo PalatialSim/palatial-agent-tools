@@ -31,6 +31,22 @@ test('automatic input accepts text, media and goals without mode or settings', (
   for (const input of [{}, { description: ' ' }, { name: 'Cabinet' }, { source_urls: ['http://media.example/photo.png'] }, { source_urls: ['https://user:password@media.example/photo.png'] }, { source_urls: ['https://media.example/photo.png#fragment'] }]) assert.equal(autoCreateSchema.safeParse(input).success, false);
 });
 
+test('CAD source-frame metadata accepts only a named axis and a finite positive unit scale', () => {
+  assert.equal(autoCreateSchema.safeParse({ file_paths: ['/assembly.step'], source_up_axis: 'z' }).success, true);
+  assert.equal(autoCreateSchema.safeParse({ file_paths: ['/part.obj'], source_up_axis: 'y', meters_per_unit: 0.001 }).success, true);
+  for (const source_up_axis of ['auto', 'up', 'Z']) assert.equal(autoCreateSchema.safeParse({ description: 'A part', source_up_axis }).success, false);
+  for (const meters_per_unit of [0, -1, Infinity, NaN, '0.001']) assert.equal(autoCreateSchema.safeParse({ description: 'A part', meters_per_unit }).success, false);
+});
+
+test('JSON automatic CAD requests forward declared source frame without selecting build settings', async t => {
+  const dir = await directory(t);
+  const client = api(async (_url, options) => {
+    assert.deepEqual(JSON.parse(options.body), { source_up_axis: 'z', meters_per_unit: 0.001, urls: ['https://media.example/part.obj'], dryRun: true });
+    return response({ selection: { ...selection, mode: 'cad' }, dryRun: true });
+  }, dir);
+  await client.createAuto({ source_urls: ['https://media.example/part.obj'], source_up_axis: 'z', meters_per_unit: 0.001, dryRun: true });
+});
+
 test('dryRun preserves the server selection, sends no idempotency header and writes no receipt', async t => {
   const dir = await directory(t);
   let calls = 0;
@@ -60,22 +76,24 @@ test('URL inputs are forwarded to the server without downloading them locally', 
 
 test('local photos and CAD files share the repeated files contract with URL and goal fields', async t => {
   const dir = await directory(t);
-  const files = [path.join(dir, 'photo.webp'), path.join(dir, 'assembly.step')];
+  const files = [path.join(dir, 'photo.webp'), path.join(dir, 'assembly.obj')];
   await writeFile(files[0], 'photo'); await writeFile(files[1], 'CAD');
   const urls = ['https://media.example/side.png'];
   const client = api(async (_url, options) => {
     assert.ok(options.body instanceof FormData);
     const inputs = options.body.getAll('files');
-    assert.deepEqual(inputs.map(file => file.name), ['photo.webp', 'assembly.step']);
+    assert.deepEqual(inputs.map(file => file.name), ['photo.webp', 'assembly.obj']);
     assert.equal(await inputs[0].text(), 'photo');
     assert.equal(await inputs[1].text(), 'CAD');
     assert.deepEqual(options.body.getAll('engine'), ['isaac_sim', 'mujoco']);
     assert.equal(options.body.get('urls'), JSON.stringify(urls));
     assert.equal(options.body.get('dryRun'), 'true');
     assert.equal(options.body.get('request_id'), null);
+    assert.equal(options.body.get('source_up_axis'), 'z');
+    assert.equal(options.body.get('meters_per_unit'), '0.001');
     return response({ selection: { ...selection, mode: 'cad' }, dryRun: true });
   }, dir);
-  const result = await client.createAuto({ file_paths: files, source_urls: urls, engine: ['isaac_sim', 'mujoco'], dryRun: true });
+  const result = await client.createAuto({ file_paths: files, source_urls: urls, engine: ['isaac_sim', 'mujoco'], source_up_axis: 'z', meters_per_unit: 0.001, dryRun: true });
   assert.equal(result.selection.mode, 'cad');
 });
 
@@ -190,7 +208,7 @@ test('auto tool schema contains goals and source inputs but no generation decisi
   assert.equal(tool.inputSchema.additionalProperties, false);
   assert.equal(tool.annotations.readOnlyHint, false);
   assert.equal(tool.annotations.idempotentHint, false, 'Omission generates a new ID, so repeated empty-ID calls are not idempotent.');
-  for (const field of ['description', 'file_paths', 'source_urls', 'request_id', 'dryRun', 'quality', 'engine']) assert.ok(tool.inputSchema.properties[field]);
+  for (const field of ['description', 'file_paths', 'source_urls', 'request_id', 'dryRun', 'quality', 'engine', 'source_up_axis', 'meters_per_unit']) assert.ok(tool.inputSchema.properties[field]);
   for (const field of ['mode', 'effort', 'parameters', 'shape_model', 'source']) assert.equal(tool.inputSchema.properties[field], undefined);
 });
 

@@ -36,6 +36,22 @@ To create directly from a photo, call the same tool with a stable ID:
 URLs. Sources are limited to 20 MiB each and 64 MiB total. The server validates
 the selected route's input limits. For CAD use `file_paths: ["./models/assembly.step"]` and a description
 of the intended use; the server chooses the CAD route and required settings.
+Supply the actual `source_up_axis` for STEP/IGES and OBJ/STL/PLY/FBX, plus
+`meters_per_unit` for OBJ/STL/PLY/FBX; missing source-frame metadata returns
+`CAD_SOURCE_FRAME_REQUIRED` with a remedy before any asset creation or charge.
+
+```json
+{
+  "description": "Preserve this assembly for Isaac Sim.",
+  "file_paths": ["./models/assembly.step"],
+  "source_up_axis": "z",
+  "engine": ["isaac_sim"],
+  "dryRun": true
+}
+```
+
+The STEP example assumes the source is Z-up; confirm that value from the file.
+GLB/glTF use their normative Y-up/meters frame and USD keeps its authored frame.
 Do not supply `source`, `mode`, `effort`, or `parameters` to automatic creation.
 The submit result retains `selection` and includes `asset_id`, `request_id`,
 and `receipt_file`. Preserve the ID and exact inputs after a timeout: an
