@@ -6,6 +6,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { createRoute, modeFields, validateMode } from './create-modes.js';
 import { createScene, getScene, listScenes, answerScene, cancelScene, recoverScene, retrySceneStart, downloadScene } from './scenes.js';
+import { createAuto } from './auto-create.js';
 
 export const DEFAULT_API_URL = 'https://dashboard.palatial.cloud/api/v1/external/';
 const engine = z.enum(['isaac_sim', 'mujoco', 'newton']);
@@ -363,7 +364,7 @@ export class PalatialApiError extends Error {
   }
 
   toJSON() {
-    const fields = ['http_status', 'code', 'reason', 'billingMode', 'tokens', 'billing', 'warnings', 'billing_guidance'];
+    const fields = ['http_status', 'code', 'reason', 'hint', 'remedy', 'request_id', 'receipt_file', 'billingMode', 'tokens', 'billing', 'warnings', 'billing_guidance'];
     return { message: this.message, ...Object.fromEntries(fields.filter(key => this[key] !== undefined).map(key => [key, this[key]])) };
   }
 }
@@ -395,10 +396,11 @@ export class PalatialClient {
     this.receiptDir = receiptDir;
   }
 
-  async request(route, { method = 'GET', body, binaryBody, raw = false } = {}) {
+  async request(route, { method = 'GET', body, binaryBody, raw = false, idempotencyKey } = {}) {
     const url = new URL(route, this.base);
     if (url.origin !== this.base.origin || !url.pathname.startsWith(this.base.pathname)) throw new Error('Request is outside the configured API.');
     const headers = { 'x-api-key': this.apiKey, Accept: 'application/json' };
+    if (idempotencyKey !== undefined) headers['Idempotency-Key'] = idempotencyKey;
     if (binaryBody !== undefined) { headers['Content-Type'] = 'application/octet-stream'; headers['Content-Length'] = String(binaryBody.byteLength); }
     else if (body && !(body instanceof FormData)) headers['Content-Type'] = 'application/json';
     let response;
@@ -412,7 +414,7 @@ export class PalatialClient {
     if (!response.ok) {
       const reason = { 400: 'Invalid request', 401: 'Invalid or expired API key', 403: 'Access denied or insufficient credits', 404: 'Asset or workspace not found', 409: 'Request conflicts with asset state', 429: 'Rate limit reached' }[response.status] || 'Service request failed';
       let payload;
-      if (response.status < 500) {
+      if (response.status < 500 || route === 'assets/create/auto') {
         try { payload = await response.json(); } catch { /* Non-JSON errors use the generic fallback. */ }
       }
       if ([402, 403, 409].includes(response.status)) {
@@ -434,7 +436,14 @@ export class PalatialClient {
           });
         }
       }
-      const detail = response.status < 500 ? apiErrorDetail(payload, this.apiKey) : '';
+      const detail = response.status < 500 || route === 'assets/create/auto' ? apiErrorDetail(payload, this.apiKey) : '';
+      if (route === 'assets/create/auto' && typeof payload?.code === 'string' && /^[A-Za-z0-9_]{1,64}$/.test(payload.code)) {
+        throw new PalatialApiError(`${reason} (HTTP ${response.status}).${detail}`, {
+          http_status: response.status, code: payload.code,
+          ...(typeof payload.hint === 'string' ? { hint: safeMessage(new Error(payload.hint), this.apiKey).slice(0, 2000) } : {}),
+          ...(typeof payload.remedy === 'string' ? { remedy: safeMessage(new Error(payload.remedy), this.apiKey).slice(0, 2000) } : {})
+        });
+      }
       const error = new Error(`${reason} (HTTP ${response.status}).${detail}${method !== 'GET' && response.status >= 500 ? ' Submission outcome is uncertain; inspect your workspace before retrying.' : ''}`);
       error.status = response.status;
       throw error;
@@ -444,6 +453,7 @@ export class PalatialClient {
   }
 
   createScene(input) { return createScene(this, input); }
+  createAuto(input) { return createAuto(this, input); }
   getScene(sceneId) { return getScene(this, sceneId); }
   listScenes(input) { return listScenes(this, input); }
   answerScene(input) { return answerScene(this, input); }

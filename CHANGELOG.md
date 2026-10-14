@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.11 — automatic asset generation
+
+- Add `palatial_create_auto` and `PalatialClient.createAuto` to submit text,
+  local photos/CAD or HTTPS sources to the shared automatic-generation API.
+  The server selects the mode, required settings and reason; the client
+  contains no route selection rules.
+- Support free `dryRun` selection without asset creation or local submission
+  receipts. Submissions send a stable `Idempotency-Key`, retained before the
+  request and returned with the asset so identical replays recover uncertainty.
+- Preserve typed selection errors and correction remedies, and document
+  automatic selection, dry runs, input limits and replay recovery in the
+  packaged MCP guide and Claude skill.
+- Release only after the target API serves `POST /external/assets/create/auto`.
+
 ## 0.1.10 — scene create-and-start and declared input purposes
 
 - Converge the scene MCP surface to create-and-start, status, Stop and download,

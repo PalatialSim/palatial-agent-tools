@@ -41,7 +41,7 @@ try {
   await client.connect(transport);
   try {
     assert.equal(client.getServerVersion().version, VERSION);
-    assert.equal((await client.listTools()).tools.length, 18);
+    assert.equal((await client.listTools()).tools.length, 19);
     const result = await client.callTool({ name: 'palatial_guide', arguments: { topic: 'parameters' } });
     assert.match(result.content[0].text, /collision_quality/);
     const resource = await client.readResource({ uri: 'palatial://guide/parameters' });
