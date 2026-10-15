@@ -27,13 +27,11 @@ export const variantBatchSchema = z.object({
   feedback: z.string().trim().min(1).max(2000).describe('Overall variation request; the server model splits it into distinct requirements.'),
   parameters: z.record(z.string(), z.unknown()).optional(),
   dryRun: z.boolean().optional().describe('True returns a quote and split requirements without creating assets or charging tokens.'),
-  quoteId: z.string().trim().min(1).max(200000).optional().describe('Opaque signed quote returned by dryRun; preserve it exactly. Required for submission after the user approves its total and item prices.'),
+  quoteId: z.string().trim().min(1).max(200000).optional().describe('Optional opaque signed quote returned by dryRun; preserve it exactly to submit that frozen plan. Omit for direct submission with server-owned planning and pricing.'),
   request_id: z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9_.:-]+$/).optional().describe('Stable Idempotency-Key for submission. Preserve the same key and inputs after uncertainty; never generate a new key to retry.')
 }).strict().superRefine((value, ctx) => {
-  if (value.dryRun !== true) {
-    for (const field of ['quoteId', 'request_id']) {
-      if (!value[field]) ctx.addIssue({ code: 'custom', path: [field], message: `${field} is required for a quoted batch submission.` });
-    }
+  if (value.dryRun !== true && !value.request_id) {
+    ctx.addIssue({ code: 'custom', path: ['request_id'], message: 'request_id is required for a batch submission.' });
   }
 });
 

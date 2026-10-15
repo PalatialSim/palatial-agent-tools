@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.14 — direct Variant batch submission
+
+- Submit Variant batches with count, feedback and a stable `request_id` in one
+  call; the server owns planning, pricing and admission when `quoteId` is omitted.
+- Keep free `dryRun` previews and explicit signed `quoteId` submission available
+  for callers who want to inspect and freeze a plan first.
+- Preserve idempotent replay, independent child billing and queue semantics;
+  mutation failures are never retried automatically by the client.
+- Make direct submission primary in tool guidance and packaged examples.
+
 ## 0.1.13 — quoted Variant batches
 
 - Add `palatial_create_variant_batch` and `palatial_get_variant_batch`, with
