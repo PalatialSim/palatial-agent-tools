@@ -660,7 +660,7 @@ test('Variant batch validates local fields while the server owns configured coun
   let calls = 0;
   const { client } = await fixture(t, async () => { calls++; return json({ dryRun: true }); });
   const valid = { count: 3, feedback: 'Different widths', dryRun: true };
-  for (const fields of [{ count: 0 }, { count: 1.5 }, { feedback: ' ' }, { feedback: 'x'.repeat(2001) }, { count: '3' }, { dryRun: 'true' }, { parameters: [] }, { unknown: 1 }]) {
+  for (const fields of [{ count: 0 }, { count: null }, { count: false }, { count: 1.5 }, { feedback: ' ' }, { feedback: 'x'.repeat(2001) }, { count: '3' }, { dryRun: 'true' }, { parameters: [] }, { unknown: 1 }]) {
     await assert.rejects(client.createVariantBatch('source-a', { ...valid, ...fields }));
   }
   await assert.rejects(client.createVariantBatch('../escape', valid));
@@ -702,4 +702,41 @@ test('Variant batch direct submission and exact replay omit quoteId and keep one
     assert.deepEqual(JSON.parse(init.body), { count: 3, feedback: input.feedback, parameters: input.parameters });
   }
   assert.equal(calls[0].init.body, calls[1].init.body);
+});
+
+
+test('Variant batches forward omitted count through preview, direct submit, quoted submit and exact replay', async t => {
+  const calls = [];
+  const { client } = await fixture(t, async (_url, init) => {
+    calls.push(init);
+    return json({ id: 'inferred-batch', count: 3, ...(JSON.parse(init.body).dryRun ? { dryRun: true, quoteId: 'signed-plan' } : {}) });
+  });
+  const feedback = 'Create three variants with different belly widths';
+  const requests = [
+    { feedback, dryRun: true },
+    { feedback, request_id: 'inferred-direct' },
+    { feedback, request_id: 'inferred-direct' },
+    { feedback, quoteId: 'signed-plan', request_id: 'inferred-quoted' },
+    { feedback, quoteId: 'signed-plan', request_id: 'inferred-quoted' }
+  ];
+  for (const request of requests) assert.equal((await client.createVariantBatch('source-a', request)).count, 3);
+  for (let i = 0; i < requests.length; i++) {
+    const { request_id, ...body } = requests[i];
+    assert.deepEqual(JSON.parse(calls[i].body), body);
+    assert.equal(Object.hasOwn(JSON.parse(calls[i].body), 'count'), false);
+    assert.equal(calls[i].headers['Idempotency-Key'], request_id);
+  }
+  assert.equal(calls[1].body, calls[2].body);
+  assert.equal(calls[3].body, calls[4].body);
+});
+
+test('Variant batches preserve the server ambiguous-count refusal without inferring or retrying', async t => {
+  let calls = 0;
+  const { client } = await fixture(t, async (_url, init) => {
+    calls++;
+    assert.equal(Object.hasOwn(JSON.parse(init.body), 'count'), false);
+    return json({ code: 'VARIANT_BATCH_COUNT_REQUIRED', message: 'Specify how many variants to create.' }, 400);
+  });
+  await assert.rejects(client.createVariantBatch('source-a', { feedback: 'Make some alternatives', request_id: 'ambiguous-count' }), error => error.code === 'VARIANT_BATCH_COUNT_REQUIRED');
+  assert.equal(calls, 1);
 });

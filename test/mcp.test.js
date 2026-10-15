@@ -288,3 +288,27 @@ test('MCP Variant batch tools carry quote, idempotency and partial-state contrac
   assert.match(guide.content[0].text, /palatial_create_variant_batch/);
   assert.match(guide.content[0].text, /totalEstimatedTokens/);
 });
+
+
+test('MCP optional Variant count stays absent through preview, direct, explicit quote and replay', async t => {
+  const calls = [];
+  const server = createServer({ clientFactory: async () => ({ createVariantBatch: async (id, body) => { calls.push({ id, body }); return { id: 'inferred-batch', count: 3 }; } }) });
+  const client = new Client({ name: 'variant-inferred-count', version: '1.0' });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a); await client.connect(b);
+  t.after(async () => { await client.close(); await server.close(); });
+  const tool = (await client.listTools()).tools.find(x => x.name === 'palatial_create_variant_batch');
+  assert.equal(tool.inputSchema.required.includes('count'), false);
+  const feedback = 'Create three vase variants';
+  const bodies = [{ feedback, dryRun: true }, { feedback, request_id: 'direct-inferred' }, { feedback, request_id: 'direct-inferred' }, { feedback, quoteId: 'signed-plan', request_id: 'quoted-inferred' }];
+  for (const body of bodies) {
+    const result = await client.callTool({ name: tool.name, arguments: { asset_id: 'source-a', ...body } });
+    assert.equal(result.isError, undefined);
+    assert.equal(result.structuredContent.count, 3);
+  }
+  assert.deepEqual(calls, bodies.map(body => ({ id: 'source-a', body })));
+  for (const count of [null, 0, -1, 1.5, '3', false]) {
+    assert.equal((await client.callTool({ name: tool.name, arguments: { asset_id: 'source-a', feedback, count, request_id: 'invalid-count' } })).isError, true);
+  }
+  assert.equal(calls.length, bodies.length);
+});

@@ -104,16 +104,20 @@ child assets. Do not loop over `palatial_create_variant`. The server validates
 the same source prerequisites as a single Variant, splits feedback into distinct
 requirements with its model, and owns queueing and per-child stage billing.
 
-1. With user authorization to generate the batch, submit `asset_id`, `count`,
-   `feedback`, optional `parameters`, and a stable `request_id` (for example a
+1. With user authorization to generate the batch, submit `asset_id`,
+   `feedback`, optional `count` and `parameters`, and a stable `request_id` (for example a
    UUID). The client sends `request_id` as `Idempotency-Key`. The server plans
    distinct requirements, prices and starts the batch in one request. A separate
-   quote call is optional.
+   quote call is optional. Explicit `count` wins. When omitted, the server model
+   infers the number from feedback within the normal server maximum. Never
+   infer or default a missing count in the client. If the server returns
+   `VARIANT_BATCH_COUNT_REQUIRED`, ask how many variants the user wants and
+   supply that count. Invalid supplied counts are rejected rather than inferred.
 2. When the user wants a preview first, call with `dryRun: true`. This creates
    no assets and charges nothing. Show the requirements, `totalEstimatedTokens`,
    each item's `estimatedTokens`, and the quote expiry. The estimate is not
-   prepaid. To submit that frozen plan, send the same count, feedback and
-   parameters with the complete opaque signed `quoteId` and a stable
+   prepaid. To submit that frozen plan, send the same feedback, parameters and count presence/value
+   as the preview with the complete opaque signed `quoteId` and a stable
    `request_id`. Preserve the full quote; do not shorten it to an ID. An expired
    explicit quote needs a new preview; do not silently drop it to submit a
    different plan.
@@ -130,10 +134,10 @@ requirements with its model, and owns queueing and per-child stage billing.
    identical replay retrieves the existing batch without duplicate charges.
    A changed payload with that key conflicts. Never switch keys after uncertainty.
 
-Direct submission:
+Direct submission with the number expressed in feedback:
 
 ```json
-{"asset_id":"SOURCE_ID","count":3,"feedback":"Create three vase variants with different belly widths","request_id":"YOUR_STABLE_UUID"}
+{"asset_id":"SOURCE_ID","feedback":"Create three vase variants with different belly widths","request_id":"YOUR_STABLE_UUID"}
 ```
 
 Optional preview:
