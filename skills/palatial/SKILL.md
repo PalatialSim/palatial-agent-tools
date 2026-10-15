@@ -97,10 +97,44 @@ For several assets at once, poll with `palatial_batch_get_statuses` instead of
 one call per asset. For a stuck job, `palatial_get_pipeline_progress` shows
 which stage it is on.
 
+## Several variants of one asset
+
+Use `palatial_create_variant_batch` for one request producing N independent
+child assets. Do not loop over `palatial_create_variant`. The server validates
+the same source prerequisites as a single Variant, splits feedback into distinct
+requirements with its model, and owns queueing and per-child stage billing.
+
+1. Call with `asset_id`, `count`, `feedback`, optional `parameters`, and
+   `dryRun: true`. This creates no assets and charges nothing. Show the returned
+   requirements, `totalEstimatedTokens`, each item's `estimatedTokens`, and
+   the quote expiry. The estimate is not prepaid.
+2. After the user approves that quote, submit the same count, feedback and
+   parameters with its `quoteId` and a stable `request_id` (for example a UUID).
+   The client sends the latter as `Idempotency-Key`. Do not submit an expired
+   quote; request a new preview and approval if its price changes.
+3. Poll `palatial_get_variant_batch` with the source `asset_id` and returned
+   `batch_id` (`id` in the API response). Report the individual child asset IDs,
+   requirements, states and Viewer URLs. `queued` means waiting for a family
+   slot, not a failed request. The server's batch maximum defaults to 8; its
+   concurrent limit is separate, so accepted work beyond that limit queues.
+4. A failed item leaves siblings running. Report its error without claiming the
+   entire batch succeeded or automatically starting paid replacement work.
+   If submission times out, preserve the exact payload and `request_id`; an
+   identical replay retrieves the existing batch without duplicate charges.
+   A changed payload with that key conflicts. Never switch keys after uncertainty.
+
+```json
+{"asset_id":"SOURCE_ID","count":3,"feedback":"Create three vase variants with different belly widths","dryRun":true}
+```
+
+```json
+{"asset_id":"SOURCE_ID","count":3,"feedback":"Create three vase variants with different belly widths","quoteId":"RETURNED_QUOTE_ID","request_id":"YOUR_STABLE_UUID"}
+```
+
 ## Rules that cost the user money when broken
 
 - Generation uses the shared organization/workspace net token balance.
-  `palatial_create_asset`, `palatial_create_variant`, and
+  `palatial_create_asset`, `palatial_create_variant`, `palatial_create_variant_batch`, and
   `palatial_reprocess_asset` charge only for successfully completed stages.
   Reads and export itself do not consume tokens.
 - New generations need a route start minimum: Diffusion 20, Parametric Low 40,

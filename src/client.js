@@ -22,6 +22,21 @@ export const reprocessSchema = z.object({
   parameters: z.record(z.string(), z.unknown()).describe('Supported processing-setting overrides; server validates allowed settings.').optional()
 }).strict().refine(value => !value.feedback || value.from, 'Feedback edits require a pipeline stage in from.');
 
+export const variantBatchSchema = z.object({
+  count: z.number().int().min(1).describe('Number of independent variants. The server configures the maximum (default 8); excess concurrent work queues.'),
+  feedback: z.string().trim().min(1).max(2000).describe('Overall variation request; the server model splits it into distinct requirements.'),
+  parameters: z.record(z.string(), z.unknown()).optional(),
+  dryRun: z.boolean().optional().describe('True returns a quote and split requirements without creating assets or charging tokens.'),
+  quoteId: z.string().trim().min(1).max(128).optional().describe('Quote returned by dryRun; required for submission after the user approves its total and item prices.'),
+  request_id: z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9_.:-]+$/).optional().describe('Stable Idempotency-Key for submission. Preserve the same key and inputs after uncertainty; never generate a new key to retry.')
+}).strict().superRefine((value, ctx) => {
+  if (value.dryRun !== true) {
+    for (const field of ['quoteId', 'request_id']) {
+      if (!value[field]) ctx.addIssue({ code: 'custom', path: [field], message: `${field} is required for a quoted batch submission.` });
+    }
+  }
+});
+
 const flatCreateSchema = z.object({
   source: z.enum(['text', 'image', 'cad', 'files']).describe('Input type: text prompt, one or more reference images, a CAD mesh with an optional reference image, or files: any mix of photos, 3D files and PDF datasheets, each 3D file with the purpose it serves.'),
   files: z.array(z.object({
@@ -632,6 +647,21 @@ export class PalatialClient {
       throw new Error('Variant response did not contain a valid asset ID. Inspect the Palatial dashboard before retrying.');
     }
     return { asset_id: variantId, parent_asset_id: assetId, status: statusValue(result) || 'SUBMITTED', details: result, ...billingMetadata(result), ...billingPause(result, this.base.origin, variantId), message: 'Variant created as an independent asset. Use palatial_get_asset to track it; do not submit again to poll.' };
+  }
+
+  async createVariantBatch(assetId, input) {
+    assetIdSchema.parse(assetId);
+    const { request_id, ...body } = variantBatchSchema.parse(input);
+    return this.request(`assets/${assetId}/variant-batches`, {
+      method: 'POST', body, idempotencyKey: request_id,
+      timeoutMs: this.autoTimeoutMs, structuredErrors: true
+    });
+  }
+
+  async getVariantBatch(assetId, batchId) {
+    assetIdSchema.parse(assetId);
+    assetIdSchema.parse(batchId);
+    return this.request(`assets/${assetId}/variant-batches/${batchId}`, { structuredErrors: true });
   }
 
   async cancel(assetId) {

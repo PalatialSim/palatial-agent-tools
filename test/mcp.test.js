@@ -18,7 +18,7 @@ test('real MCP protocol lists tools and calls the shared client without a model'
   await server.connect(a); await client.connect(b);
   t.after(async () => { await client.close(); await server.close(); });
   const list = await client.listTools();
-  assert.equal(list.tools.length, 19);
+  assert.equal(list.tools.length, 21);
   assert.equal(list.tools.find(x => x.name === 'palatial_download_asset').annotations.readOnlyHint, false);
   const result = await client.callTool({ name: 'palatial_get_asset', arguments: { asset_id: 'asset-test' } });
   assert.equal(result.structuredContent.asset_id, 'asset-test');
@@ -174,7 +174,7 @@ test('packaged CLI speaks stdio MCP and lists tools without authentication', asy
   const client = new Client({ name: 'stdio-test', version: '1.0' });
   await client.connect(transport);
   t.after(() => client.close());
-  assert.equal((await client.listTools()).tools.length, 19);
+  assert.equal((await client.listTools()).tools.length, 21);
   const result = await client.callTool({ name: 'palatial_doctor', arguments: {} });
   assert.equal(result.isError, true);
   assert.match(result.content[0].text, /not authenticated/);
@@ -251,4 +251,33 @@ test('MCP feedback repair uses the shared API schema and preserves reviewed inst
     assert.equal((await client.callTool({ name: tool.name, arguments: { asset_id: 'asset-a', ...invalid } })).isError, true);
   }
   assert.equal(calls.length, 1);
+});
+
+test('MCP Variant batch tools carry quote, idempotency and partial-state contracts through the protocol', async t => {
+  const calls = [];
+  const batch = { id: 'batch-a', status: 'processing', items: [{ index: 0, assetId: 'child-a', status: 'queued' }, { index: 1, status: 'failed', error: { code: 'ITEM_FAILED' } }] };
+  const server = createServer({ clientFactory: async () => ({
+    createVariantBatch: async (id, body) => { calls.push({ id, body }); return body.dryRun ? { dryRun: true, quoteId: 'quote-a', totalEstimatedTokens: 40 } : batch; },
+    getVariantBatch: async (id, batchId) => { calls.push({ id, batchId }); return batch; }
+  }) });
+  const client = new Client({ name: 'variant-batch-contract', version: '1.0' });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a); await client.connect(b);
+  t.after(async () => { await client.close(); await server.close(); });
+  const tools = (await client.listTools()).tools;
+  const create = tools.find(x => x.name === 'palatial_create_variant_batch');
+  const get = tools.find(x => x.name === 'palatial_get_variant_batch');
+  assert.equal(create.annotations.idempotentHint, true);
+  assert.equal(get.annotations.readOnlyHint, true);
+  const base = { asset_id: 'source-a', count: 2, feedback: 'Two belly widths' };
+  assert.equal((await client.callTool({ name: create.name, arguments: { ...base, dryRun: true } })).structuredContent.quoteId, 'quote-a');
+  assert.equal((await client.callTool({ name: create.name, arguments: base })).isError, true);
+  assert.equal(calls.length, 1, 'Unquoted/unkeyed writes are rejected before calling the API');
+  const submit = { ...base, quoteId: 'quote-a', request_id: 'stable-a' };
+  assert.deepEqual((await client.callTool({ name: create.name, arguments: submit })).structuredContent, batch);
+  assert.deepEqual(calls[1], { id: 'source-a', body: { count: 2, feedback: 'Two belly widths', quoteId: 'quote-a', request_id: 'stable-a' } });
+  assert.deepEqual((await client.callTool({ name: get.name, arguments: { asset_id: 'source-a', batch_id: 'batch-a' } })).structuredContent, batch);
+  const guide = await client.callTool({ name: 'palatial_guide', arguments: {} });
+  assert.match(guide.content[0].text, /palatial_create_variant_batch/);
+  assert.match(guide.content[0].text, /totalEstimatedTokens/);
 });

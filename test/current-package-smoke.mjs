@@ -42,7 +42,7 @@ try {
   try {
     assert.equal(client.getServerVersion().version, VERSION);
     const tools = (await client.listTools()).tools;
-    assert.equal(tools.length, 19);
+    assert.equal(tools.length, 21);
     const primaryCreate = tools.find(tool => tool.name === 'palatial_create_asset');
     assert.ok(primaryCreate.inputSchema.properties.mode.enum.includes('auto'));
     for (const field of ['quality', 'dryRun', 'request_id', 'source_urls', 'source_up_axis']) assert.ok(primaryCreate.inputSchema.properties[field]);

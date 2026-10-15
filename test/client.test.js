@@ -627,3 +627,59 @@ test('a files create leaves undeclared purposes to the server and refuses mixing
     [{ ...basic, files: [{ path: step }] }, /only with source=files/]
   ]) assert.throws(() => validateCreate(input), message);
 });
+
+test('Variant batch preview, submit, replay and query preserve the server batch contract', async t => {
+  const calls = [];
+  const quote = { dryRun: true, sourceAssetId: 'source-a', count: 3, quoteId: 'quote-a', totalEstimatedTokens: 60, items: [{ index: 0, feedback: 'Narrow belly', estimatedTokens: 20 }] };
+  const batch = { id: 'batch-a', sourceAssetId: 'source-a', status: 'processing', counts: { queued: 1, running: 1, failed: 1 }, items: [
+    { index: 0, assetId: 'child-a', feedback: 'Narrow belly', status: 'running', viewerUrl: 'https://dashboard.palatial.cloud/viewer/child-a' },
+    { index: 1, assetId: 'child-b', feedback: 'Wide belly', status: 'queued' },
+    { index: 2, feedback: 'Round belly', status: 'failed', error: { code: 'ITEM_FAILED', message: 'Failed to start' } }
+  ] };
+  const { client } = await fixture(t, async (url, init) => {
+    calls.push({ path: url.pathname, init });
+    return json(init.body && JSON.parse(init.body).dryRun ? quote : batch);
+  });
+  const base = { count: 3, feedback: 'Three belly widths', parameters: { mesh_quality: 'low' } };
+  assert.deepEqual(await client.createVariantBatch('source-a', { ...base, dryRun: true }), quote);
+  assert.equal(calls[0].init.headers['Idempotency-Key'], undefined);
+  const submission = { ...base, quoteId: 'quote-a', request_id: 'stable-batch-a' };
+  assert.deepEqual(await client.createVariantBatch('source-a', submission), batch);
+  assert.deepEqual(await client.createVariantBatch('source-a', submission), batch);
+  assert.equal(calls[1].init.headers['Idempotency-Key'], 'stable-batch-a');
+  assert.deepEqual(JSON.parse(calls[1].init.body), { ...base, quoteId: 'quote-a' });
+  assert.equal(calls[1].init.body, calls[2].init.body);
+  assert.deepEqual(await client.getVariantBatch('source-a', 'batch-a'), batch);
+  assert.equal(calls[3].path, '/api/v1/external/assets/source-a/variant-batches/batch-a');
+  assert.equal(calls[3].init.method, 'GET');
+  assert.equal(calls.filter(c => c.init.method === 'POST').length, 3, 'No client-side child creation loop');
+});
+
+test('Variant batch validates local fields while the server owns configured count limits', async t => {
+  let calls = 0;
+  const { client } = await fixture(t, async () => { calls++; return json({ dryRun: true }); });
+  const valid = { count: 3, feedback: 'Different widths', dryRun: true };
+  for (const fields of [{ count: 0 }, { count: 1.5 }, { feedback: ' ' }, { feedback: 'x'.repeat(2001) }, { count: '3' }, { dryRun: 'true' }, { parameters: [] }, { unknown: 1 }]) {
+    await assert.rejects(client.createVariantBatch('source-a', { ...valid, ...fields }));
+  }
+  await assert.rejects(client.createVariantBatch('../escape', valid));
+  await assert.rejects(client.getVariantBatch('source-a', '../escape'));
+  await assert.rejects(client.createVariantBatch('source-a', { count: 3, feedback: 'Different widths', quoteId: 'quote-a' }));
+  await assert.rejects(client.createVariantBatch('source-a', { count: 3, feedback: 'Different widths', request_id: 'key-a' }));
+  assert.equal(calls, 0);
+  await client.createVariantBatch('source-a', { ...valid, count: 9 });
+  assert.equal(calls, 1, 'A configured maximum belongs to the API, not a fixed client cap');
+});
+
+test('Variant batch preserves actionable API refusals and never retries ambiguous submissions', async t => {
+  let calls = 0;
+  const { client } = await fixture(t, async () => {
+    calls++;
+    if (calls === 1) return json({ code: 'VARIANT_SOURCE_NOT_READY', message: 'Source must be READY', hint: 'Wait for the source to complete.' }, 409);
+    throw Error('connection closed');
+  });
+  const input = { count: 3, feedback: 'Different widths', quoteId: 'quote-a', request_id: 'key-a' };
+  await assert.rejects(client.createVariantBatch('source-a', input), error => error.code === 'VARIANT_SOURCE_NOT_READY' && error.hint === 'Wait for the source to complete.');
+  await assert.rejects(client.createVariantBatch('source-a', input), /may have accepted/);
+  assert.equal(calls, 2);
+});
