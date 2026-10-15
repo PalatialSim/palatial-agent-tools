@@ -643,11 +643,12 @@ test('Variant batch preview, submit, replay and query preserve the server batch 
   const base = { count: 3, feedback: 'Three belly widths', parameters: { mesh_quality: 'low' } };
   assert.deepEqual(await client.createVariantBatch('source-a', { ...base, dryRun: true }), quote);
   assert.equal(calls[0].init.headers['Idempotency-Key'], undefined);
-  const submission = { ...base, quoteId: 'quote-a', request_id: 'stable-batch-a' };
+  const signedQuote = 'q'.repeat(10000);
+  const submission = { ...base, quoteId: signedQuote, request_id: 'stable-batch-a' };
   assert.deepEqual(await client.createVariantBatch('source-a', submission), batch);
   assert.deepEqual(await client.createVariantBatch('source-a', submission), batch);
   assert.equal(calls[1].init.headers['Idempotency-Key'], 'stable-batch-a');
-  assert.deepEqual(JSON.parse(calls[1].init.body), { ...base, quoteId: 'quote-a' });
+  assert.deepEqual(JSON.parse(calls[1].init.body), { ...base, quoteId: signedQuote });
   assert.equal(calls[1].init.body, calls[2].init.body);
   assert.deepEqual(await client.getVariantBatch('source-a', 'batch-a'), batch);
   assert.equal(calls[3].path, '/api/v1/external/assets/source-a/variant-batches/batch-a');

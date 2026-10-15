@@ -109,13 +109,16 @@ requirements with its model, and owns queueing and per-child stage billing.
    requirements, `totalEstimatedTokens`, each item's `estimatedTokens`, and
    the quote expiry. The estimate is not prepaid.
 2. After the user approves that quote, submit the same count, feedback and
-   parameters with its `quoteId` and a stable `request_id` (for example a UUID).
+   parameters with its complete opaque signed `quoteId` and a stable `request_id`
+   (for example a UUID). Preserve the full quote; do not shorten it to an ID.
    The client sends the latter as `Idempotency-Key`. Do not submit an expired
    quote; request a new preview and approval if its price changes.
 3. Poll `palatial_get_variant_batch` with the source `asset_id` and returned
    `batch_id` (`id` in the API response). Report the individual child asset IDs,
    requirements, states and Viewer URLs. `queued` means waiting for a family
-   slot, not a failed request. The server's batch maximum defaults to 8; its
+   slot, not a failed request. A queued item can expose a reserved asset ID
+   before its child exists; its Viewer URL appears after admission. The
+   server's batch maximum defaults to 8; its
    concurrent limit is separate, so accepted work beyond that limit queues.
 4. A failed item leaves siblings running. Report its error without claiming the
    entire batch succeeded or automatically starting paid replacement work.

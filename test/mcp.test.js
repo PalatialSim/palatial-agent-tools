@@ -273,9 +273,10 @@ test('MCP Variant batch tools carry quote, idempotency and partial-state contrac
   assert.equal((await client.callTool({ name: create.name, arguments: { ...base, dryRun: true } })).structuredContent.quoteId, 'quote-a');
   assert.equal((await client.callTool({ name: create.name, arguments: base })).isError, true);
   assert.equal(calls.length, 1, 'Unquoted/unkeyed writes are rejected before calling the API');
-  const submit = { ...base, quoteId: 'quote-a', request_id: 'stable-a' };
+  const signedQuote = 'q'.repeat(10000);
+  const submit = { ...base, quoteId: signedQuote, request_id: 'stable-a' };
   assert.deepEqual((await client.callTool({ name: create.name, arguments: submit })).structuredContent, batch);
-  assert.deepEqual(calls[1], { id: 'source-a', body: { count: 2, feedback: 'Two belly widths', quoteId: 'quote-a', request_id: 'stable-a' } });
+  assert.deepEqual(calls[1], { id: 'source-a', body: { count: 2, feedback: 'Two belly widths', quoteId: signedQuote, request_id: 'stable-a' } });
   assert.deepEqual((await client.callTool({ name: get.name, arguments: { asset_id: 'source-a', batch_id: 'batch-a' } })).structuredContent, batch);
   const guide = await client.callTool({ name: 'palatial_guide', arguments: {} });
   assert.match(guide.content[0].text, /palatial_create_variant_batch/);
