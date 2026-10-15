@@ -15,7 +15,7 @@ The primary scene tools match the four API operations:
    a stable UUID `request_id`, authorized `workspace`, instructions and
    `confirm_spend: true` after obtaining authorization for director and object
    charges. Use `source_paths` for named local files or `sources` containing
-   `{filename, media_type, url}` for HTTPS photos, videos or floor plans.
+   `{filename, media_type, url}` for photos, videos or floor plans on public HTTPS hostnames. No credentials, fragments, IP addresses, or loopback, link-local, or metadata hosts.
    Set `auto_continue: true` to continue checkpoints and continuation questions
    automatically using the original instructions. The default is false.
 2. `palatial_get_scene` returns status, progress, object inventory, cumulative

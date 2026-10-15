@@ -1,12 +1,20 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
+import { assertLocalPath, assertPublicHttpsUrl, openRegularFile, readExact } from './input-guards.js';
 
-const sourceUrl = z.url().refine(value => {
-  const url = new URL(value);
-  return url.protocol === 'https:' && !url.username && !url.password && !url.hash;
-}, 'Source URLs must use HTTPS without credentials or a fragment.');
+const maxAutoSources = 32;
+const maxPathLength = 4096;
+const maxUrlLength = 8192;
+const localPath = z.string().min(1).max(maxPathLength).superRefine((value, ctx) => {
+  try { assertLocalPath(value); }
+  catch (error) { ctx.addIssue({ code: 'custom', message: error.message }); }
+});
+const sourceUrl = z.url().check(z.maxLength(maxUrlLength)).superRefine((value, ctx) => {
+  try { assertPublicHttpsUrl(value); }
+  catch (error) { ctx.addIssue({ code: 'custom', message: error.message }); }
+});
 export const autoCreateSchema = z.object({
   description: z.string().trim().min(1).max(2000).describe('What to build, including dimensions, materials, moving parts and intended use. Optional when media supplies the input.').optional(),
   name: z.string().trim().min(4).max(50).regex(/^[a-zA-Z\d_\-.\s]+$/).describe('Optional asset name; the server supplies one when omitted.').optional(),
@@ -15,12 +23,13 @@ export const autoCreateSchema = z.object({
   quality: z.enum(['speed', 'balanced', 'accuracy']).describe('Optional goal preference. The server chooses the route and all build settings.').optional(),
   source_up_axis: z.enum(['x', 'y', 'z']).describe('CAD source metadata: the authored up axis. Required for STEP/IGES and OBJ/STL/PLY/FBX when not otherwise known. GLB/glTF use normative Y-up and USD preserves its authored frame.').optional(),
   meters_per_unit: z.number().positive().finite().describe('CAD source metadata: meters represented by one source unit. Required for OBJ/STL/PLY/FBX. STEP/IGES retain canonical scale, GLB/glTF use meters and USD preserves authored units.').optional(),
-  file_paths: z.array(z.string().min(1)).describe('Local photos or CAD/3D files to upload as repeated files, at most 20 MiB each and 64 MiB total. Only these named files are read. The server validates route input limits.').optional(),
-  source_urls: z.array(sourceUrl).describe('HTTPS photo or CAD/3D source URLs. Palatial retrieves and validates the media; the client does not download them.').optional(),
+  file_paths: z.array(localPath).max(maxAutoSources).describe('Local photos or CAD/3D files to upload as repeated files, at most 32 paths of 4096 characters, 20 MiB each and 64 MiB total. Only these named regular files are read. The server validates route input limits.').optional(),
+  source_urls: z.array(sourceUrl).max(maxAutoSources).describe('Public HTTPS photo or CAD/3D source URLs, at most 32 of 8192 characters. No credentials, fragments, IP addresses, or loopback, link-local, or metadata hosts. Palatial retrieves and validates the media; the client does not download them.').optional(),
   dryRun: z.boolean().describe('Select a route and settings only: no asset creation, submission or token charge; defaults to false.').optional(),
   request_id: z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9_.:-]+$/).describe('Stable idempotency ID sent as Idempotency-Key for submission. Preserve it after uncertainty; identical replays reuse the asset, changed inputs conflict. Generated once when omitted and saved in the local receipt. Not needed for dryRun.').optional()
 }).strict().superRefine((input, ctx) => {
   if (!input.description && !input.file_paths?.length && !input.source_urls?.length) ctx.addIssue({ code: 'custom', message: 'Provide a description, a local file, or a source URL.' });
+  if ((input.file_paths?.length || 0) + (input.source_urls?.length || 0) > maxAutoSources) ctx.addIssue({ code: 'custom', message: 'Automatic generation accepts at most 32 combined local files and source URLs.' });
 });
 
 // The existing create tool uses its established file argument names. This is
@@ -56,22 +65,29 @@ async function requestBody(input) {
     if (key === 'urls') body.append(key, JSON.stringify(value));
     else for (const item of Array.isArray(value) ? value : [value]) body.append(key, String(item));
   }
+  if (file_paths.length > maxAutoSources) throw new Error('Automatic generation accepts at most 32 combined local files and source URLs.');
   let localBytes = 0;
   const sources = [];
   for (const filename of file_paths) {
+    assertLocalPath(filename);
     const absolute = path.resolve(filename);
+    assertLocalPath(absolute);
     const type = sourceTypes[path.extname(absolute).toLowerCase()];
     if (!type) throw new Error('Auto generation accepts PNG, JPEG, WebP or supported CAD/3D files.');
-    const info = await stat(absolute);
+    const info = await lstat(absolute);
+    if (info.isSymbolicLink()) throw new Error('Input must be a regular file, not a symbolic link.');
     if (!info.isFile() || info.size === 0 || info.size > 20 * 1024 ** 2) throw new Error('Input must be a nonempty regular file of at most 20 MiB.');
     localBytes += info.size;
     if (localBytes > 64 * 1024 ** 2) throw new Error('Automatic generation accepts at most 64 MiB of source media in total.');
     sources.push({ absolute, type, bytes: info.size });
   }
   for (const source of sources) {
-    const bytes = await readFile(source.absolute);
-    if (bytes.length !== source.bytes) throw new Error('A source file changed before upload; review the inputs and try again.');
-    body.append('files', new Blob([bytes], { type: source.type }), path.basename(source.absolute));
+    const opened = await openRegularFile(source.absolute);
+    try {
+      if (!opened.info.isFile() || opened.info.size !== source.bytes) throw new Error('A source file changed before upload; review the inputs and try again.');
+      const bytes = await readExact(opened.handle, source.bytes);
+      body.append('files', new Blob([bytes], { type: source.type }), path.basename(source.absolute));
+    } finally { await opened.handle.close(); }
   }
   return body;
 }

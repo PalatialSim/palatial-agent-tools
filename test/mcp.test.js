@@ -6,7 +6,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { createServer } from '../src/mcp.js';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { runSetup } from '../src/setup.js';
@@ -210,15 +210,26 @@ test('setup produces shell-free commands for both actual terminal clients', asyn
 });
 
 test('setup reports failure when registration succeeds but the Claude skill is not installed', async () => {
-  const setup = await runSetup({
-    client: 'claude-code',
-    executable: '/package/bin/palatial-agent.js',
-    runner: () => ({ status: 0, stdout: '', stderr: '' }),
-    skillInstaller: async () => ({ installed: false, action: 'skipped', reason: 'unowned directory' })
-  });
-  assert.equal(setup.output.results[0].registered, true);
-  assert.equal(setup.output.claude_code_skill.action, 'skipped');
-  assert.equal(setup.failed, true);
+  const root = await mkdtemp(path.join(tmpdir(), 'palatial-setup-claude-'));
+  try {
+    const bin = path.join(root, 'bin');
+    const cwd = path.join(root, 'cwd');
+    await mkdir(bin);
+    await mkdir(cwd);
+    await writeFile(path.join(bin, 'claude'), 'cli');
+    const claude = await realpath(path.join(bin, 'claude'));
+    const setup = await runSetup({
+      client: 'claude-code',
+      executable: '/package/bin/palatial-agent.js',
+      env: { PATH: bin },
+      cwd,
+      runner: command => { assert.equal(command, claude); return { status: 0, stdout: '', stderr: '' }; },
+      skillInstaller: async () => ({ installed: false, action: 'skipped', reason: 'unowned directory' })
+    });
+    assert.equal(setup.output.results[0].registered, true);
+    assert.equal(setup.output.claude_code_skill.action, 'skipped');
+    assert.equal(setup.failed, true);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 

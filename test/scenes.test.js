@@ -165,13 +165,17 @@ test('stale answer returns server conflict with no retry or implicit regeneratio
 
 test('versioned scene download caches verified receipts and preserves existing output', async t => {
   const directory = await temporary(t); let requests = 0;
-  const client = api(async () => { requests++; return new Response(zip, { headers: { 'content-type': 'application/zip', etag: `"${version}"`, 'content-length': String(zip.length) } }); });
+  const client = api(async url => {
+    requests++;
+    if (String(url).includes('/download')) return new Response(zip, { headers: { 'content-type': 'application/zip', etag: `"${version}"`, 'content-length': String(zip.length) } });
+    return response({ download: { version } });
+  });
   const args = { scene_id: sceneId, version, output_dir: directory };
   const first = await client.downloadScene(args); assert.equal(first.cached, false);
-  assert.equal((await client.downloadScene(args)).cached, true); assert.equal(requests, 1);
+  assert.equal((await client.downloadScene(args)).cached, true); assert.equal(requests, 2);
   await writeFile(first.file, 'modified');
-  await assert.rejects(client.downloadScene(args), /receipt is invalid/);
-  assert.equal(requests, 1);
+  await assert.rejects(client.downloadScene(args), /already exists/);
+  assert.equal(requests, 2);
   assert.equal(await readFile(first.file, 'utf8'), 'modified');
 });
 
@@ -235,7 +239,7 @@ test('cached archive cannot claim another version even when its receipt matches 
   const receipt = JSON.parse(await readFile(first.receipt_file, 'utf8'));
   receipt.sha256 = hash(changedZip);
   await writeFile(first.receipt_file, JSON.stringify(receipt));
-  await assert.rejects(client.downloadScene(args), /receipt is invalid/);
+  await assert.rejects(client.downloadScene(args), /already exists/);
 });
 
 test('deprecated recovery client methods remain callable without advertising recovery tools', async () => {
