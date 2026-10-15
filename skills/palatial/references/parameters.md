@@ -78,7 +78,7 @@ a primitive collider on Diffusion/Low.
 | `quality` | `speed`, `balanced`, `accuracy` | `balanced` | all | mode=auto only: a preference, not a guarantee that a route or locked setting can change. |
 | `dryRun` | boolean | `false` | all | mode=auto only: selection without asset creation, submission, token charges or a local receipt. |
 | `request_id` | 1-128 letters, digits, periods, underscores, colons or hyphens | generated once for auto submission | all | mode=auto only: sent as Idempotency-Key, stored before submission and returned. Preserve the original ID and identical inputs after uncertainty. Not required for dryRun. |
-| `source_urls` | HTTPS media URLs | none | all | mode=auto only: forwarded as urls; server downloads and validates the sources. No credentials or URL fragments. |
+| `source_urls` | HTTPS media URLs | none | all | mode=auto only: forwarded as urls; server downloads and validates the sources. Public hostnames only, at most 32 of 8192 characters combined with local files. No credentials, fragments, IP addresses, or loopback, link-local, or metadata hosts. |
 | `source_up_axis` | `x`, `y`, `z` | format-dependent for auto CAD | all | mode=auto only: authored CAD source metadata. STEP/IGES require the axis; OBJ/STL/PLY/FBX require axis and meters_per_unit. GLB/glTF use Y-up/meters; USD preserves authored frame. |
 
 The server validates at most 8 automatic sources, 20 MiB each and 64 MiB total.

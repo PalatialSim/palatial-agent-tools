@@ -6,7 +6,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { createServer } from '../src/mcp.js';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { runSetup } from '../src/setup.js';
@@ -209,31 +209,27 @@ test('setup produces shell-free commands for both actual terminal clients', asyn
   assert.ok(claude_code_skill.files.includes('SKILL.md'));
 });
 
-test('setup reports failure when registration succeeds but the Claude skill is not installed', async t => {
-  if (process.platform === 'win32') {
-    const root = await mkdtemp(path.join(tmpdir(), 'palatial-setup-path-'));
-    await writeFile(path.join(root, 'claude.EXE'), 'mock runner fixture');
-    const previousPath = process.env.PATH;
-    const previousPathExt = process.env.PATHEXT;
-    process.env.PATH = root;
-    process.env.PATHEXT = '.EXE';
-    t.after(async () => {
-      if (previousPath === undefined) delete process.env.PATH;
-      else process.env.PATH = previousPath;
-      if (previousPathExt === undefined) delete process.env.PATHEXT;
-      else process.env.PATHEXT = previousPathExt;
-      await rm(root, { recursive: true, force: true });
+test('setup reports failure when registration succeeds but the Claude skill is not installed', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'palatial-setup-claude-'));
+  try {
+    const bin = path.join(root, 'bin');
+    const cwd = path.join(root, 'cwd');
+    await mkdir(bin);
+    await mkdir(cwd);
+    await writeFile(path.join(bin, process.platform === 'win32' ? 'claude.EXE' : 'claude'), 'cli');
+    const claude = await realpath(path.join(bin, process.platform === 'win32' ? 'claude.EXE' : 'claude'));
+    const setup = await runSetup({
+      client: 'claude-code',
+      executable: '/package/bin/palatial-agent.js',
+      env: { PATH: bin },
+      cwd,
+      runner: command => { assert.equal(command, claude); return { status: 0, stdout: '', stderr: '' }; },
+      skillInstaller: async () => ({ installed: false, action: 'skipped', reason: 'unowned directory' })
     });
-  }
-  const setup = await runSetup({
-    client: 'claude-code',
-    executable: '/package/bin/palatial-agent.js',
-    runner: () => ({ status: 0, stdout: '', stderr: '' }),
-    skillInstaller: async () => ({ installed: false, action: 'skipped', reason: 'unowned directory' })
-  });
-  assert.equal(setup.output.results[0].registered, true);
-  assert.equal(setup.output.claude_code_skill.action, 'skipped');
-  assert.equal(setup.failed, true);
+    assert.equal(setup.output.results[0].registered, true);
+    assert.equal(setup.output.claude_code_skill.action, 'skipped');
+    assert.equal(setup.failed, true);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 

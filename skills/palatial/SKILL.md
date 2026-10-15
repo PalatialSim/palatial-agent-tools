@@ -38,7 +38,7 @@ Palatial key and consume no generation tokens.
 When the user wants Palatial to choose the generation method and settings,
 use `palatial_create_asset` with `mode: auto`, their `source` and description
 or existing local input arguments (`image_path`, `image_paths`, `mesh_path`,
-or `files`). HTTPS `source_urls` work without local uploads. Set optional
+or `files`). HTTPS `source_urls` on public hostnames work without local uploads. Set optional
 `engine` and `quality` (`speed`, `balanced`, or `accuracy`) goals, and no build
 settings. With media, `name` and `description` are optional; text-only input
 needs a description. The server uses the shared Dashboard selection policy and
