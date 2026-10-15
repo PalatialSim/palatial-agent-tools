@@ -85,6 +85,8 @@ export function windowsSetupInvocation(command, args) {
 function inside(child, parent) {
   const left = process.platform === 'win32' ? child.toLowerCase() : child;
   const right = process.platform === 'win32' ? parent.toLowerCase() : parent;
+  // Filesystem root is not a repository: installed executables necessarily live beneath it.
+  if (right === path.parse(right).root) return left === right;
   const root = right.endsWith(path.sep) ? right : right + path.sep;
   return left === right || left.startsWith(root);
 }

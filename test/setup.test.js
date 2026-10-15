@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import test from 'node:test';
-import { resolveWindowsExecutable, runSetup } from '../src/setup.js';
+import { resolveSetupCommand, resolveWindowsExecutable, runSetup } from '../src/setup.js';
 
 test('non-Windows setup resolves codex and claude to absolute executables', { skip: process.platform === 'win32' }, async t => {
   const { mkdtemp, mkdir, writeFile, rm } = await import('node:fs/promises');
@@ -98,4 +98,13 @@ test('Windows setup runs a PATH batch shim with literal arguments through the sy
   const result = spawnSync(invocation.command, invocation.args, { ...invocation.options, cwd: root, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr || result.error?.message);
   assert.deepEqual(JSON.parse(result.stdout.trim()), args);
+});
+
+
+test('setup can resolve an installed executable when cwd is the filesystem root', () => {
+  const executable = resolveSetupCommand(path.basename(process.execPath), {
+    cwd: path.parse(process.execPath).root,
+    env: { PATH: path.dirname(process.execPath) },
+  });
+  assert.equal(path.isAbsolute(executable), true);
 });
