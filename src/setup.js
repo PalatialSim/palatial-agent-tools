@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import crossSpawn from 'cross-spawn';
 import { installClaudeSkill } from './guide.js';
 
 const defaultFileExists = candidate => {
@@ -36,14 +37,14 @@ export function resolveWindowsExecutable(command, {
   } catch {
     cwdReal = path.resolve(cwd);
   }
-  const names = new Set([command]);
+  const names = new Set();
   for (const extension of pathExt.split(';')) {
     const suffix = extension.trim();
-    if (suffix) names.add(command + suffix);
+    if (/^\.(?:com|exe|bat|cmd)$/i.test(suffix)) names.add(command + suffix);
   }
   for (const entry of pathEnv.split(';')) {
     const directory = entry.trim();
-    if (!directory || directory === '.') continue;
+    if (!directory || !path.isAbsolute(directory)) continue;
     const resolvedDirectory = path.resolve(directory);
     let directoryReal = resolvedDirectory;
     try {
@@ -51,7 +52,8 @@ export function resolveWindowsExecutable(command, {
     } catch {
       directoryReal = resolvedDirectory;
     }
-    if (sameOrInside(directoryReal, cwdReal)) continue;
+    if (path.relative(cwdReal, directoryReal) === '') continue;
+    if (sameOrInside(directoryReal, cwdReal) && !sameOrInside(resolvedDirectory, cwd)) continue;
     for (const name of names) {
       const candidate = path.join(resolvedDirectory, name);
       if (!fileExists(candidate)) continue;
@@ -61,11 +63,23 @@ export function resolveWindowsExecutable(command, {
       } catch {
         continue;
       }
-      if (sameOrInside(resolved, cwdReal)) continue;
+      if (path.relative(cwdReal, path.dirname(resolved)) === '') continue;
+      if (sameOrInside(resolved, cwdReal) && !sameOrInside(candidate, cwd)) continue;
       return resolved;
     }
   }
   throw new Error(`${command} was not found on PATH`);
+}
+
+export function windowsSetupInvocation(command, args) {
+  if (/\.(?:com|exe)$/i.test(command)) return { command, args, options: {} };
+  const systemRoot = process.env.SystemRoot;
+  if (!systemRoot || !path.isAbsolute(systemRoot)) throw new Error('The Windows command processor is unavailable.');
+  const shell = path.join(systemRoot, 'System32', 'cmd.exe');
+  if (!defaultFileExists(shell)) throw new Error('The Windows command processor is unavailable.');
+  // Use the pinned parser's Windows quoting, then replace its ambient shell lookup.
+  const parsed = crossSpawn._parse(command, args, {});
+  return { command: shell, args: parsed.args, options: parsed.options };
 }
 
 export async function runSetup({ client, executable, dryRun = false, runner = spawnSync, skillInstaller = installClaudeSkill } = {}) {
@@ -78,14 +92,19 @@ export async function runSetup({ client, executable, dryRun = false, runner = sp
 
   const results = commands.map(item => {
     let command = item.command;
+    let args = item.args;
+    let options = {};
     if (process.platform === 'win32') {
       try {
-        command = resolveWindowsExecutable(item.command);
+        const invocation = windowsSetupInvocation(resolveWindowsExecutable(item.command), item.args);
+        command = invocation.command;
+        args = invocation.args;
+        options = invocation.options;
       } catch (error) {
         return { client: item.client, registered: false, message: error.message };
       }
     }
-    const result = runner(command, item.args, { encoding: 'utf8', shell: false, timeout: 30000 });
+    const result = runner(command, args, { encoding: 'utf8', shell: false, timeout: 30000, ...options });
     return { client: item.client, registered: result.status === 0, message: result.error?.message || result.stderr?.trim() || result.stdout?.trim() };
   });
   const skill = wantsSkill ? await skillInstaller().catch(error => ({ installed: false, action: 'failed', reason: error.message })) : undefined;
