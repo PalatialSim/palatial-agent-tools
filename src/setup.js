@@ -12,7 +12,7 @@ const defaultFileExists = candidate => {
   }
 };
 
-const defaultRealPath = candidate => fs.realpathSync(candidate);
+const defaultRealPath = candidate => fs.realpathSync.native(candidate);
 
 const sameOrInside = (candidate, root) => {
   if (!candidate || !root) return false;
