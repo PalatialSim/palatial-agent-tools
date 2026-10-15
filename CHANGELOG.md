@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.13 — quoted Variant batches
+
+- Add `palatial_create_variant_batch` and `palatial_get_variant_batch`, with
+  matching API-client methods for server-owned batches of independent variants.
+- Preview distinct model-generated requirements and total/per-item estimates
+  with a free `dryRun`; submit the approved `quoteId` with a stable
+  `request_id` sent as `Idempotency-Key`.
+- Preserve queued children, partial failures, Viewer links and actionable
+  server errors without client-side creation loops or automatic mutation retries.
+- Document quote approval, per-child billing and safe replay in `palatial_guide`.
+  Release after the batch API is deployed and verified.
+
 ## 0.1.12 — automatic mode on existing creation APIs
 
 - Add `mode: auto` to the existing `palatial_create_asset` tool for text,
