@@ -1,5 +1,20 @@
 import { lstatSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
+import crossSpawn from 'cross-spawn';
+import fs from 'node:fs';
+const defaultFileExists = candidate => { try { return fs.statSync(candidate).isFile(); } catch { return false; } };
+export function windowsSetupInvocation(command, args) {
+  if (/\.(?:com|exe)$/i.test(command)) return { command, args, options: {} };
+  const systemRoot = process.env.SystemRoot;
+  if (!systemRoot || !path.isAbsolute(systemRoot)) throw new Error('The Windows command processor is unavailable.');
+  const shell = path.join(systemRoot, 'System32', 'cmd.exe');
+  if (!defaultFileExists(shell)) throw new Error('The Windows command processor is unavailable.');
+  // Use the pinned parser's Windows quoting, then replace its ambient shell lookup.
+  const parsed = crossSpawn._parse(command, args, {});
+  return { command: shell, args: parsed.args, options: parsed.options };
+}
+
+
 import { spawnSync } from 'node:child_process';
 import { installClaudeSkill } from './guide.js';
 
@@ -15,7 +30,7 @@ function inside(child, parent) {
 export function resolveSetupCommand(name, { env = process.env, cwd = process.cwd(), platform = process.platform } = {}) {
   const pathKey = platform === 'win32' ? Object.keys(env).find(key => key.toLowerCase() === 'path') : 'PATH';
   const entries = (env[pathKey] || '').split(path.delimiter);
-  const cwdReal = realpathSync(cwd);
+  const cwdReal = realpathSync.native(cwd);
   const names = [];
   const add = candidate => { if (!names.some(item => item.toLowerCase() === candidate.toLowerCase())) names.push(candidate); };
   add(name);
@@ -23,7 +38,7 @@ export function resolveSetupCommand(name, { env = process.env, cwd = process.cwd
   for (const entry of entries) {
     if (!entry || !path.isAbsolute(entry)) continue;
     let dirReal;
-    try { dirReal = realpathSync(entry); }
+    try { dirReal = realpathSync.native(entry); }
     catch { continue; }
     if (inside(dirReal, cwdReal)) continue;
     for (const candidateName of names) {
@@ -32,7 +47,7 @@ export function resolveSetupCommand(name, { env = process.env, cwd = process.cwd
       try {
         const info = lstatSync(candidate);
         if (!info.isFile() && !info.isSymbolicLink()) continue;
-        real = realpathSync(candidate);
+        real = realpathSync.native(candidate);
         if (!statSync(real).isFile()) continue;
       } catch { continue; }
       if (inside(real, cwdReal)) continue;
@@ -58,7 +73,8 @@ export async function runSetup({ client, executable, dryRun = false, runner = sp
       results.push({ client: item.client, registered: false, message: error.message });
       continue;
     }
-    const result = runner(command, item.args, { encoding: 'utf8', shell: false, timeout: 30000 });
+    const invocation = process.platform === 'win32' ? windowsSetupInvocation(command, item.args) : { command, args: item.args, options: {} };
+    const result = runner(invocation.command, invocation.args, { encoding: 'utf8', shell: false, timeout: 30000, ...invocation.options });
     results.push({ client: item.client, registered: result.status === 0, message: result.error?.message || result.stderr?.trim() || result.stdout?.trim() });
   }
   const skill = wantsSkill ? await skillInstaller().catch(error => ({ installed: false, action: 'failed', reason: error.message })) : undefined;
