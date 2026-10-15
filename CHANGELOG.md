@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.15 — optional Variant batch count
+
+- Let the server model infer omitted batch `count` from feedback without a
+  client-side default. An explicit count still wins and remains validated.
+- Preserve omitted count through direct submission, optional free previews,
+  signed-quote submission and exact idempotent replay.
+- Explain `VARIANT_BATCH_COUNT_REQUIRED` for ambiguous requests and retain
+  the normal server count cap, queueing and independent child billing.
+
 ## 0.1.14 — direct Variant batch submission
 
 - Submit Variant batches with count, feedback and a stable `request_id` in one

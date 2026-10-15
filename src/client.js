@@ -23,7 +23,7 @@ export const reprocessSchema = z.object({
 }).strict().refine(value => !value.feedback || value.from, 'Feedback edits require a pipeline stage in from.');
 
 export const variantBatchSchema = z.object({
-  count: z.number().int().min(1).describe('Number of independent variants. The server configures the maximum (default 8); excess concurrent work queues.'),
+  count: z.number().int().min(1).optional().describe('Optional number of independent variants. An explicit count wins; when omitted, the server model infers it from feedback and returns VARIANT_BATCH_COUNT_REQUIRED if ambiguous. The server configures the maximum (default 8); excess concurrent work queues.'),
   feedback: z.string().trim().min(1).max(2000).describe('Overall variation request; the server model splits it into distinct requirements.'),
   parameters: z.record(z.string(), z.unknown()).optional(),
   dryRun: z.boolean().optional().describe('True returns a quote and split requirements without creating assets or charging tokens.'),
