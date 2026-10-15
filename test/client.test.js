@@ -666,7 +666,8 @@ test('Variant batch validates local fields while the server owns configured coun
   await assert.rejects(client.createVariantBatch('../escape', valid));
   await assert.rejects(client.getVariantBatch('source-a', '../escape'));
   await assert.rejects(client.createVariantBatch('source-a', { count: 3, feedback: 'Different widths', quoteId: 'quote-a' }));
-  await assert.rejects(client.createVariantBatch('source-a', { count: 3, feedback: 'Different widths', request_id: 'key-a' }));
+  await assert.rejects(client.createVariantBatch('source-a', { count: 3, feedback: 'Different widths', request_id: 'key-a', quoteId: '' }));
+  await assert.rejects(client.createVariantBatch('source-a', { count: 3, feedback: 'Different widths', request_id: 'key-a', quoteId: 123 }));
   assert.equal(calls, 0);
   await client.createVariantBatch('source-a', { ...valid, count: 9 });
   assert.equal(calls, 1, 'A configured maximum belongs to the API, not a fixed client cap');
@@ -683,4 +684,22 @@ test('Variant batch preserves actionable API refusals and never retries ambiguou
   await assert.rejects(client.createVariantBatch('source-a', input), error => error.code === 'VARIANT_SOURCE_NOT_READY' && error.hint === 'Wait for the source to complete.');
   await assert.rejects(client.createVariantBatch('source-a', input), /may have accepted/);
   assert.equal(calls, 2);
+});
+
+
+test('Variant batch direct submission and exact replay omit quoteId and keep one stable request key', async t => {
+  const calls = [];
+  const batch = { id: 'direct-batch-a', count: 3, status: 'queued', totalEstimatedTokens: 60 };
+  const { client } = await fixture(t, async (url, init) => { calls.push({ path: url.pathname, init }); return json(batch); });
+  const input = { count: 3, feedback: 'Three belly widths', request_id: 'direct-batch-request-a', parameters: { mesh_quality: 'low' } };
+  assert.deepEqual(await client.createVariantBatch('source-a', input), batch);
+  assert.deepEqual(await client.createVariantBatch('source-a', input), batch);
+  assert.equal(calls.length, 2);
+  for (const { path, init } of calls) {
+    assert.equal(path, '/api/v1/external/assets/source-a/variant-batches');
+    assert.equal(init.method, 'POST');
+    assert.equal(init.headers['Idempotency-Key'], input.request_id);
+    assert.deepEqual(JSON.parse(init.body), { count: 3, feedback: input.feedback, parameters: input.parameters });
+  }
+  assert.equal(calls[0].init.body, calls[1].init.body);
 });
