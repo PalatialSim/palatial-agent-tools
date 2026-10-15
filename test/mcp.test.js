@@ -216,8 +216,8 @@ test('setup reports failure when registration succeeds but the Claude skill is n
     const cwd = path.join(root, 'cwd');
     await mkdir(bin);
     await mkdir(cwd);
-    await writeFile(path.join(bin, 'claude'), 'cli');
-    const claude = await realpath(path.join(bin, 'claude'));
+    await writeFile(path.join(bin, process.platform === 'win32' ? 'claude.EXE' : 'claude'), 'cli');
+    const claude = await realpath(path.join(bin, process.platform === 'win32' ? 'claude.EXE' : 'claude'));
     const setup = await runSetup({
       client: 'claude-code',
       executable: '/package/bin/palatial-agent.js',

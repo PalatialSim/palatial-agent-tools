@@ -157,10 +157,12 @@ test('scene receipts are read only when they are small regular files', { timeout
   await huge.close();
   await assert.rejects(client.downloadScene({ scene_id: sceneId, version, output_dir: out }), /size limit/);
   await rm(receiptPath);
+  if (process.platform !== 'win32') {
   const fifo = path.join(out, `${stem}-receipt.json`);
   assert.equal(spawnSync('mkfifo', [fifo]).status, 0);
   await assert.rejects(client.downloadScene({ scene_id: sceneId, version, output_dir: out }), /regular file/);
   await rm(fifo);
+  }
   const fresh = path.join(dir, 'fresh');
   await mkdir(fresh);
   await writeFile(path.join(fresh, `${stem}-receipt.json`), '{not json');
@@ -249,21 +251,21 @@ test('setup resolves codex and claude from PATH and never from the working direc
   const bin = path.join(root, 'bin');
   await mkdir(cwd);
   await mkdir(bin);
-  await writeFile(path.join(cwd, 'codex'), 'planted');
-  await writeFile(path.join(bin, 'codex'), 'real');
+  await writeFile(path.join(cwd, process.platform === 'win32' ? 'codex.EXE' : 'codex'), 'planted');
+  await writeFile(path.join(bin, process.platform === 'win32' ? 'codex.EXE' : 'codex'), 'real');
   const spawned = [];
   const setup = await runSetup({
     client: 'codex', executable: '/pkg/bin/palatial-agent.js', env: { PATH: `${cwd}${path.delimiter}${bin}` }, cwd,
     runner: command => { spawned.push(command); return { status: 0, stdout: 'registered', stderr: '' }; }
   });
-  assert.deepEqual(spawned, [await realpath(path.join(bin, 'codex'))]);
+  assert.deepEqual(spawned, [await realpath(path.join(bin, process.platform === 'win32' ? 'codex.EXE' : 'codex'))]);
   assert.equal(path.isAbsolute(spawned[0]), true);
   assert.equal(setup.failed, false);
   assert.equal(setup.output.results[0].registered, true);
   const planted = [];
-  await symlink(path.join(cwd, 'codex'), path.join(bin, 'codex-link'));
-  await rm(path.join(bin, 'codex'));
-  await symlink(path.join(cwd, 'codex'), path.join(bin, 'codex'));
+  await symlink(path.join(cwd, process.platform === 'win32' ? 'codex.EXE' : 'codex'), path.join(bin, 'codex-link'));
+  await rm(path.join(bin, process.platform === 'win32' ? 'codex.EXE' : 'codex'));
+  await symlink(path.join(cwd, process.platform === 'win32' ? 'codex.EXE' : 'codex'), path.join(bin, process.platform === 'win32' ? 'codex.EXE' : 'codex'));
   const skipped = await runSetup({
     client: 'codex', executable: '/pkg/bin/palatial-agent.js', env: { PATH: bin }, cwd,
     runner: command => { planted.push(command); return { status: 0, stdout: '', stderr: '' }; }

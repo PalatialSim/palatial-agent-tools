@@ -3,10 +3,19 @@ import path from 'node:path';
 import test from 'node:test';
 import { resolveWindowsExecutable, runSetup } from '../src/setup.js';
 
-test('non-Windows setup still spawns codex and claude by name', { skip: process.platform === 'win32' }, async () => {
+test('non-Windows setup resolves codex and claude to absolute executables', { skip: process.platform === 'win32' }, async t => {
+  const { mkdtemp, mkdir, writeFile, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const root = await mkdtemp(path.join(tmpdir(), 'safe-setup-'));
+  const bin = path.join(root, 'bin');
+  const cwd = path.join(root, 'cwd');
+  await mkdir(bin); await mkdir(cwd);
+  await writeFile(path.join(bin, 'codex'), 'fixture');
+  await writeFile(path.join(bin, 'claude'), 'fixture');
+  t.after(() => rm(root, { recursive: true, force: true }));
   const seen = [];
   const setup = await runSetup({
-    client: 'both',
+    client: 'both', env: { PATH: bin }, cwd,
     executable: '/package/bin/palatial-agent.js',
     runner: (command, args) => {
       seen.push({ command, args });
@@ -15,7 +24,8 @@ test('non-Windows setup still spawns codex and claude by name', { skip: process.
     skillInstaller: async () => ({ installed: true, action: 'installed' }),
   });
   assert.equal(process.platform === 'win32', false);
-  assert.deepEqual(seen.map(item => item.command), ['codex', 'claude']);
+  assert.equal(seen.length, 2);
+  for (const item of seen) assert.equal(path.isAbsolute(item.command), true);
   assert.equal(setup.failed, false);
 });
 
