@@ -2,7 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { PalatialClient, PalatialApiError, mcpCreateSchema, mcpCreateInput, reprocessSchema, assetIdSchema, DEFAULT_API_URL } from './client.js';
+import { PalatialClient, PalatialApiError, mcpCreateSchema, mcpCreateInput, reprocessSchema, variantBatchSchema, assetIdSchema, DEFAULT_API_URL } from './client.js';
 import { createSceneSchema, sceneIdSchema, listScenesSchema, answerSceneSchema, recoverSceneSchema, retrySceneStartSchema, downloadSceneSchema } from './scenes.js';
 import { autoCreateSchema } from './auto-create.js';
 import { getApiKey } from './auth.js';
@@ -148,6 +148,16 @@ export function createServer({ clientFactory, updateChecker = checkForUpdate, do
     }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
   }, invoke((c, input) => { const { asset_id, ...variant } = input; return c.createVariant(asset_id, variant); }));
+  server.registerTool('palatial_create_variant_batch', {
+    description: 'Create N independent variants of the same eligible source through one server-owned batch. First call with dryRun=true to get distinct model-generated requirements, total and per-item token estimates and quoteId; this creates no assets and charges nothing. Show the quote and obtain user spending approval before submission. Submit identical count, feedback and parameters with quoteId and a stable request_id sent as Idempotency-Key. The server limits batch size (default 8), queues excess concurrent work, and bills children independently as stages complete. Partial failures do not cancel siblings. Preserve the request_id and exact payload after uncertainty: identical replay reuses the batch; changed inputs conflict. Track progress with palatial_get_variant_batch, never by creating another batch.',
+    inputSchema: variantBatchSchema.safeExtend({ asset_id: assetIdSchema }),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  }, invoke((c, input) => { const { asset_id, ...batch } = input; return c.createVariantBatch(asset_id, batch); }));
+  server.registerTool('palatial_get_variant_batch', {
+    description: 'Read one Variant batch: each independent child asset ID, queued/running/terminal state, requirement, error and Viewer URL. Report partial failures accurately; do not recreate children or the batch to check progress.',
+    inputSchema: z.object({ asset_id: assetIdSchema, batch_id: assetIdSchema }).strict(),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  }, invoke((c, input) => c.getVariantBatch(input.asset_id, input.batch_id)));
   server.registerTool('palatial_download_asset', {
     description: 'Download an available SimReady export ZIP to output_dir on this computer. Export itself does not consume tokens. A first export needs a positive shared net balance; a later paused run is downloadable only when the server has a materialized export key. For PROCESSING_FAILED, first obtain explicit user confirmation, label the result partial or unvalidated, and pass allow_failed_export=true. Saves a SHA-256 receipt, preserves existing files, and reuses a verified READY download. Does not extract archives, import into a scene, or certify simulator behavior.',
     inputSchema: z.object({ asset_id: assetIdSchema, output_dir: z.string().min(1), allow_failed_export: z.boolean().describe('Required true only after explicit user confirmation to request a partial or unvalidated export from PROCESSING_FAILED.').optional() }).strict(),
