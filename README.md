@@ -11,7 +11,7 @@ This is Palatial's **public thin client**: a command-line application and a loca
 **Dev preview only:** `palatial_agent` and `palatial_get_agent_turn` require
 `https://dashboard.dev.palatial.cloud/api/v1/external/` and a Dev API key.
 These routes are not available on Production. Do not fall back automatically.
-The main release must wait for the owning Backend rollout. An initial 202
+Package 0.1.16 includes these Dev-preview tools; use the Dev origin and key until the owning Backend is promoted. An initial 202
 receipt can omit `conversationId` until the first turn binds its conversation;
 retain it once returned.
 
