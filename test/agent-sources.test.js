@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { uploadAgentSource } from '../src/agent-sources.js';
+import { uploadAgentSource, submitAgentWithFiles } from '../src/agent-sources.js';
 
 async function fixture(t, { storageHost = `${'a'.repeat(32)}.r2.cloudflarestorage.com`, mutate = false } = {}) {
   const directory = await mkdtemp(path.join(tmpdir(), 'palatial-agent-source-'));
@@ -66,4 +66,32 @@ test('source upload refuses symlinks and unsupported files before allocating sto
   await symlink(f.filename, link);
   await assert.rejects(uploadAgentSource(f.client, { asset_id: f.assetId, file_path: link }), /symbolic link/);
   assert.equal(f.calls.length, 0);
+});
+
+
+test('file intents generate one identity per call and share it through reservation and final submission', async t => {
+  const f = await fixture(t);
+  const originalRequest = f.client.request;
+  const reservations = [], intents = [];
+  f.client.base = new URL('https://dashboard.dev.palatial.cloud/api/v1/external/');
+  f.client.apiKey = 'fixture-key';
+  f.client.receiptDir = path.join(path.dirname(f.filename), 'receipts');
+  f.client.request = async (route, options) => {
+    if (route === 'agent/sources') { reservations.push(options.body); return { assetId: f.assetId }; }
+    return originalRequest(route, options);
+  };
+  f.client.startAgentTurn = async input => { intents.push(input); return { id: input.requestId }; };
+  const input = Object.freeze({ message: 'Build this cabinet.', files: Object.freeze([f.filename]) });
+  await submitAgentWithFiles(f.client, input);
+  await submitAgentWithFiles(f.client, input);
+  assert.equal(intents.length, 2);
+  assert.equal(reservations.length, 2);
+  assert.notEqual(intents[0].requestId, intents[1].requestId);
+  for (let i = 0; i < 2; i++) assert.equal(reservations[i].requestId, intents[i].requestId);
+  assert.equal(Object.hasOwn(input, 'requestId'), false);
+  const uploaded = f.calls.filter(call => call.route?.endsWith('/sources/init')).length;
+  await submitAgentWithFiles(f.client, { ...input, requestId: intents[0].requestId });
+  assert.deepEqual(intents[2], intents[0]);
+  assert.equal(reservations.length, 2);
+  assert.equal(f.calls.filter(call => call.route?.endsWith('/sources/init')).length, uploaded);
 });

@@ -24,13 +24,13 @@ const agentAttachmentSchema = z.object({
   inlineData: z.object({ mimeType: z.string(), data: z.string() }).strict().optional()
 }).strict();
 export const agentTurnSchema = z.object({
-  requestId: agentRequestIdentity, message: z.string().trim().min(1).max(16000),
+  requestId: agentRequestIdentity.optional(), message: z.string().trim().min(1).max(16000),
   assetId: assetIdSchema.optional(), conversationId: agentIdentity.optional(),
   attachments: z.array(agentAttachmentSchema).max(50).optional()
 }).strict();
 export const mcpAgentTurnSchema = z.object({
   turn_id: agentIdentity.describe('Read this returned request id without creating another request.').optional(),
-  request_id: agentRequestIdentity.describe('Stable identity for this intent. Reuse identical inputs after uncertainty.').optional(),
+  request_id: agentRequestIdentity.describe('Optional stable identity. Omit for a new request on every call; supply the same ID and identical inputs for safe replay after uncertainty.').optional(),
   message: z.string().trim().min(1).max(16000).optional(),
   asset_id: assetIdSchema.optional(), conversation_id: agentIdentity.optional(),
   files: z.array(z.string().min(1).max(4096)).max(50).optional(),
@@ -43,15 +43,15 @@ export const mcpAgentTurnSchema = z.object({
   if ((value.attachments?.length || 0) + (value.files?.length || 0) > 50) ctx.addIssue({ code: 'custom', message: 'At most 50 source attachments and files combined.' });
   if (value.turn_id !== undefined) {
     if (Object.keys(value).some(key => key !== 'turn_id')) ctx.addIssue({ code: 'custom', message: 'Poll with turn_id alone.' });
-  } else if (value.request_id === undefined || value.message === undefined) {
-    ctx.addIssue({ code: 'custom', message: 'Submit with request_id and message, or poll with turn_id alone.' });
+  } else if (value.message === undefined) {
+    ctx.addIssue({ code: 'custom', message: 'Submit with message and optional request_id, or poll with turn_id alone.' });
   }
 });
 export function mcpAgentTurnInput(input) {
   const p = mcpAgentTurnSchema.parse(input);
   if (p.turn_id !== undefined) return { turnId: p.turn_id };
   return {
-    requestId: p.request_id, message: p.message,
+    ...(p.request_id !== undefined ? { requestId: p.request_id } : {}), message: p.message,
     ...(p.files?.length ? { files: p.files } : {}),
     ...(p.asset_id !== undefined ? { assetId: p.asset_id } : {}),
     ...(p.conversation_id !== undefined ? { conversationId: p.conversation_id } : {}),
@@ -618,7 +618,10 @@ export class PalatialClient {
 
   uploadAgentSource(input) { return uploadAgentSource(this, input); }
 
-  startAgentWithFiles(input) { return submitAgentWithFiles(this, input); }
+  startAgentWithFiles(input) {
+    const { files, ...intent } = input;
+    return submitAgentWithFiles(this, { ...agentTurnSchema.parse(intent), files });
+  }
 
   startAgentTurn(input) {
     const body = agentTurnSchema.parse(input);

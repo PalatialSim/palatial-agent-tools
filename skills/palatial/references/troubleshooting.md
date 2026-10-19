@@ -189,8 +189,9 @@ without user authorization.
 Poll `palatial_get_agent_turn` with the receipt's `id`. A completed turn means
 that interaction finished; inspect its reply, question, references, confirmation
 and media before deciding the next step. It does not mean generation completed.
-If submission timed out, preserve the same `request_id` and identical input for
-replay. Never make a replacement request ID to retry. Report structured server
+If submission timed out, preserve the same explicit or saved `request_id` and
+identical input for replay. `request_id` is optional, but a call without it is
+a new request and must not be used to retry an uncertain submission. Never make a replacement request ID to retry. Report structured server
 errors unchanged. Do not answer a question, pick references, or confirm a paid
 proposal automatically to recover from an error.
 

@@ -24,6 +24,8 @@ test('MCP advertises and registers exactly one native intent tool', async t => {
   const tools = (await client.listTools()).tools;
   assert.deepEqual(tools.map(tool => tool.name), ['palatial_agent']);
   assert.ok(tools[0].inputSchema.properties.request_id);
+  assert.equal(tools[0].inputSchema.required?.includes('request_id') ?? false, false);
+  assert.equal(tools[0].annotations.idempotentHint, false);
   assert.ok(tools[0].inputSchema.properties.turn_id);
   for (const field of ['execution', 'max_tokens', 'answer', 'selection', 'confirmation']) assert.equal(tools[0].inputSchema.properties[field], undefined);
   assert.equal((await client.callTool({ name: 'palatial_create_asset', arguments: {} })).isError, true);
@@ -51,7 +53,7 @@ test('single MCP tool submits native intent then polls the same id without plann
 test('MCP rejects mixed polling, manual checkpoints and caller execution policies before transport', async t => {
   let calls = 0;
   const client = await connect(t, async () => ({ startAgentTurn: async () => { calls++; }, getAgentTurn: async () => { calls++; } }));
-  for (const input of [{}, { request_id: 'r' }, { message: 'Build' }, { turn_id: 't', message: 'Build' }, { turn_id: 't', request_id: 'r' }, { request_id: 'r', message: 'Build', execution: { mode: 'automatic' } }, { request_id: 'r', message: 'Build', max_tokens: 40 }, { request_id: 'r', answer: {} }, { request_id: 'r', selection: {} }, { request_id: 'r', confirmation: {} }, { request_id: 'r', message: 'Build', attachments: [{ file_path: '/private/file' }] }]) {
+  for (const input of [{}, { request_id: 'r' }, { turn_id: 't', message: 'Build' }, { turn_id: 't', request_id: 'r' }, { request_id: 'r', message: 'Build', execution: { mode: 'automatic' } }, { request_id: 'r', message: 'Build', max_tokens: 40 }, { request_id: 'r', answer: {} }, { request_id: 'r', selection: {} }, { request_id: 'r', confirmation: {} }, { request_id: 'r', message: 'Build', attachments: [{ file_path: '/private/file' }] }]) {
     assert.equal((await client.callTool({ name: 'palatial_agent', arguments: input })).isError, true);
   }
   assert.equal(calls, 0);
@@ -122,4 +124,27 @@ test('sole MCP tool reserves and uploads local files before native intent, then 
   assert.equal(changed.isError, true);
   assert.match(changed.content[0].text, /different intent or source bytes/);
   assert.equal(calls.filter(call => call.route.endsWith('/external/agent')).length, 2);
+});
+
+test('message-only MCP calls omit request identity and remain new requests, while explicit IDs stay unchanged', async t => {
+  const posts = [];
+  const native = new PalatialClient({ apiKey: 'fixture-key', baseUrl: 'https://dashboard.dev.palatial.cloud/api/v1/external/', fetchImpl: async (_url, init) => {
+    posts.push(JSON.parse(init.body));
+    return Response.json({ id: `receipt-${posts.length}`, status: 'running' }, { status: 202 });
+  } });
+  const client = await connect(t, async () => native);
+  const args = Object.freeze({ message: 'Inspect this project.' });
+  const first = await client.callTool({ name: 'palatial_agent', arguments: args });
+  const second = await client.callTool({ name: 'palatial_agent', arguments: args });
+  assert.equal(first.isError, undefined);
+  assert.equal(second.isError, undefined);
+  assert.notEqual(first.structuredContent.id, second.structuredContent.id);
+  assert.deepEqual(posts, [{ message: args.message }, { message: args.message }]);
+  assert.equal(Object.hasOwn(args, 'request_id'), false);
+  const explicit = { ...args, request_id: 'preserve-this-id' };
+  await client.callTool({ name: 'palatial_agent', arguments: explicit });
+  await client.callTool({ name: 'palatial_agent', arguments: explicit });
+  assert.deepEqual(posts.slice(2), [0, 1].map(() => ({ requestId: explicit.request_id, message: args.message })));
+  for (const request_id of ['', null, '../escape', 'x'.repeat(129)]) assert.equal((await client.callTool({ name: 'palatial_agent', arguments: { message: args.message, request_id } })).isError, true);
+  assert.equal(posts.length, 4);
 });

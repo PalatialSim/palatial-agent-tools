@@ -44,6 +44,7 @@ try {
     const tools = (await client.listTools()).tools;
     assert.deepEqual(tools.map(tool => tool.name), ['palatial_agent']);
     assert.ok(tools[0].inputSchema.properties.request_id);
+    assert.equal(tools[0].inputSchema.required?.includes('request_id') ?? false, false);
     assert.ok(tools[0].inputSchema.properties.turn_id);
     assert.equal(tools[0].inputSchema.properties.execution, undefined);
     const result = await client.callTool({ name: 'palatial_agent', arguments: { turn_id: 'receipt-1' } });
