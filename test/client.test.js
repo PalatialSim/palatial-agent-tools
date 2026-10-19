@@ -810,3 +810,27 @@ test('Agent intent rejects removed manual and execution policy fields', async t 
   }
   assert.equal(calls, 0);
 });
+
+test('Agent SDK forwards omitted request identity on every call without mutating the input', async t => {
+  const bodies = [];
+  const { client } = await fixture(t, async (_url, init) => {
+    bodies.push(JSON.parse(init.body));
+    return json({ id: `server-generated-${bodies.length}`, status: 'running' }, 202);
+  });
+  const input = Object.freeze({ message: 'Inspect this project.' });
+  const first = await client.startAgentTurn(input);
+  const second = await client.startAgentTurn(input);
+  assert.notEqual(first.id, second.id);
+  assert.deepEqual(bodies, [{ message: input.message }, { message: input.message }]);
+  assert.equal(Object.hasOwn(input, 'requestId'), false);
+});
+
+test('invalid explicit Agent request identities are rejected before direct submission or file transport', async t => {
+  let calls = 0;
+  const { client } = await fixture(t, async () => { calls++; return json({}); });
+  for (const requestId of ['', null, '../escape', 'x'.repeat(129)]) {
+    await assert.rejects(async () => client.startAgentTurn({ requestId, message: 'Inspect this project.' }));
+    await assert.rejects(async () => client.startAgentWithFiles({ requestId, message: 'Inspect this source.', files: ['/not-read.png'] }));
+  }
+  assert.equal(calls, 0);
+});

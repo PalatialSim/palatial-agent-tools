@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.17 — optional Agent request identity
+
+- Make `request_id` optional for `palatial_agent` and `requestId` optional for the JavaScript client. Each omitted-ID submission is new work; explicit identical IDs and input retain idempotent replay and billing protection.
+- Forward omission to the server for ordinary intents. Local-file transport creates one identity per call and shares it across reservation, upload and submission without mutating caller input.
+- Keep poll-only calls and native source-reservation requirements unchanged. Mutations are never retried automatically.
+
 ## 0.1.16 — one native unattended Agent entry
 
 - Expose exactly one MCP tool, `palatial_agent`, for asset intent and polling. The server always executes unattended against saved project data through shared owning services; no caller execution policy, answers, selections or confirmations.

@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, open, unlink } from 'node:fs/promises';
 import { z } from 'zod';
 import { assertLocalPath, assertPublicHttpsUrl, digestHandle, digestRegularFile, openRegularFile, readCappedRegularFile, resolveOutputDirectory, assertResolvedDirectory } from './input-guards.js';
@@ -54,7 +54,10 @@ export async function uploadAgentSource(client, input) {
 
 /** Preserve the exact admitted source identities before intent POST, including response-loss replay. */
 export async function submitAgentWithFiles(client, input) {
-  const { files, ...intent } = input;
+  const { files, ...submittedIntent } = input;
+  // One source operation shares a fresh identity across reservation and intent.
+  // Never mutate the caller's object: another call without an ID is new work.
+  const intent = { ...submittedIntent, requestId: submittedIntent.requestId ?? randomUUID() };
   if (files.length + (intent.attachments?.length || 0) > 50) throw new Error('At most 50 source attachments and files combined.');
   const sources = [];
   for (const filename of files) {
