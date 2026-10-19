@@ -84,10 +84,15 @@ export function createServer({ clientFactory, updateChecker = checkForUpdate, do
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true }
   }, invoke((c, input) => c.startAgentTurn(mcpAgentTurnInput(input))));
   server.registerTool('palatial_upload_agent_source', {
-    description: 'Dev-preview-only: upload one explicitly named local image, CAD/3D file or MP4/MOV video to an existing unpaid Agent project through native verified multipart storage. No generation or spending. Returns attachment metadata; pass it unchanged in palatial_agent attachments with a message. Uses only this file, refuses symlinks, and never sends the API key to object storage. Create an interactive project first and wait for its turn to settle; then upload and send the automatic intent with that asset_id. Does not retry upload or generation after uncertainty.',
+    description: 'Dev-preview-only: upload one explicitly named local image, CAD/3D file or MP4/MOV video to an existing unpaid Agent project through native verified multipart storage. No generation or spending. Returns MCP attachment metadata with mime_type and bytes_in_asset; pass it unchanged in palatial_agent attachments with a message. Uses only this file, refuses symlinks, and never sends the API key to object storage. Create an interactive project first and wait for its turn to settle; then upload and send the automatic intent with that asset_id. Does not retry upload or generation after uncertainty.',
     inputSchema: agentSourceUploadSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
-  }, invoke((c, input) => c.uploadAgentSource(input)));
+  }, invoke(async (c, input) => {
+    const result = await c.uploadAgentSource(input);
+    if (!result?.attachment) return result;
+    const fields = { mimeType: 'mime_type', bytesInAsset: 'bytes_in_asset', partName: 'part_name', referenceMeshArtifactId: 'reference_mesh_artifact_id', sceneSourceRef: 'scene_source_ref' };
+    return { ...result, attachment: Object.fromEntries(Object.entries(result.attachment).map(([key, value]) => [fields[key] || key, value])) };
+  }));
   server.registerTool('palatial_get_agent_turn', {
     description: 'Dev-preview-only: read a Palatial Agent turn receipt by its returned id (requires the Dev origin and key, and asset:read in the current key workspace). This route is unavailable on Production; do not fall back automatically. Reports running, completed, failed or cancelled with reply, question, references, confirmation, execution, media, downloads, result or error when present. Automatic execution.state is active, completed, blocked or superseded; completed means the task was handled or its requested paid action admitted, not that generation finished. Poll the same id while running or while execution.state=active even if status=completed. A completed turn is one finished interaction, not proof that generation finished or that every media type exists. A stop request is only requested until the native stop executes and result.stop is returned on the terminal turn; do not claim cancellation early. Reads do not answer questions, approve spending, or start work.',
     inputSchema: z.object({ turn_id: z.string().min(1).max(192).regex(/^[A-Za-z0-9._:-]+$/) }).strict(),

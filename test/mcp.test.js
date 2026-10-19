@@ -355,3 +355,26 @@ test('primary Agent MCP tools map snake_case interaction metadata and poll the r
   assert.equal(calls.length, 5);
   assert.match(client.getInstructions(), /palatial_agent as the primary entry/);
 });
+
+
+test('MCP upload attachment can be passed unchanged into the primary Agent tool', async t => {
+  const calls = [];
+  const nativeAttachment = { id: 'cabinet.mp4', name: 'cabinet.mp4', kind: 'video', mimeType: 'video/mp4', bytesInAsset: true };
+  const server = createServer({ clientFactory: async () => ({
+    uploadAgentSource: async input => { calls.push({ upload: input }); return { attachment: nativeAttachment }; },
+    startAgentTurn: async input => { calls.push({ turn: input }); return { id: 'turn-1', status: 'running' }; }
+  }) });
+  const client = new Client({ name: 'upload-intent-parity', version: '1.0' });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a); await client.connect(b);
+  t.after(async () => { await client.close(); await server.close(); });
+  const assetId = '333333333333333333333333';
+  const upload = await client.callTool({ name: 'palatial_upload_agent_source', arguments: { asset_id: assetId, file_path: '/explicit/cabinet.mp4' } });
+  assert.equal(upload.isError, undefined);
+  assert.deepEqual(upload.structuredContent.attachment, { id: 'cabinet.mp4', name: 'cabinet.mp4', kind: 'video', mime_type: 'video/mp4', bytes_in_asset: true });
+  const result = await client.callTool({ name: 'palatial_agent', arguments: { request_id: 'video-build-1', asset_id: assetId, message: 'Build this cabinet.', execution: { mode: 'automatic', max_tokens: 80 }, attachments: [upload.structuredContent.attachment] } });
+  assert.equal(result.isError, undefined);
+  assert.deepEqual(calls[1].turn, { requestId: 'video-build-1', assetId, message: 'Build this cabinet.', execution: { mode: 'automatic', maxTokens: 80 }, attachments: [nativeAttachment] });
+  assert.equal(nativeAttachment.mimeType, 'video/mp4');
+  assert.equal(nativeAttachment.bytesInAsset, true);
+});
