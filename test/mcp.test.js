@@ -4,377 +4,122 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { createServer } from '../src/mcp.js';
-import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
-import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { PalatialClient, PalatialApiError } from '../src/client.js';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { runSetup } from '../src/setup.js';
+import { fileURLToPath } from 'node:url';
 
-test('real MCP protocol lists tools and calls the shared client without a model', async t => {
-  const server = createServer({ clientFactory: async () => ({ doctor: async () => ({ authenticated: true }), getAsset: async id => ({ asset_id: id, status: 'READY' }) }) });
-  const client = new Client({ name: 'contract-test', version: '1.0' });
+async function connect(t, clientFactory) {
+  const server = createServer({ clientFactory });
+  const client = new Client({ name: 'unified-intent-test', version: '1.0' });
   const [a, b] = InMemoryTransport.createLinkedPair();
   await server.connect(a); await client.connect(b);
   t.after(async () => { await client.close(); await server.close(); });
-  const list = await client.listTools();
-  assert.equal(list.tools.length, 24);
-  assert.equal(list.tools.find(x => x.name === 'palatial_download_asset').annotations.readOnlyHint, false);
-  const result = await client.callTool({ name: 'palatial_get_asset', arguments: { asset_id: 'asset-test' } });
-  assert.equal(result.structuredContent.asset_id, 'asset-test');
-  const invalid = await client.callTool({ name: 'palatial_get_asset', arguments: { asset_id: '../bad' } });
-  assert.equal(invalid.isError, true);
+  return client;
+}
+
+test('MCP advertises and registers exactly one native intent tool', async t => {
+  const client = await connect(t, async () => ({}));
+  const tools = (await client.listTools()).tools;
+  assert.deepEqual(tools.map(tool => tool.name), ['palatial_agent']);
+  assert.ok(tools[0].inputSchema.properties.request_id);
+  assert.ok(tools[0].inputSchema.properties.turn_id);
+  for (const field of ['execution', 'max_tokens', 'answer', 'selection', 'confirmation']) assert.equal(tools[0].inputSchema.properties[field], undefined);
+  assert.equal((await client.callTool({ name: 'palatial_create_asset', arguments: {} })).isError, true);
+  assert.equal((await client.callTool({ name: 'palatial_doctor', arguments: {} })).isError, true);
+  assert.match(client.getInstructions(), /always executes unattended/);
 });
 
-test('array-valued list and batch tools return MCP-valid structured records', async t => {
-  const listedAssets = [{ asset_id: 'asset-list', status: 'READY' }];
-  const batchedStatuses = [{ asset_id: 'asset-batch', status: 'PROCESSING' }];
-  const server = createServer({ clientFactory: async () => ({
-    listAssets: async () => listedAssets,
-    batchStatus: async () => batchedStatuses
-  }) });
-  const client = new Client({ name: 'array-result-test', version: '1.0' });
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await server.connect(a); await client.connect(b);
-  t.after(async () => { await client.close(); await server.close(); });
-
-  const listed = await client.callTool({ name: 'palatial_list_assets', arguments: {} });
-  assert.notEqual(listed.isError, true);
-  assert.deepEqual(listed.structuredContent, { data: listedAssets });
-  assert.deepEqual(JSON.parse(listed.content[0].text), listedAssets);
-
-  const statuses = await client.callTool({ name: 'palatial_batch_get_statuses', arguments: { asset_ids: ['asset-batch'] } });
-  assert.notEqual(statuses.isError, true);
-  assert.deepEqual(statuses.structuredContent, { statuses: batchedStatuses });
-  assert.deepEqual(JSON.parse(statuses.content[0].text), batchedStatuses);
-});
-
-test('create tool explains API options in its MCP schema', async t => {
-  const server = createServer({ clientFactory: async () => ({}) });
-  const client = new Client({ name: 'schema-test', version: '1.0' });
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await server.connect(a); await client.connect(b);
-  t.after(async () => { await client.close(); await server.close(); });
-  const tool = (await client.listTools()).tools.find(item => item.name === 'palatial_create_asset');
-  assert.match(tool.inputSchema.properties.engine.description, /isaac_sim/);
-  assert.match(tool.inputSchema.properties.create_articulation.description, /joints/);
-  assert.match(tool.inputSchema.properties.units.description, /direct-mesh CAD/);
-  assert.equal(tool.inputSchema.properties.shape_model, undefined);
-  assert.equal(tool.inputSchema.properties.texture_model, undefined);
-  for (const field of ['body_type', 'auto_scale', 'replace_glass']) {
-    assert.equal(tool.inputSchema.properties[field], undefined);
-    assert.equal(tool.inputSchema.properties.parameters.properties[field], undefined);
-  }
-  assert.deepEqual(tool.inputSchema.properties.parameters.properties.collision_quality.enum, ['auto', 'low', 'medium', 'high', 'sdf']);
-  assert.deepEqual(tool.inputSchema.properties.parameters.properties.newton_solver.enum, ['mujoco', 'style3D']);
-  assert.deepEqual(tool.inputSchema.properties.effort.enum, ['low', 'mad_max']);
-  assert.doesNotMatch(tool.inputSchema.properties.effort.description, /medium/i);
-  assert.match(tool.inputSchema.properties.image_path.description, /optional PNG\/JPEG\/WebP reference/);
-  assert.match(tool.inputSchema.properties.reconstruct.description, /currently ignored by the Queue/);
-  assert.match(tool.inputSchema.properties.meters_per_unit.description, /Direct-mesh CAD/);
-  assert.equal(tool.inputSchema.properties.agentic_articulation, undefined);
-  assert.match(tool.inputSchema.properties.decimation_target_ratio.description, /mutually exclusive/);
-  assert.deepEqual(tool.inputSchema.properties.mode.enum, ['auto', 'diffusion', 'parametric', 'mad_max']);
-  assert.equal(tool.inputSchema.properties.parameters.properties.face_budget.minimum, 2000);
-  assert.equal(tool.inputSchema.properties.parameters.properties.face_budget.maximum, 200000);
-  assert.match(tool.inputSchema.properties.video_path.description, /300 MiB/);
-});
-
-test('startup doc changes reach instructions, doctor and a manual check without being hidden by a refresh', async t => {
-  const startupDocs = { status: 'changed', changed: true, changed_pages: [{ url: 'https://docs.palatial.cloud/integrations/api/', kind: 'modified' }] };
-  let checks = 0;
-  const server = createServer({ clientFactory: async () => ({ doctor: async () => ({ authenticated: true }) }), updateChecker: async () => ({ status: 'disabled' }), startupDocs, docsChecker: async () => { checks++; return { status: 'unchanged', changed: false }; } });
-  const client = new Client({ name: 'startup-docs-test', version: '1.0' });
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await server.connect(a); await client.connect(b);
-  t.after(async () => { await client.close(); await server.close(); });
-  assert.match(client.getInstructions(), /Startup documentation check: changed; 1 changed pages/);
-  assert.deepEqual((await client.callTool({ name: 'palatial_doctor', arguments: {} })).structuredContent.docs, startupDocs);
-  const result = await client.callTool({ name: 'palatial_check_docs', arguments: {} });
-  assert.equal(result.structuredContent.changed, false);
-  assert.deepEqual(result.structuredContent.startup_check, startupDocs);
-  assert.equal(checks, 1);
-});
-
-test('real MCP create calls accept each mode and reject unsupported parameters before invoking the client', async t => {
+test('single MCP tool submits native intent then polls the same id without planning or mutation', async t => {
   const calls = [];
-  const server = createServer({ clientFactory: async () => ({ create: async input => { calls.push(input); return { asset_id: 'mode-test' }; } }) });
-  const client = new Client({ name: 'mode-transport-test', version: '1.0' });
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await server.connect(a); await client.connect(b);
-  t.after(async () => { await client.close(); await server.close(); });
-  const base = { source: 'text', name: 'MCP mode test', description: 'A rigid bin' };
-  for (const route of [{ mode: 'diffusion', parameters: { structure: 'single_object' } }, { mode: 'parametric', effort: 'low', parameters: { face_budget: 50000 } }, { mode: 'parametric', effort: 'mad_max' }]) {
-    assert.notEqual((await client.callTool({ name: 'palatial_create_asset', arguments: { ...base, ...route } })).isError, true);
-  }
-  assert.equal((await client.callTool({ name: 'palatial_create_asset', arguments: { ...base, mode: 'parametric', parameters: { mesh_quality: 'high' } } })).isError, true);
-  for (const extra of [{}, { mode: 'diffusion', shape_model: 'diffusion' }, { mode: 'diffusion', texture_model: 'auto' }]) {
-    assert.equal((await client.callTool({ name: 'palatial_create_asset', arguments: { ...base, ...extra } })).isError, true);
-  }
-  for (const parameters of [{ body_type: 'rigid_bodies' }, { auto_scale: true }, { replace_glass: false }, { collision_quality: 'x_high' }, { newton_solver: 'vbd' }]) {
-    assert.equal((await client.callTool({ name: 'palatial_create_asset', arguments: { ...base, mode: 'diffusion', parameters } })).isError, true);
-  }
-  assert.equal(calls.length, 3);
-  assert.notEqual((await client.callTool({ name: 'palatial_create_asset', arguments: { ...base, mode: 'parametric', parameters: { collision_quality: 'auto', face_budget: 50000 } } })).isError, true);
-  assert.deepEqual(calls.at(-1).parameters, { face_budget: 50000 });
+  const native = new PalatialClient({ apiKey: 'fixture-key', baseUrl: 'https://dashboard.dev.palatial.cloud/api/v1/external/', fetchImpl: async (url, init) => {
+    calls.push({ url: String(url), method: init.method, body: init.body ? JSON.parse(init.body) : undefined });
+    return Response.json(init.method === 'POST' ? { id: 'request-receipt', status: 'running' } : { id: 'request-receipt', result: { accepted: true }, media: { texture: { state: 'pending' } } }, { status: init.method === 'POST' ? 202 : 200 });
+  } });
+  const client = await connect(t, async () => native);
+  const input = { request_id: 'request-1', asset_id: 'asset-1', conversation_id: 'conversation-1', message: 'Build the cabinet in the source.', attachments: [{ id: 'cabinet.mp4', name: 'cabinet.mp4', kind: 'video', mime_type: 'video/mp4', bytes_in_asset: true }] };
+  const receipt = await client.callTool({ name: 'palatial_agent', arguments: input });
+  assert.equal(receipt.isError, undefined);
+  const poll = await client.callTool({ name: 'palatial_agent', arguments: { turn_id: receipt.structuredContent.id } });
+  assert.equal(poll.structuredContent.result.accepted, true);
+  assert.equal(calls[0].url, 'https://dashboard.dev.palatial.cloud/api/v1/external/agent');
+  assert.deepEqual(calls[0].body, { requestId: 'request-1', assetId: 'asset-1', conversationId: 'conversation-1', message: input.message, attachments: [{ id: 'cabinet.mp4', name: 'cabinet.mp4', kind: 'video', mimeType: 'video/mp4', bytesInAsset: true }] });
+  assert.deepEqual(calls[1], { url: 'https://dashboard.dev.palatial.cloud/api/v1/external/agent/request-receipt', method: 'GET', body: undefined });
 });
 
-test('guidance reaches any client as a tool, and as resources where they are supported', async t => {
-  const server = createServer({ clientFactory: async () => ({}) });
-  const client = new Client({ name: 'guide-test', version: '1.0' });
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await server.connect(a); await client.connect(b);
-  t.after(async () => { await client.close(); await server.close(); });
-
-  const tool = (await client.listTools()).tools.find(item => item.name === 'palatial_guide');
-  assert.equal(tool.annotations.readOnlyHint, true);
-  assert.match(tool.description, /parameters/);
-  assert.deepEqual(tool.inputSchema.properties.topic.enum, ['overview', 'parameters', 'recipes', 'scenes', 'troubleshooting']);
-
-  // Guidance must arrive without arguments: a model that ignores the topic
-  // still has to land on the workflow rather than on an error.
-  const overview = await client.callTool({ name: 'palatial_guide', arguments: {} });
-  assert.notEqual(overview.isError, true);
-  assert.equal(overview.structuredContent.topic, 'overview');
-  assert.equal(overview.structuredContent.text, undefined, 'The guide prose must not be duplicated in structuredContent.');
-  assert.match(overview.content[0].text, /palatial_create_asset/);
-
-  const parameters = await client.callTool({ name: 'palatial_guide', arguments: { topic: 'parameters' } });
-  assert.match(parameters.content[0].text, /decimation_target_faces/);
-  assert.match(parameters.content[0].text, /exactly one of/);
-
-  const unknown = await client.callTool({ name: 'palatial_guide', arguments: { topic: 'nonsense' } });
-  assert.equal(unknown.isError, true);
-
-  const resources = (await client.listResources()).resources;
-  assert.deepEqual(resources.map(item => item.uri).sort(), ['palatial://guide/overview', 'palatial://guide/parameters', 'palatial://guide/recipes', 'palatial://guide/scenes', 'palatial://guide/troubleshooting']);
-  const read = await client.readResource({ uri: 'palatial://guide/troubleshooting' });
-  assert.equal(read.contents[0].mimeType, 'text/markdown');
-  assert.match(read.contents[0].text, /PROCESSING_FAILED/);
+test('MCP rejects mixed polling, manual checkpoints and caller execution policies before transport', async t => {
+  let calls = 0;
+  const client = await connect(t, async () => ({ startAgentTurn: async () => { calls++; }, getAgentTurn: async () => { calls++; } }));
+  for (const input of [{}, { request_id: 'r' }, { message: 'Build' }, { turn_id: 't', message: 'Build' }, { turn_id: 't', request_id: 'r' }, { request_id: 'r', message: 'Build', execution: { mode: 'automatic' } }, { request_id: 'r', message: 'Build', max_tokens: 40 }, { request_id: 'r', answer: {} }, { request_id: 'r', selection: {} }, { request_id: 'r', confirmation: {} }, { request_id: 'r', message: 'Build', attachments: [{ file_path: '/private/file' }] }]) {
+    assert.equal((await client.callTool({ name: 'palatial_agent', arguments: input })).isError, true);
+  }
+  assert.equal(calls, 0);
 });
 
-test('the server tells a client to read the guidance before its first create', async t => {
-  const server = createServer({ clientFactory: async () => ({}) });
-  const client = new Client({ name: 'instructions-test', version: '1.0' });
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await server.connect(a); await client.connect(b);
-  t.after(async () => { await client.close(); await server.close(); });
-  assert.match(client.getInstructions(), /palatial_guide/);
+test('MCP preserves structured owning-service blockers without retrying or fallback', async t => {
+  let calls = 0;
+  const client = await connect(t, async () => ({ startAgentTurn: async () => {
+    calls++; throw new PalatialApiError('Required source unavailable', { http_status: 409, code: 'AGENT_INPUT_REQUIRED', retryable: false });
+  } }));
+  const result = await client.callTool({ name: 'palatial_agent', arguments: { request_id: 'r', message: 'Build it.' } });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.code, 'AGENT_INPUT_REQUIRED');
+  assert.equal(calls, 1);
 });
 
-test('packaged CLI speaks stdio MCP and lists tools without authentication', async t => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'palatial-stdio-'));
+test('packaged stdio discovery exposes only the unified tool without login or startup network', async t => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'palatial-one-tool-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [fileURLToPath(new URL('../bin/palatial-agent.js', import.meta.url)), 'mcp'],
-    env: { PATH: process.env.PATH, XDG_CONFIG_HOME: dir, PALATIAL_API_KEY: '', PALATIAL_DOCS_CHECK: '0' },
-    stderr: 'pipe'
-  });
-  const client = new Client({ name: 'stdio-test', version: '1.0' });
-  await client.connect(transport);
+  const client = new Client({ name: 'stdio-contract', version: '1.0' });
+  await client.connect(new StdioClientTransport({ command: process.execPath, args: [fileURLToPath(new URL('../bin/palatial-agent.js', import.meta.url)), 'mcp'], env: { PATH: process.env.PATH, XDG_CONFIG_HOME: dir, PALATIAL_API_KEY: '' }, stderr: 'pipe' }));
   t.after(() => client.close());
-  assert.equal((await client.listTools()).tools.length, 24);
-  const result = await client.callTool({ name: 'palatial_doctor', arguments: {} });
+  assert.deepEqual((await client.listTools()).tools.map(tool => tool.name), ['palatial_agent']);
+  const result = await client.callTool({ name: 'palatial_agent', arguments: { turn_id: 'receipt-1' } });
   assert.equal(result.isError, true);
   assert.match(result.content[0].text, /not authenticated/);
 });
 
-test('a Codex-only setup writes no Claude Code skill', () => {
-  const result = spawnSync(process.execPath, [fileURLToPath(new URL('../bin/palatial-agent.js', import.meta.url)), 'setup', '--client', 'codex', '--dry-run'], { encoding: 'utf8' });
-  assert.equal(result.status, 0, result.stderr);
-  const plan = JSON.parse(result.stdout);
-  assert.equal(plan.commands.length, 1);
-  assert.equal(plan.claude_code_skill, undefined);
-});
-
-test('setup produces shell-free commands for both actual terminal clients', async t => {
-  const root = await mkdtemp(path.join(tmpdir(), 'palatial-setup-plan-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const result = spawnSync(process.execPath, [fileURLToPath(new URL('../bin/palatial-agent.js', import.meta.url)), 'setup', '--client', 'both', '--dry-run'], {
-    encoding: 'utf8',
-    env: { PATH: process.env.PATH, CLAUDE_CONFIG_DIR: path.join(root, 'claude') }
-  });
-  assert.equal(result.status, 0, result.stderr);
-  const { commands, claude_code_skill } = JSON.parse(result.stdout);
-  assert.equal(commands[0].command, 'codex');
-  assert.deepEqual(commands[0].args.slice(0, 4), ['mcp', 'add', 'palatial', '--']);
-  assert.equal(commands[1].command, 'claude');
-  assert.ok(commands[1].args.includes('stdio'));
-  assert.equal(commands[1].args.at(-1), 'mcp');
-  assert.ok(!result.stdout.includes('PALATIAL_API_KEY'));
-  // A dry run reports the skill it would write and writes nothing.
-  assert.equal(claude_code_skill.installed, false);
-  assert.ok(claude_code_skill.path.endsWith(path.join('skills', 'palatial')));
-  assert.ok(claude_code_skill.files.includes('SKILL.md'));
-});
-
-test('setup reports failure when registration succeeds but the Claude skill is not installed', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'palatial-setup-claude-'));
-  try {
-    const bin = path.join(root, 'bin');
-    const cwd = path.join(root, 'cwd');
-    await mkdir(bin);
-    await mkdir(cwd);
-    await writeFile(path.join(bin, process.platform === 'win32' ? 'claude.EXE' : 'claude'), 'cli');
-    const claude = await realpath(path.join(bin, process.platform === 'win32' ? 'claude.EXE' : 'claude'));
-    const setup = await runSetup({
-      client: 'claude-code',
-      executable: '/package/bin/palatial-agent.js',
-      env: { PATH: bin },
-      cwd,
-      runner: command => { assert.equal(command, claude); return { status: 0, stdout: '', stderr: '' }; },
-      skillInstaller: async () => ({ installed: false, action: 'skipped', reason: 'unowned directory' })
-    });
-    assert.equal(setup.output.results[0].registered, true);
-    assert.equal(setup.output.claude_code_skill.action, 'skipped');
-    assert.equal(setup.failed, true);
-  } finally { await rm(root, { recursive: true, force: true }); }
-});
-
-
-test('MCP feedback repair uses the shared API schema and preserves reviewed instruction and source', async t => {
+test('sole MCP tool reserves and uploads local files before native intent, then replays exact stored metadata after response loss', async t => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'palatial-intent-files-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const filename = path.join(directory, 'cabinet.mp4');
+  await writeFile(filename, Buffer.from('0000ftyp0000video-evidence'));
   const calls = [];
-  const server = createServer({ clientFactory: async () => ({ reprocess: async (id, body) => { calls.push({ id, body }); return { id }; } }) });
-  const client = new Client({ name: 'feedback-contract', version: '1.0' });
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await server.connect(a); await client.connect(b);
-  t.after(async () => { await client.close(); await server.close(); });
-  const tool = (await client.listTools()).tools.find(item => item.name === 'palatial_reprocess_asset');
-  assert.equal(tool.inputSchema.properties.feedback.maxLength, 4000);
-  assert.match(tool.inputSchema.properties.feedback.description, /preserve/);
-  const body = { from: 'texture', mode: 'auto', sourceRunId: 'asset-source', feedback: 'Label the keys; preserve their geometry.' };
-  const result = await client.callTool({ name: tool.name, arguments: { asset_id: 'asset-a', ...body } });
-  assert.equal(result.isError, undefined);
-  assert.deepEqual(calls, [{ id: 'asset-a', body }]);
-  for (const invalid of [{ ...body, feedback: ' ' }, { ...body, destination: 'variant' }, { feedback: 'Label the keys.' }]) {
-    assert.equal((await client.callTool({ name: tool.name, arguments: { asset_id: 'asset-a', ...invalid } })).isError, true);
-  }
-  assert.equal(calls.length, 1);
-});
-
-test('MCP Variant batch tools carry quote, idempotency and partial-state contracts through the protocol', async t => {
-  const calls = [];
-  const batch = { id: 'batch-a', status: 'processing', items: [{ index: 0, assetId: 'child-a', status: 'queued' }, { index: 1, status: 'failed', error: { code: 'ITEM_FAILED' } }] };
-  const server = createServer({ clientFactory: async () => ({
-    createVariantBatch: async (id, body) => { calls.push({ id, body }); return body.dryRun ? { dryRun: true, quoteId: 'quote-a', totalEstimatedTokens: 40 } : batch; },
-    getVariantBatch: async (id, batchId) => { calls.push({ id, batchId }); return batch; }
-  }) });
-  const client = new Client({ name: 'variant-batch-contract', version: '1.0' });
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await server.connect(a); await client.connect(b);
-  t.after(async () => { await client.close(); await server.close(); });
-  const tools = (await client.listTools()).tools;
-  const create = tools.find(x => x.name === 'palatial_create_variant_batch');
-  const get = tools.find(x => x.name === 'palatial_get_variant_batch');
-  assert.equal(create.annotations.idempotentHint, true);
-  assert.equal(get.annotations.readOnlyHint, true);
-  const base = { asset_id: 'source-a', count: 2, feedback: 'Two belly widths' };
-  assert.equal((await client.callTool({ name: create.name, arguments: { ...base, dryRun: true } })).structuredContent.quoteId, 'quote-a');
-  assert.equal((await client.callTool({ name: create.name, arguments: base })).isError, true);
-  assert.equal(calls.length, 1, 'Unkeyed writes are rejected before calling the API');
-  const signedQuote = 'q'.repeat(10000);
-  const submit = { ...base, quoteId: signedQuote, request_id: 'stable-a' };
-  assert.deepEqual((await client.callTool({ name: create.name, arguments: submit })).structuredContent, batch);
-  assert.deepEqual(calls[1], { id: 'source-a', body: { count: 2, feedback: 'Two belly widths', quoteId: signedQuote, request_id: 'stable-a' } });
-  assert.deepEqual((await client.callTool({ name: get.name, arguments: { asset_id: 'source-a', batch_id: 'batch-a' } })).structuredContent, batch);
-  const direct = { ...base, request_id: 'direct-a' };
-  assert.deepEqual((await client.callTool({ name: create.name, arguments: direct })).structuredContent, batch);
-  assert.deepEqual((await client.callTool({ name: create.name, arguments: direct })).structuredContent, batch);
-  assert.deepEqual(calls.slice(-2), [0, 1].map(() => ({ id: 'source-a', body: { count: 2, feedback: 'Two belly widths', request_id: 'direct-a' } })));
-  assert.equal((await client.callTool({ name: create.name, arguments: { ...direct, quoteId: '' } })).isError, true);
-  const guide = await client.callTool({ name: 'palatial_guide', arguments: {} });
-  assert.match(guide.content[0].text, /A separate\s+quote call is optional/);
-  assert.match(guide.content[0].text, /palatial_create_variant_batch/);
-  assert.match(guide.content[0].text, /totalEstimatedTokens/);
-});
-
-
-test('MCP optional Variant count stays absent through preview, direct, explicit quote and replay', async t => {
-  const calls = [];
-  const server = createServer({ clientFactory: async () => ({ createVariantBatch: async (id, body) => { calls.push({ id, body }); return { id: 'inferred-batch', count: 3 }; } }) });
-  const client = new Client({ name: 'variant-inferred-count', version: '1.0' });
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await server.connect(a); await client.connect(b);
-  t.after(async () => { await client.close(); await server.close(); });
-  const tool = (await client.listTools()).tools.find(x => x.name === 'palatial_create_variant_batch');
-  assert.equal(tool.inputSchema.required.includes('count'), false);
-  const feedback = 'Create three vase variants';
-  const bodies = [{ feedback, dryRun: true }, { feedback, request_id: 'direct-inferred' }, { feedback, request_id: 'direct-inferred' }, { feedback, quoteId: 'signed-plan', request_id: 'quoted-inferred' }];
-  for (const body of bodies) {
-    const result = await client.callTool({ name: tool.name, arguments: { asset_id: 'source-a', ...body } });
-    assert.equal(result.isError, undefined);
-    assert.equal(result.structuredContent.count, 3);
-  }
-  assert.deepEqual(calls, bodies.map(body => ({ id: 'source-a', body })));
-  for (const count of [null, 0, -1, 1.5, '3', false]) {
-    assert.equal((await client.callTool({ name: tool.name, arguments: { asset_id: 'source-a', feedback, count, request_id: 'invalid-count' } })).isError, true);
-  }
-  assert.equal(calls.length, bodies.length);
-});
-
-test('primary Agent MCP tools map snake_case interaction metadata and poll the receipt without planning', async t => {
-  const calls = [];
-  const server = createServer({ clientFactory: async () => ({
-    startAgentTurn: async input => { calls.push(input); return { id: 'turn-1', assetId: 'asset-1', status: 'running', replayed: true }; },
-    getAgentTurn: async id => ({ id, status: 'completed', confirmation: { actionId: 'action-1', expectedRevision: 2 } })
-  }) });
-  const client = new Client({ name: 'agent-turn-test', version: '1.0' });
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await server.connect(a); await client.connect(b);
-  t.after(async () => { await client.close(); await server.close(); });
-  const input = {
-    request_id: 'request-1', asset_id: 'asset-1', conversation_id: 'conv-1', message: 'Keep the uploaded source.',
-    attachments: [{ name: 'source.png', mime_type: 'image/png', inline_data: { mime_type: 'image/png', data: 'AQ==' } }],
-  };
-  const result = await client.callTool({ name: 'palatial_agent', arguments: input });
-  assert.equal(result.structuredContent.replayed, true);
-  assert.deepEqual(calls[0], { requestId: 'request-1', assetId: 'asset-1', conversationId: 'conv-1', message: input.message,
-    attachments: [{ name: 'source.png', mimeType: 'image/png', inlineData: { mimeType: 'image/png', data: 'AQ==' } }],
-  });
-  const poll = await client.callTool({ name: 'palatial_get_agent_turn', arguments: { turn_id: 'turn-1' } });
-  assert.deepEqual(poll.structuredContent.confirmation, { actionId: 'action-1', expectedRevision: 2 });
-  await client.callTool({ name: 'palatial_agent', arguments: { request_id: 'request-2', selection: { artifact_id: 'ref-1', action_id: 'action-1' } } });
-  assert.deepEqual(calls[1].selection, { artifactId: 'ref-1', actionId: 'action-1' });
-  await client.callTool({ name: 'palatial_agent', arguments: { request_id: 'request-3', confirmation: { action_id: 'action-1', expected_revision: 2, quote_id: 'quote-1', destination: 'overwrite' } } });
-  assert.deepEqual(calls[2].confirmation, { actionId: 'action-1', expectedRevision: 2, quoteId: 'quote-1', destination: 'overwrite' });
-  const invalid = await client.callTool({ name: 'palatial_agent', arguments: { request_id: 'request-4', attachments: [{ file_path: '/private/file' }] } });
-  assert.equal(invalid.isError, true);
-  assert.equal(calls.length, 3);
-  await client.callTool({ name: 'palatial_agent', arguments: { request_id: 'request-5', answer: { ask_id: 'ask-1', option_id: 'choice-1', sub_option_id: 'sub-1', expected_revision: 2, client_mutation_id: 'mutation-1' } } });
-  assert.deepEqual(calls[3].answer, { askId: 'ask-1', optionId: 'choice-1', subOptionId: 'sub-1', expectedRevision: 2, clientMutationId: 'mutation-1' });
-  for (const invalidInput of [{ request_id: 'empty' }, { request_id: 'mixed', message: 'Proceed', selection: { artifact_id: 'ref-1' } }, { request_id: 'attachment-decision', attachments: [], selection: { artifact_id: 'ref-1' } }]) {
-    assert.equal((await client.callTool({ name: 'palatial_agent', arguments: invalidInput })).isError, true);
-  }
-  assert.equal(calls.length, 4);
-  await client.callTool({ name: 'palatial_agent', arguments: { request_id: 'automatic-1', message: 'Build within my limit.', execution: { mode: 'automatic', max_tokens: 40 } } });
-  assert.deepEqual(calls[4], { requestId: 'automatic-1', message: 'Build within my limit.', execution: { mode: 'automatic', maxTokens: 40 } });
-  for (const execution of [{ mode: 'automatic', max_tokens: 0 }, { mode: 'automatic', maxTokens: 40 }, { mode: 'automatic', bypass: true }]) {
-    assert.equal((await client.callTool({ name: 'palatial_agent', arguments: { request_id: 'invalid-auto', message: 'Build', execution } })).isError, true);
-  }
-  assert.equal(calls.length, 5);
-  assert.match(client.getInstructions(), /palatial_agent as the primary entry/);
-});
-
-
-test('MCP upload attachment can be passed unchanged into the primary Agent tool', async t => {
-  const calls = [];
-  const nativeAttachment = { id: 'cabinet.mp4', name: 'cabinet.mp4', kind: 'video', mimeType: 'video/mp4', bytesInAsset: true };
-  const server = createServer({ clientFactory: async () => ({
-    uploadAgentSource: async input => { calls.push({ upload: input }); return { attachment: nativeAttachment }; },
-    startAgentTurn: async input => { calls.push({ turn: input }); return { id: 'turn-1', status: 'running' }; }
-  }) });
-  const client = new Client({ name: 'upload-intent-parity', version: '1.0' });
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await server.connect(a); await client.connect(b);
-  t.after(async () => { await client.close(); await server.close(); });
   const assetId = '333333333333333333333333';
-  const upload = await client.callTool({ name: 'palatial_upload_agent_source', arguments: { asset_id: assetId, file_path: '/explicit/cabinet.mp4' } });
-  assert.equal(upload.isError, undefined);
-  assert.deepEqual(upload.structuredContent.attachment, { id: 'cabinet.mp4', name: 'cabinet.mp4', kind: 'video', mime_type: 'video/mp4', bytes_in_asset: true });
-  const result = await client.callTool({ name: 'palatial_agent', arguments: { request_id: 'video-build-1', asset_id: assetId, message: 'Build this cabinet.', execution: { mode: 'automatic', max_tokens: 80 }, attachments: [upload.structuredContent.attachment] } });
-  assert.equal(result.isError, undefined);
-  assert.deepEqual(calls[1].turn, { requestId: 'video-build-1', assetId, message: 'Build this cabinet.', execution: { mode: 'automatic', maxTokens: 80 }, attachments: [nativeAttachment] });
-  assert.equal(nativeAttachment.mimeType, 'video/mp4');
-  assert.equal(nativeAttachment.bytesInAsset, true);
+  const attachment = { id: 'cabinet.mp4', name: 'cabinet.mp4', kind: 'video', mimeType: 'video/mp4', bytesInAsset: true };
+  let loseResponse = true;
+  const native = new PalatialClient({ apiKey: 'fixture-key', baseUrl: 'https://dashboard.dev.palatial.cloud/api/v1/external/', receiptDir: path.join(directory, 'receipts'), fetchImpl: async (url, init) => {
+    const route = new URL(url).pathname;
+    calls.push({ route, method: init.method, headers: init.headers, body: typeof init.body === 'string' ? JSON.parse(init.body) : undefined });
+    if (route.endsWith('/agent/sources')) return Response.json({ assetId });
+    if (route.endsWith('/sources/init')) return Response.json({ key: `uploads/projects/${assetId}/uploads/cabinet.mp4`, uploadId: 'upload-1', completionToken: 'token-1' });
+    if (route.endsWith('/sources/sign-parts')) return Response.json({ signedUrls: [`https://${'a'.repeat(32)}.r2.cloudflarestorage.com/bucket/file?private=signature`] });
+    if (route === '/bucket/file') return new Response('', { headers: { etag: 'part-etag' } });
+    if (route.endsWith('/sources/complete')) return Response.json({ attachment });
+    if (route.endsWith('/external/agent')) {
+      if (loseResponse) { loseResponse = false; throw new Error('response lost after native admission'); }
+      return Response.json({ id: 'receipt-1', assetId, replayed: true }, { status: 202 });
+    }
+    throw new Error('Unexpected route');
+  } });
+  const client = await connect(t, async () => native);
+  const args = { request_id: 'video-1', message: 'Build the cabinet shown in my video.', files: [filename] };
+  const first = await client.callTool({ name: 'palatial_agent', arguments: args });
+  assert.equal(first.isError, true);
+  const replay = await client.callTool({ name: 'palatial_agent', arguments: args });
+  assert.equal(replay.isError, undefined);
+  assert.equal(replay.structuredContent.replayed, true);
+  assert.equal(calls.filter(call => call.route.endsWith('/agent/sources')).length, 1);
+  assert.equal(calls.filter(call => call.route.endsWith('/sources/init')).length, 1);
+  const posts = calls.filter(call => call.route.endsWith('/external/agent'));
+  assert.equal(posts.length, 2);
+  assert.deepEqual(posts[0].body, posts[1].body);
+  assert.deepEqual(posts[0].body, { requestId: 'video-1', message: args.message, assetId, attachments: [attachment] });
+  assert.equal(calls.find(call => call.route === '/bucket/file').headers, undefined);
+  await writeFile(filename, Buffer.from('changed-source'));
+  const changed = await client.callTool({ name: 'palatial_agent', arguments: args });
+  assert.equal(changed.isError, true);
+  assert.match(changed.content[0].text, /different intent or source bytes/);
+  assert.equal(calls.filter(call => call.route.endsWith('/external/agent')).length, 2);
 });

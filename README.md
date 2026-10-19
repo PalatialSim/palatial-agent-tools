@@ -1,374 +1,61 @@
-# Palatial for Codex CLI and Claude Code
+# Palatial Agent Tools
 
-Generate simulation assets from text, images, or CAD without leaving your coding workflow.
+Palatial's thin JavaScript/CLI client and MCP server. Generation, planning, provider orchestration and proprietary prompts stay on Palatial servers.
 
-This is Palatial's **public thin client**: a command-line application and a local MCP server. It uploads selected inputs to the existing Palatial API, tracks assets, and downloads export ZIPs. Generation, provider orchestration, and proprietary prompts remain on Palatial's servers. No proprietary `SKILL.md` is distributed.
+## One native Agent entry
 
-**Release status:** Public preview. API contract tests and MCP transport tests are included. A paid, live generation-to-simulator acceptance run has not been performed for this release. An API `READY` status means generation is complete; inspect `details.media` for each downloadable representation. It does not certify your simulation task.
+Package **0.1.16** exposes exactly one MCP tool: `palatial_agent`. It is a **Dev preview**: configure `PALATIAL_API_URL=https://dashboard.dev.palatial.cloud/api/v1/external/` and a Dev workspace API key until the owning Backend is promoted.
 
-## Start with user intent
+The native Agent handles Palatial asset creation, configuration, modification, recovery, status and delivery. It reads the user's intent and existing project data. Unrelated tasks are refused. The public path always executes unattended: the server chooses supported routes, preferences, references and justified dimension estimates, and executes through shared owning services. No caller execution policy, token ceiling, answers, selections or confirmation messages exist.
 
-**Dev preview only:** `palatial_agent` and `palatial_get_agent_turn` require
-`https://dashboard.dev.palatial.cloud/api/v1/external/` and a Dev API key.
-These routes are not available on Production. Do not fall back automatically.
-Package 0.1.16 includes these Dev-preview tools; use the Dev origin and key until the owning Backend is promoted. An initial 202
-receipt can omit `conversationId` until the first turn binds its conversation;
-retain it once returned.
-
-Use `palatial_agent` as the primary entry for Palatial asset intent and existing-project work. The same native server Agent reads saved state, interprets text, image, CAD/3D or video evidence and selects supported capabilities. Unrelated tasks are refused. Preserve `request_id`, `asset_id` and `conversation_id`; poll the returned turn `id` with `palatial_get_agent_turn`, never a new interaction.
-
-- Omit `execution` for interactive questions, reference choices and explicit paid-proposal approval. Relay exact server IDs and revisions; do not manufacture confirmation.
-- When the user explicitly authorizes unattended execution, send `execution: { mode: "automatic", max_tokens: 40 }` (`max_tokens` is an optional positive integer ceiling on the accepted quoted token price; actual charges still settle under native postpaid billing). This authorizes this asset task, including native option/reference selection and host quote/confirmation checks. The server handles those checkpoints without client auto-clicks or a second planner. It retains shared permissions, prerequisites, billing and replay rules.
-- Read `execution.state`: `active`, `completed`, `blocked` or `superseded`. `blocked` reports an actionable code such as `AGENT_INPUT_REQUIRED`, `AGENT_TOKEN_LIMIT_EXCEEDED`, `AGENT_QUOTE_UNAVAILABLE` or an owning-service refusal. Do not invent facts, raise the accepted quote ceiling or fall back to another generation endpoint to bypass it. Authorization never carries into future Dashboard turns.
-- Keep polling the same turn while `execution.state` is `active`, even if its interaction `status` is already `completed`. Automatic `completed` means the task was handled or the requested paid action was admitted. Generation can still run; check asset status, validation outcome and the media manifest before claiming delivery or simulation success.
-- Replay identical inputs with the same request ID after uncertainty. The thin client does not retry mutations or generation automatically.
-
-`palatial_agent` attachments are metadata or base64 inline bytes, not local paths. For local files, use `palatial_upload_agent_source` with the existing unpaid `asset_id` and one explicit `file_path`; pass its returned MCP attachment (snake_case `mime_type` and `bytes_in_asset`) unchanged to `palatial_agent`. Uploading alone does not generate or spend tokens. For a new upload-backed project, first ask the interactive Agent to prepare a project without building, wait for that turn to settle, upload sources, then send the automatic intent with the same asset ID. PNG/JPEG/WebP and supported CAD/3D files are accepted; MP4/MOV video is limited to 300 MiB. Native format and route restrictions remain authoritative. Raw URL attachments are rejected. Inline video returns `AGENT_SOURCE_UPLOAD_REQUIRED`; use the source upload tool for video.
-
-The JavaScript client exposes `startAgentTurn(input)` with camelCase API fields (`execution.maxTokens`), `getAgentTurn(id)` and `uploadAgentSource({ asset_id, file_path })`. The upload method uses the native `agent/assets/:assetId/sources/init`, `sign-parts` and `complete` endpoints, reads only the named regular file in bounded chunks, and sends no API key to object storage. The JavaScript method preserves native camelCase attachment fields; the MCP upload tool maps them to the established snake_case attachment contract. It returns after verified completion; it does not plan or submit. The low-level tools remain available for compatibility.
-
-## Install
-
-You need Node.js 22 or newer, a Palatial workspace API key, and Codex CLI or Claude Code. Generation uses the shared organization/workspace token balance and charges as stages complete. Export itself does not consume tokens. Your coding agent's subscription or API charges are separate.
-
-Install the versioned package from the official GitHub Release:
-
-```sh
-npm install --global https://github.com/PalatialSim/palatial-agent-tools/releases/download/v0.1.12/palatial-agent-tools-0.1.12.tgz
-palatial-agent --version
-palatial-agent login
-palatial-agent doctor
-```
-
-`login` prompts for your workspace API key with input hidden, checks it through a read-only API call, and saves it locally. Obtain the key in [Palatial dashboard](https://dashboard.palatial.cloud) workspace settings. Do not paste it into your coding-agent conversation.
-
-The npm-compatible package is distributed through GitHub Releases. **It is not yet published to the npm registry.** The package name `@palatial/agent-tools` is metadata, not a currently verified npm installation target.
-
-### Codex CLI
-
-```sh
-palatial-agent setup --client codex
-codex
-```
-
-Start a fresh session, then ask:
-
-> List the Palatial tools and run palatial_doctor. Do not generate or export anything yet.
-
-### Claude Code
-
-```sh
-palatial-agent setup --client claude-code
-claude
-```
-
-Use `/mcp` to inspect the connection, then ask for the same read-only check.
-
-To configure both clients, run `palatial-agent setup --client both`. Preview every change with `--dry-run`. Setup adds a server named `palatial` in the user's client configuration, and for Claude Code it also installs the Palatial skill described below into `~/.claude/skills/palatial`. The installed copy carries an ownership manifest and file hashes; setup refuses to overwrite an unowned, edited, extra-file, or symlinked skill directory. A partial setup exits nonzero even when MCP registration succeeded. It does not modify your project instructions or other servers. If you move this installation or change the Node.js executable, rerun setup.
-
-The client runs over **stdio**: your coding agent starts it as a local process. You do not need Docker, a local GPU, an inbound port, or your own hosted MCP server. Internet access to Palatial and its export storage is required.
-
-## Generation modes
-
-Use `palatial_create_asset` with `mode: auto` to let Palatial choose the
-generation route and all required settings from a description, existing local
-input arguments (`image_path`, `image_paths`, `mesh_path`, `files`) or HTTPS
-`source_urls`. With media, `name` and `description` are optional.
-Optional `engine` and `quality` (`speed`, `balanced`, `accuracy`) express goals.
-`dryRun: true` returns the selected mode, settings and reason without creating or
-charging. For submission, preserve a stable `request_id`: identical replays reuse
-the asset; changed inputs conflict. If omitted, the client generates an ID once
-and saves a recovery receipt before the request. Read `palatial_guide` overview
-and recipes for examples. The server owns selection; the client contains no
-routing rules. Automatic mode posts to the existing `/external/assets/create`
-with `mode: auto`, repeated `files` or `urls`. `palatial_create_auto` remains
-a compatibility tool with its existing `file_paths` input, using the same API.
-The old `/create/auto` API remains a compatibility wrapper. Legacy
-`shape_model: auto` retains its prior meaning.
-
-Explicit text/image MCP calls use `mode: diffusion` or `mode: parametric` with
-`effort: low` or `mad_max`. Route-specific settings go in `parameters`.
-The MCP exposes no `shape_model` or `texture_model`: mode selects the builder
-and the backend chooses the painter. Explicit CAD has no mode and uses its
-supplied mesh; automatic CAD uses mode=auto.
-The MCP builds rigid assets and omits body_type, auto_scale and replace_glass.
-Collision quality is auto/low/medium/high/sdf; prefer auto or omission. auto
-leaves the API override unset, currently medium on Diffusion/Low. Mad Max picks
-proxies itself. The CLI/API client keeps legacy request files compatible.
-
-## Live docs and startup checks
-
-The skill points to [docs.palatial.cloud](https://docs.palatial.cloud/) and its
-[API reference](https://docs.palatial.cloud/integrations/api/). Every MCP startup
-checks the sitemap and compares article content with the last successful local
-snapshot. `palatial_doctor.docs` reports the startup result. `palatial_check_docs`
-checks again and returns changed page URLs with added/removed excerpts, retaining
-startup changes so a refresh cannot hide them. Run `palatial-agent docs` for the
-same check without credentials.
-
-The first successful check establishes a baseline. Changes include pages added,
-removed or edited; generated CSS, scripts and navigation are ignored. Checks
-send no API key. They have a seven-second network budget and preserve the last
-successful snapshot on failure. Offline startup remains usable. The snapshot is
-`docs-snapshot.json` under `PALATIAL_STATE_DIR`, or the default local state
-directory; `PALATIAL_DOCS_CHECK=0` explicitly disables checking for offline use.
-A changed document calls for reading it and reconciling any client-schema
-mismatch; it never replaces client code automatically.
-
-## Create your first asset
-
-In either coding agent:
-
-> Use Palatial to generate a rigid plastic storage bin for Isaac Sim. Save the asset ID, check its status, and download the completed export into ./assets/storage-bin. Report which validation checks were actually performed.
-
-For an image:
-
-> Use Palatial to turn ./references/bin.jpg into a rigid Isaac Sim asset. Use only that file as input. Download the completed export into ./assets/bin.
-
-For CAD:
-
-> Convert ./cad/gripper.step using ./references/gripper.png with Palatial. Its up axis is Z. Target Isaac Sim and keep the export in ./assets/gripper.
-
-Specify the target simulator, dimensions, and articulation requirements when known. Direct mesh CAD inputs require their source scale (`units` or `meters_per_unit`) and up axis; STEP/IGES require only the up axis, and USD-family files use authored stage metadata. Supported engine request values are `isaac_sim`, `mujoco`, and `newton`. Verify the output for your selected simulator; format and runtime capabilities depend on the pipeline.
-
-## How your agent learns to use this
-
-Tool names alone do not tell a coding agent that a second create starts another
-job with its own stage charges, or that `image_paths` works with one shape model and not the others.
-The package ships that guidance as plain Markdown you can read and edit, in
-`skills/palatial/`: a workflow overview, a full `palatial_create_asset`
-parameter reference with defaults and cross-field rules, worked requests for
-each input type, and a troubleshooting guide.
-
-It reaches your agent two ways, from the same files:
-
-- **Any client**, including Codex CLI, can call the `palatial_guide` tool. It
-  is local, read-only, free, and takes a `topic` of `overview`, `parameters`,
-  `recipes`, or `troubleshooting`. Clients that support MCP resources also see
-  the same four documents as `palatial://guide/*`.
-- **Claude Code** additionally loads the skill from disk, which setup installs,
-  so the guidance applies without a tool call. Nothing starts it: Claude Code
-  matches the task against the skill's description and loads it on its own.
-
-To read the same guidance yourself, without a key or a network call:
-
-```sh
-palatial-agent guide
-palatial-agent guide --topic parameters
-```
-
-A release can change the guidance, so rerun setup after updating to refresh the
-installed skill.
-
-## Make Palatial your project's default
-
-MCP exposes callable tools; the coding agent still decides when to use them. For more consistent routing, add this optional, non-proprietary instruction to your project's `AGENTS.md` for Codex or `CLAUDE.md` for Claude Code:
-
-> When this project needs a SimReady 3D asset from text, images, or CAD, use the connected Palatial tools. Preserve asset IDs and reuse existing jobs when checking progress. Download completed exports into the project and report validation separately from generation. Follow the user's specified provider and spending instructions.
-
-This preference is inspectable and editable. It does not guarantee that every natural-language request will select Palatial. Explicitly saying “use Palatial” is the clearest way to route a request.
-
-## Tools
-
-| Tool | Purpose | Changes or charges |
-| --- | --- | --- |
-| `palatial_guide` | Read the packaged usage and parameter guidance | Local and read-only; no API call |
-| `palatial_check_docs` | Check live documentation and report changed pages | Public read; writes a local comparison snapshot |
-| `palatial_doctor` | Check credentials and API connectivity | Read-only; no generation or export |
-| `palatial_upload_agent_source` | Upload one explicit local source to an unpaid Agent project | Stores source bytes; no generation or token charge |
-| `palatial_create_asset` | Submit text, image, multiview, or CAD generation | Creates an asset; charges tokens as stages complete |
-| `palatial_get_asset` | Check an existing asset's processing status | Read-only |
-| `palatial_get_asset_details` | Retrieve the complete asset record | Read-only |
-| `palatial_list_assets` | List workspace assets with optional name/status filters | Read-only |
-| `palatial_batch_get_statuses` | Check up to 100 asset statuses in one request | Read-only |
-| `palatial_get_pipeline_progress` | Retrieve stage-level progress for an asset | Read-only |
-| `palatial_create_variant` | Create an independent variant from a READY asset using feedback | Creates an asset; charges tokens as stages complete |
-| `palatial_create_variant_batch` | Submit N distinct variants of one source; optionally preview first | Stable request_id required; optional count inferred by server from feedback; free dryRun and frozen quoteId available; children bill independently |
-| `palatial_get_variant_batch` | Read batch items, states and Viewer links | Read-only; no token charge |
-| `palatial_reprocess_asset` | Repair the same asset from a pipeline stage with feedback, or, without a stage, retry a researching job's failed build | Changes processing; charges tokens as stages complete |
-| `palatial_download_asset` | Save an available export ZIP and SHA-256 receipt | Writes local files; export itself is free. A failed asset requires user confirmation plus `allow_failed_export: true` |
-| `palatial_cancel_asset` | Cancel a specific asset's processing | Stops a job; does not imply a refund |
-
-MCP `structuredContent` is always an object as required by the protocol. When
-an API response is an array, `palatial_list_assets` exposes it as `data` and
-`palatial_batch_get_statuses` exposes it as `statuses`; the text response keeps
-the original JSON array for clients that read text only.
-
-The client accepts PNG/JPEG/WebP references and PDF datasheets. CAD requests require a mesh file; the reference image is optional and needed when generating textures from a photo. A GLB with embedded textures can retain its appearance when the server inspection confirms them. Each local input is limited to 256 MiB (300 MiB and 60 seconds for MP4/MOV videos); downloads are limited to 2 GiB in this preview. ZIP files are saved without automatic extraction or simulator import.
-
-## Billing and paused jobs
-
-Only successfully completed stages are charged. New generations must meet the route start minimum (Diffusion 20, Parametric Low 40, Mad Max 80, CAD to Sim 4 tokens); the minimum admits the run but does not reserve or deduct the whole estimate. A zero or negative net balance blocks new jobs and the next stages; an already-running stage can finish and leave debt. A normal `PROCESSING_PAUSED` checkpoint between stages (`billing.paused: false`, `run.awaitingContinue: true`) continues automatically in about a minute while the balance is above zero. For `billing.paused: true` with `pauseReason: insufficient_credits`, posted credit covers debt first and the same asset resumes once the net balance is positive. Keep polling the same asset; the client never retries generation or starts checkout automatically.
-
-Creation and status responses retain the API's `billing` and `warnings` fields when present. Status calls also return `billing_guidance` for credit pauses and normal stage checkpoints. A start-gate `insufficient_tokens` error is identified by `tokens.required`; it includes `tokens.balance` and `tokens.shortfall`, says that nothing was created, and tells the caller to add tokens and submit once. MCP exposes these in both text JSON and `structuredContent`. Responses without a route minimum retain their server billing code and do not promise automatic resume. The client redacts credentials and signed URL secrets in billing metadata and does not copy arbitrary error bodies. Older servers without billing fields retain their existing response and generic error behavior.
-
-The first export requires a positive net balance, but exporting does not deduct tokens. A later paused or indebted run can use an earlier export only when the server still exposes its materialized `export.key`; an in-place reprocess may clear that key. The server decides export eligibility; the client does not infer it from `export.status` alone.
-
-## Use the CLI directly
-
-Save `asset.json`:
+Submit with the sole tool:
 
 ```json
 {
-  "source": "text",
-  "name": "Storage bin",
-  "description": "A rigid plastic storage bin",
-  "engine": ["isaac_sim"],
-  "mode": "diffusion",
-  "parameters": { "structure": "single_object" }
+  "request_id": "storage-bin-1",
+  "message": "Create a rigid plastic storage bin for Isaac Sim, 60 by 40 by 32 cm."
 }
 ```
 
-```sh
-palatial-agent guide --topic recipes
-palatial-agent create --request asset.json
-palatial-agent status --asset-id YOUR_ASSET_ID
-palatial-agent download --asset-id YOUR_ASSET_ID --output-dir ./assets
+Poll with the same tool:
+
+```json
+{ "turn_id": "RETURNED_ID" }
 ```
 
-Creation returns immediately with an asset ID. Status polling does not create another asset. A local submission receipt is saved under `~/.local/state/palatial-agent` (or `PALATIAL_STATE_DIR`) so accepted IDs can be recovered after a terminal session ends. A definite start-gate rejection is recorded as `rejected`: nothing was created, so add tokens to meet the minimum and submit once. A receipt with `submission_outcome_unknown` means you should inspect the dashboard before submitting again; the receipt is not server-side idempotency.
+- Submit and poll are exclusive branches. A poll carries only `turn_id`; it never creates a request.
+- Optional `files` contains explicit local image, CAD/3D or MP4/MOV paths. The same tool reserves an unpaid project when needed, uploads those files through native verified storage, and submits the intent. It saves the exact uploaded attachment identities before admission so identical retries do not reupload or change the request. File uploads themselves do not spend generation tokens.
+- Optional `asset_id` and `conversation_id` continue the same project. Keep returned identities.
+- Preserve `request_id` and identical inputs after uncertainty; never create another request to check progress. This client never retries mutations automatically.
+- Product Research makes a best attempt: the native Agent resolves product identity, candidates, dimensions and references using sources, research and defaults, recording uncertainty in `assumptions` as `{ decision, evidence }`. Uncertainty alone is not a blocker. An essential missing source that research/defaults cannot replace, an unsupported task or permission refusal is a structured blocker. Typed refusals include `AGENT_OUT_OF_SCOPE` and `AGENT_SOURCE_MISSING`; required source bytes can return `AGENT_SOURCE_BYTES_REQUIRED` or `AGENT_SOURCE_UPLOAD_REQUIRED`. Permission failures retain native codes or `AGENT_PERMISSION_DENIED`. The client preserves these facts without a second planner or bypass.
+- Native permissions, prerequisites, billing, cancellation and replay checks remain shared. `insufficient_tokens` or `insufficient_credits` sets automation to `paused`; admission rechecks each minute and shared pipeline billing resumes the same asset after sufficient top-up; there is no separate public token-ceiling policy.
+- Read `automation.state` (`active`, `completed`, `blocked`, `paused`, `superseded`) for unattended progress, and keep polling the same id while active even when the underlying planner `status` is completed. A handled request or admitted action is not finished generation. Check the returned project/media/validation facts before claiming delivery or simulation success. A cancellation acknowledgment alone is not a completed stop.
+- Requested downloads are authoritative structured results. Use exact host-issued URLs promptly; do not reconstruct credentials from model text. A representation may be pending, unsupported or genuinely missing independently of asset completion.
 
-Asset status responses retain the API media manifest in `details.media`. Check `mesh`, `texture`, and `export` individually: `available` includes an API `href`; `pending` (`MEDIA_NOT_READY`) should be polled; `unavailable` (`MEDIA_NOT_SUPPORTED` or `MEDIA_GENERATION_FAILED`) should not; `missing` (`MEDIA_ARTIFACT_MISSING`) requires support; `unknown` (`MEDIA_STORAGE_UNAVAILABLE`) means a temporary storage-check failure and is retryable. Texture means a textured GLB, not a standalone image. Some routes provide only an authored USD export. `READY` does not imply every representation exists. The manifest is a snapshot, and access and balance rules still apply at download time.
+Images and supported CAD/3D files can use `attachments` with `inline_data: { mime_type, data }` or owned stored metadata. Inline limits are 2 MiB each, eight inline files and 12 MiB total; at most 50 references accompany one message. Raw URLs are rejected. MP4/MOV uses the integrated `files` transport and its existing 300 MiB limit. Other local files use the client's 256 MiB limit; inline limits above remain separate. Format/route capabilities remain server-owned.
 
-Exports include an absolute local path, SHA-256, byte count, and asset ID. A completed download with a matching receipt is reused locally without calling the export endpoint again. Existing files are preserved. Failed assets are not exported automatically: the user must confirm the possible partial or unvalidated result before `allow_failed_export` is set. The client does not automatically retry a failed download.
+The JavaScript methods `startAgentTurn(input)` and `getAgentTurn(id)` use camelCase JSON over `POST agent` and `GET agent/:id`; method names do not introduce an alternate HTTP path. The old `agent/turns` path has no alias. Compatibility JavaScript and CLI operations remain available, but are not registered or advertised as MCP tools. The MCP server performs no startup docs/network calls or health/guide tool discovery.
 
-## Authentication and data
+## Install and configure
 
-The API key belongs to your Palatial workspace. `PALATIAL_API_KEY`, if present in the environment starting the client, takes precedence over the saved key. Automated environments should use their secret manager.
-
-`login` saves a plaintext API key in `~/.config/palatial-agent/credentials.json`, or under `XDG_CONFIG_HOME`. The directory/file use owner-only permissions on POSIX systems. On Windows, protect the file with your user-profile ACLs. This preview does not use an OS keychain or browser OAuth.
-
-The public client contains only input validation, authentication handling, API transport, and download handling. Customers can inspect that code and MCP tool metadata. Private server-side generation logic is not sent to the coding agent. Only the files explicitly passed to generation are uploaded by this client; the coding agent's own data handling is governed by its provider.
-
-## Troubleshooting and removal
-
-| Symptom | Next step |
-| --- | --- |
-| Palatial tools are missing | Rerun setup and start a fresh coding-agent session; inspect the MCP connection. |
-| The agent ignores the guidance | Ask it to call `palatial_guide` directly. In Claude Code, check that `~/.claude/skills/palatial/SKILL.md` exists and rerun setup if not. |
-| Authentication fails | Run `palatial-agent login`; check for an overriding `PALATIAL_API_KEY`. |
-| `insufficient_tokens` at generation start | Read `tokens.required`, `tokens.balance` and `tokens.shortfall`. Nothing was created; add enough tokens to meet the route minimum, then submit once. |
-| `insufficient_credits` while a run is paused | Top up the shared organization/workspace net balance above zero in Palatial. Keep the existing asset ID; the server resumes the credit-paused run automatically after credit is posted. |
-| Other HTTP 403 | Check workspace access and balance in Palatial. Older APIs may omit a specific billing code. |
-| Generation request times out | Keep the recovery receipt and inspect the dashboard before submitting again. |
-| Job is failed, canceled, or paused | Inspect that asset's status; do not create a replacement merely to poll. |
-| Existing output or receipt conflicts | Choose a new output directory; files are not overwritten. |
-| SDK or runtime fails to start | Check `node --version`, reinstall this release, and rerun setup. |
+Requires Node.js 22 or newer and a Palatial workspace API key. Generation charges the shared workspace balance according to native postpaid stage billing. Your coding agent's model charges are separate.
 
 ```sh
-codex mcp remove palatial
-claude mcp remove --scope user palatial
-rm -rf ~/.claude/skills/palatial
-palatial-agent logout
-npm uninstall --global @palatial/agent-tools
+npm install --global https://github.com/PalatialSim/palatial-agent-tools/releases/download/v0.1.16/palatial-agent-tools-0.1.16.tgz
+palatial-agent login
+palatial-agent setup --client codex
 ```
 
-Also unset any environment key and revoke the workspace key in Palatial if access should end. Removing the client does not cancel jobs or delete assets and receipts.
+`palatial-agent setup --client claude` configures Claude Code. Run `palatial-agent setup --help` for supported setup choices. Credentials stay in local configuration or environment; never put API keys into tool arguments or chat. Set the Dev API origin in the MCP process environment for this preview.
 
-For support, include the client version, asset/request ID, command, and sanitized error. Never include an API key or signed download URL. Use [Palatial](https://palatial.cloud) to contact the team.
+Use `palatial-agent --help` for standalone CLI compatibility operations. Local CLI guidance is available through `palatial-agent guide`; these commands are separate from the one-tool MCP catalog.
 
 ## Development
 
 ```sh
-npm ci
 npm run check
 npm test
-npm pack
+npm run test:package
 ```
 
-Tests use fixtures and the actual MCP SDK; they do not spend Palatial credits. A production generation canary and native simulator validation remain separate release checks.
-
-To test the published package in a fresh Docker container with external networking disabled at runtime, follow the [isolated testing guide](docs/testing.md). It covers clean installation, HTTPS fixture flows, and the separate live-canary procedure.
-
-Client integration references: [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli), [Claude Code MCP](https://code.claude.com/docs/en/mcp).
-
-### Repair an existing asset with feedback
-
-Describe the requested change in `feedback`, identify the stage in `from`, and
-select the retained predecessor with `sourceRunId`. `mode: "auto"` continues
-through downstream delivery and validation; `step` stops at the selected stage.
-Reprocessing updates the same asset. Use `palatial_create_variant` when you want
-an independent version with a different asset ID.
-
-```json
-{
-  "from": "texture",
-  "mode": "auto",
-  "sourceRunId": "SOURCE_QUEUE_RUN_ID",
-  "feedback": "Add readable key legends. Preserve the housing and key geometry."
-}
-```
-
-Pass these fields to `palatial_reprocess_asset` with `asset_id`, or save them as
-`repair.json` for the CLI command:
-
-```bash
-palatial-agent reprocess --asset-id ASSET_ID --request repair.json
-```
-
-The API accepts up to 4,000 feedback characters. Settings can accompany the
-instruction in `parameters`; the server validates supported settings. Confirm
-the repair before submission and poll the same asset afterward. If the mutation
-response is uncertain, inspect the current run instead of submitting again.
-The server chooses the retained source and reports unavailable source inputs;
-feedback does not guarantee that every historical asset has a usable checkpoint.
-A ready export and successful simulator validation remain separate outcomes.
-
-## Updating
-
-The MCP runs from the locally installed package. Run `palatial-agent update` to
-check the latest GitHub Release and print the installation command. Use
-`palatial-agent update --apply` for an explicit global update. Restart Codex or
-Claude Code after updating; an existing MCP process keeps running its previous
-version until restarted. See [CHANGELOG.md](CHANGELOG.md) for release notes.
-
-### Scene generation
-
-Read `palatial_guide` with `topic: scenes` before creating a scene. The four
-primary tools are `palatial_create_scene`, `palatial_get_scene`,
-`palatial_cancel_scene` and `palatial_download_scene`; `palatial_answer_scene`
-is optional for callers using `auto_continue: false` (the default).
-
-Creation accepts local `source_paths` or HTTPS `sources` with filename,
-media_type and url. It uses one create-and-start request, and transparently
-streams large files through returned signed uploads. Upload completion starts
-automatically. Enable `auto_continue: true` to continue checkpoints and
-continuation questions. Preserve the stable UUID `request_id` after uncertainty.
-Explicit `confirm_spend: true` requires authorized director and object charges.
-
-The client methods `createScene`, `getScene`, `cancelScene`, `downloadScene`
-and optional `answerScene` map to `POST workspaces/:workspaceId/scene-generations/start`,
-`GET scene-generations/:sceneId`, `POST .../stop`, `GET .../download` and
-`POST .../answer`. API JSON uses `autoContinue`. Download version is optional.
-Legacy `listScenes`, `recoverScene`, `retrySceneStart` and uploaded source descriptors
-remain client compatibility methods; cached deprecated MCP names also remain callable. Recovery and retries belong to the service
-and are absent from the advertised MCP tools. All routes are relative to
-`/api/v1/external/` and use the same API-key authentication as assets.
-See the [scene guide](skills/palatial/references/scenes.md) for limits and examples.
-
-For Agent proposals, regeneration returns `choices.variant` and
-`choices.overwrite`, each with its own `quote`; confirm only the selected
-user-approved destination and its `quoteId` (up to 8192 characters). Creation
-proposals expose `quote`. Reference options contain authenticated API `href`s
-under `agent/turns/:id/references/:artifactId`.
-A requested stop is not a confirmed cancellation. Wait for the terminal turn's
-`result.stop`, after native planning releases its lifecycle lease.
-`AGENT_LEGACY_CONVERSATION` and `AGENT_UNAVAILABLE` are 409 refusals; report them
-without silently falling back to low-level generation.
-
-For download requests in the Dev Agent preview, use the host-owned structured
-`downloads` result from `palatial_get_agent_turn`. It is keyed by requested
-`mesh`, `texture`, or `export`; an available entry contains `href`,
-`downloadUrl`, and optionally `fileName`. The native asset service resolves the
-signed URL; the Palatial planner receives only a stable API path. Use the exact structured
-URL promptly, without copying or reconstructing credentials from `reply`.
-Only media identities are persisted, and the host resolves signed URLs afresh
-when the turn is read. A requested unavailable media type has a structured
-entry `{ href, error: { code, statusCode, message, retryable } }`; handle it
-explicitly. Only requested media keys appear in `downloads`; `media` still
-describes all three. Reading the turn revalidates current read and export
-permissions. Stable API paths require an API key; Dashboard users can use
-existing Viewer download controls. Existing billing rules apply. A completed
-interaction does not mean
-completed generation or availability of every output. This remains Dev-only;
-do not fall back to a Production route automatically.
+The normal `v*` Git tag workflow verifies package/tag version equality, runs checks, packs the tarball and publishes it with a SHA-256 checksum. Package release does not promote Backend services to Stage or Production.

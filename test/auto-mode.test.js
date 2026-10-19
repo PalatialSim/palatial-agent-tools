@@ -124,30 +124,3 @@ test('unified auto error preserves refusal remedies, failed asset identity and a
   status = 403;
   await assert.rejects(client.create({ source: 'text', mode: 'auto', description: 'A bowl', request_id: requestId }), error => { assert.match(error.toJSON().billing_guidance.message, /Nothing was created/); return true; });
 });
-
-test('registered primary MCP auto creation previews and replays through the existing HTTP endpoint', async t => {
-  const dir = await directory(t); const accepted = new Map(); let assets = 0; const calls = [];
-  const server = createHttpServer(async (req, res) => {
-    assert.equal(req.url, '/api/v1/external/assets/create'); assert.equal(req.headers['x-api-key'], 'fixture');
-    const chunks = []; for await (const chunk of req) chunks.push(chunk);
-    const body = JSON.parse(Buffer.concat(chunks).toString()); assert.equal(body.mode, 'auto');
-    const key = req.headers['idempotency-key']; calls.push({ body, key }); res.setHeader('content-type', 'application/json');
-    if (body.dryRun) { assert.equal(key, undefined); res.end(JSON.stringify({ selection, dryRun: true })); return; }
-    const prior = accepted.get(key);
-    if (prior && prior.input !== JSON.stringify(body)) { res.statusCode = 409; res.end(JSON.stringify({ code: 'AUTO_IDEMPOTENCY_CONFLICT', message: 'Inputs differ.', remedy: 'Replay the original input.' })); return; }
-    if (!prior) accepted.set(key, { input: JSON.stringify(body), result: { id: `asset-${++assets}`, selection, dryRun: false } });
-    res.end(JSON.stringify(accepted.get(key).result));
-  });
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); t.after(() => new Promise(resolve => server.close(resolve)));
-  const client = await connected(t, new PalatialClient({ apiKey: 'fixture', receiptDir: dir, baseUrl: `http://127.0.0.1:${server.address().port}/api/v1/external/`, allowHttpForTests: true }));
-  const input = { source: 'text', mode: 'auto', description: 'A ceramic bowl', engine: ['isaac_sim'], request_id: requestId };
-  const call = args => client.callTool({ name: 'palatial_create_asset', arguments: args });
-  assert.equal((await call({ ...input, dryRun: true })).structuredContent.dryRun, true);
-  const created = await call(input); assert.notEqual(created.isError, true);
-  const replay = await call(input); assert.equal(replay.structuredContent.asset_id, created.structuredContent.asset_id);
-  const compatibility = await client.callTool({ name: 'palatial_create_auto', arguments: { description: input.description, engine: input.engine, request_id: requestId } });
-  assert.equal(compatibility.structuredContent.asset_id, created.structuredContent.asset_id);
-  const conflict = await call({ ...input, description: 'A changed bowl' });
-  assert.equal(conflict.isError, true); assert.equal(conflict.structuredContent.code, 'AUTO_IDEMPOTENCY_CONFLICT');
-  assert.equal(assets, 1); assert.equal(calls.length, 5);
-});

@@ -1,10 +1,11 @@
 # Changelog
 
-## 0.1.16 — native Agent intent and unattended execution
+## 0.1.16 — one native unattended Agent entry
 
-- Add the Dev-preview unified Agent entry, strict scoped unattended authorization, native turn polling and authoritative structured download results. The server owns planning, choices, quotes and confirmations; legacy tools remain compatible.
-- Upload an explicit local image, CAD or video source through verified native multipart storage before sending its returned attachment to the same Agent. No API key is sent to storage and client mutations are never retried automatically.
-- Explain per-media availability and distinguish pending, unsupported and genuinely missing artifacts. Keep the new Agent path explicitly Dev-only until Backend promotion.
+- Expose exactly one MCP tool, `palatial_agent`, for asset intent and polling. The server always executes unattended against saved project data through shared owning services; no caller execution policy, answers, selections or confirmations.
+- Use `POST /external/agent` and `GET /external/agent/{id}`. The old `/agent/turns` path is removed without an alias. Legacy JavaScript/CLI operations remain available outside the MCP catalog.
+- Integrate explicit local image/CAD/video files as transport: native unpaid reservation, verified multipart upload and saved exact-input replay after response loss. No API key is forwarded to storage and mutations are never automatically retried.
+- Preserve host-owned structured media/download outcomes and native billing pauses. Keep this new Backend contract explicitly Dev-preview until owning promotion.
 
 ## 0.1.15 — optional Variant batch count
 

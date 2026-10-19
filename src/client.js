@@ -7,76 +7,62 @@ import { z } from 'zod';
 import { createRoute, modeFields, validateMode } from './create-modes.js';
 import { createScene, getScene, listScenes, answerScene, cancelScene, recoverScene, retrySceneStart, downloadScene } from './scenes.js';
 import { createAuto, automaticCreateInput } from './auto-create.js';
-import { uploadAgentSource } from './agent-sources.js';
+import { uploadAgentSource, submitAgentWithFiles } from './agent-sources.js';
 
 export const DEFAULT_API_URL = 'https://dashboard.palatial.cloud/api/v1/external/';
 const engine = z.enum(['isaac_sim', 'mujoco', 'newton']);
 const assetName = z.string().trim().min(4).max(50).regex(/^[a-zA-Z\d_\-.\s]+$/, 'Asset name may contain only letters, digits, spaces, underscores, hyphens, and periods.');
 export const assetIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/, 'Invalid asset ID.');
-// Public Agent interactions are transported unchanged; the server owns planning,
-// saved project state, question validity, and paid-action authorization.
+// One native unattended asset intent; no public conversational decision protocol.
 const agentIdentity = z.string().min(1).max(192).regex(/^[A-Za-z0-9._:-]+$/);
-const agentExecutionSchema = z.object({ mode: z.literal('automatic'), maxTokens: z.number().int().positive().describe('Maximum accepted quoted token price; native postpaid actual charges still apply.').optional() }).strict();
-const mcpAgentExecutionSchema = z.object({ mode: z.literal('automatic'), max_tokens: z.number().int().positive().describe('Maximum accepted quoted token price; native postpaid actual charges still apply.').optional() }).strict();
 const agentRequestIdentity = z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/);
 const agentAttachmentSchema = z.object({
   id: z.string().optional(), kind: z.string().optional(), name: z.string().optional(),
-  role: z.string().optional(), mimeType: z.string().optional(), url: z.string().optional(),
+  role: z.string().optional(), mimeType: z.string().optional(),
   partName: z.string().optional(), referenceMeshArtifactId: z.string().optional(),
-  sceneSourceRef: z.string().optional(), bytesInAsset: z.boolean().optional(),
+  bytesInAsset: z.boolean().optional(),
   inlineData: z.object({ mimeType: z.string(), data: z.string() }).strict().optional()
 }).strict();
-const agentAnswerSchema = z.object({
-  askId: agentIdentity, optionId: agentIdentity.optional(), answerText: z.string().min(1).max(4000).optional(),
-  subOptionId: agentIdentity.optional(), expectedRevision: z.number().int().nonnegative(),
-  clientMutationId: agentRequestIdentity
-}).strict();
-function validateAgentInteraction(value, ctx) {
-  const interactions = ['message', 'answer', 'selection', 'confirmation'].filter(key => value[key] !== undefined);
-  if (interactions.length !== 1) ctx.addIssue({ code: 'custom', message: 'Supply exactly one of message, answer, selection or confirmation.' });
-  if (value.message !== undefined && !value.message.trim()) ctx.addIssue({ code: 'custom', path: ['message'], message: 'Message must contain text.' });
-  if (value.attachments !== undefined && value.message === undefined) ctx.addIssue({ code: 'custom', path: ['attachments'], message: 'Attachments must accompany a message, not a decision.' });
-}
 export const agentTurnSchema = z.object({
-  requestId: agentRequestIdentity, message: z.string().max(16000).optional(), assetId: assetIdSchema.optional(),
-  conversationId: agentIdentity.optional(), execution: agentExecutionSchema.optional(), attachments: z.array(agentAttachmentSchema).optional(),
-  answer: agentAnswerSchema.optional(),
-  selection: z.object({ artifactId: agentIdentity, actionId: agentIdentity.optional() }).strict().optional(),
-  confirmation: z.object({ actionId: agentIdentity, expectedRevision: z.number().int().nonnegative(),
-    quoteId: z.string().min(1).max(8192).optional(), destination: z.enum(['variant', 'overwrite']).optional() }).strict().optional()
-}).strict().superRefine(validateAgentInteraction);
+  requestId: agentRequestIdentity, message: z.string().trim().min(1).max(16000),
+  assetId: assetIdSchema.optional(), conversationId: agentIdentity.optional(),
+  attachments: z.array(agentAttachmentSchema).max(50).optional()
+}).strict();
 export const mcpAgentTurnSchema = z.object({
-  request_id: agentRequestIdentity.describe('Stable identity for this one user interaction. Replay identical inputs with this ID after uncertainty; use a new ID only for a new interaction.'),
-  message: z.string().max(16000).optional(), asset_id: assetIdSchema.optional(), conversation_id: agentIdentity.optional(),
-  execution: mcpAgentExecutionSchema.describe('Explicit authorization for unattended execution of this asset task. The native server Agent chooses supported options and accepts quoted prices within max_tokens when supplied; this does not override actual postpaid settlement; omit to keep interactive decisions.').optional(),
+  turn_id: agentIdentity.describe('Read this returned request id without creating another request.').optional(),
+  request_id: agentRequestIdentity.describe('Stable identity for this intent. Reuse identical inputs after uncertainty.').optional(),
+  message: z.string().trim().min(1).max(16000).optional(),
+  asset_id: assetIdSchema.optional(), conversation_id: agentIdentity.optional(),
+  files: z.array(z.string().min(1).max(4096)).max(50).optional(),
   attachments: z.array(z.object({
     id: z.string().optional(), kind: z.string().optional(), name: z.string().optional(), role: z.string().optional(),
-    mime_type: z.string().optional(), url: z.string().optional(), part_name: z.string().optional(),
-    reference_mesh_artifact_id: z.string().optional(), scene_source_ref: z.string().optional(),
+    mime_type: z.string().optional(), part_name: z.string().optional(), reference_mesh_artifact_id: z.string().optional(),
     bytes_in_asset: z.boolean().optional(), inline_data: z.object({ mime_type: z.string(), data: z.string() }).strict().optional()
-  }).strict()).describe('Explicit public attachment metadata or base64 inline bytes. This tool does not read local files.').optional(),
-  answer: z.object({ ask_id: agentIdentity, option_id: agentIdentity.optional(), answer_text: z.string().min(1).max(4000).optional(),
-    sub_option_id: agentIdentity.optional(), expected_revision: z.number().int().nonnegative(), client_mutation_id: agentRequestIdentity }).strict().optional(),
-  selection: z.object({ artifact_id: agentIdentity, action_id: agentIdentity.optional() }).strict().optional(),
-  confirmation: z.object({ action_id: agentIdentity, expected_revision: z.number().int().nonnegative(), quote_id: z.string().min(1).max(8192).optional(), destination: z.enum(['variant', 'overwrite']).optional() }).strict()
-    .describe('For interactive execution, send only after the user explicitly approves the exact server proposal. Automatic execution is authorized by execution.mode, not by manufacturing confirmation fields.').optional()
-}).strict().superRefine(validateAgentInteraction);
+  }).strict()).max(50).optional()
+}).strict().superRefine((value, ctx) => {
+  if ((value.attachments?.length || 0) + (value.files?.length || 0) > 50) ctx.addIssue({ code: 'custom', message: 'At most 50 source attachments and files combined.' });
+  if (value.turn_id !== undefined) {
+    if (Object.keys(value).some(key => key !== 'turn_id')) ctx.addIssue({ code: 'custom', message: 'Poll with turn_id alone.' });
+  } else if (value.request_id === undefined || value.message === undefined) {
+    ctx.addIssue({ code: 'custom', message: 'Submit with request_id and message, or poll with turn_id alone.' });
+  }
+});
 export function mcpAgentTurnInput(input) {
   const p = mcpAgentTurnSchema.parse(input);
-  const rename = (value, mapping) => Object.fromEntries(Object.entries(value).map(([key, val]) => [mapping[key] || key, val]));
+  if (p.turn_id !== undefined) return { turnId: p.turn_id };
   return {
-    requestId: p.request_id, ...(p.message !== undefined ? { message: p.message } : {}),
-    ...(p.execution ? { execution: { mode: p.execution.mode, ...(p.execution.max_tokens !== undefined ? { maxTokens: p.execution.max_tokens } : {}) } } : {}),
+    requestId: p.request_id, message: p.message,
+    ...(p.files?.length ? { files: p.files } : {}),
     ...(p.asset_id !== undefined ? { assetId: p.asset_id } : {}),
     ...(p.conversation_id !== undefined ? { conversationId: p.conversation_id } : {}),
-    ...(p.attachments !== undefined ? { attachments: p.attachments.map(attachment => {
-      const result = rename(attachment, { mime_type: 'mimeType', part_name: 'partName', reference_mesh_artifact_id: 'referenceMeshArtifactId', scene_source_ref: 'sceneSourceRef', bytes_in_asset: 'bytesInAsset', inline_data: 'inlineData' });
-      if (result.inlineData) result.inlineData = rename(result.inlineData, { mime_type: 'mimeType' });
-      return result;
-    }) } : {}),
-    ...(p.answer ? { answer: rename(p.answer, { ask_id: 'askId', option_id: 'optionId', answer_text: 'answerText', sub_option_id: 'subOptionId', expected_revision: 'expectedRevision', client_mutation_id: 'clientMutationId' }) } : {}),
-    ...(p.selection ? { selection: rename(p.selection, { artifact_id: 'artifactId', action_id: 'actionId' }) } : {}),
-    ...(p.confirmation ? { confirmation: rename(p.confirmation, { action_id: 'actionId', expected_revision: 'expectedRevision', quote_id: 'quoteId' }) } : {})
+    ...(p.attachments !== undefined ? { attachments: p.attachments.map(a => ({
+      ...Object.fromEntries(Object.entries(a).filter(([key]) => !['mime_type', 'part_name', 'reference_mesh_artifact_id', 'bytes_in_asset', 'inline_data'].includes(key))),
+      ...(a.mime_type !== undefined ? { mimeType: a.mime_type } : {}),
+      ...(a.part_name !== undefined ? { partName: a.part_name } : {}),
+      ...(a.reference_mesh_artifact_id !== undefined ? { referenceMeshArtifactId: a.reference_mesh_artifact_id } : {}),
+      ...(a.bytes_in_asset !== undefined ? { bytesInAsset: a.bytes_in_asset } : {}),
+      ...(a.inline_data ? { inlineData: { mimeType: a.inline_data.mime_type, data: a.inline_data.data } } : {})
+    })) } : {})
   };
 }
 
@@ -632,14 +618,16 @@ export class PalatialClient {
 
   uploadAgentSource(input) { return uploadAgentSource(this, input); }
 
+  startAgentWithFiles(input) { return submitAgentWithFiles(this, input); }
+
   startAgentTurn(input) {
     const body = agentTurnSchema.parse(input);
-    return this.request('agent/turns', { method: 'POST', body, structuredErrors: true });
+    return this.request('agent', { method: 'POST', body, structuredErrors: true });
   }
 
   getAgentTurn(turnId) {
     agentIdentity.parse(turnId);
-    return this.request(`agent/turns/${encodeURIComponent(turnId)}`, { structuredErrors: true });
+    return this.request(`agent/${encodeURIComponent(turnId)}`, { structuredErrors: true });
   }
 
   async getAsset(assetId) {

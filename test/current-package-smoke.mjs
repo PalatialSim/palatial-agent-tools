@@ -42,19 +42,13 @@ try {
   try {
     assert.equal(client.getServerVersion().version, VERSION);
     const tools = (await client.listTools()).tools;
-    assert.equal(tools.length, 24);
-    const primaryCreate = tools.find(tool => tool.name === 'palatial_create_asset');
-    assert.ok(primaryCreate.inputSchema.properties.mode.enum.includes('auto'));
-    for (const field of ['quality', 'dryRun', 'request_id', 'source_urls', 'source_up_axis']) assert.ok(primaryCreate.inputSchema.properties[field]);
-    const overview = await client.callTool({ name: 'palatial_guide', arguments: { topic: 'overview' } });
-    assert.match(overview.content[0].text, /palatial_create_asset.*mode: auto/s);
-    const result = await client.callTool({ name: 'palatial_guide', arguments: { topic: 'parameters' } });
-    assert.match(result.content[0].text, /collision_quality/);
-    const resource = await client.readResource({ uri: 'palatial://guide/parameters' });
-    assert.match(resource.contents[0].text, /shape_model/);
-    const scenes = await client.callTool({ name: 'palatial_guide', arguments: { topic: 'scenes' } });
-    assert.match(scenes.content[0].text, /palatial_create_scene/);
-    assert.match(scenes.content[0].text, /confirm_spend/);
+    assert.deepEqual(tools.map(tool => tool.name), ['palatial_agent']);
+    assert.ok(tools[0].inputSchema.properties.request_id);
+    assert.ok(tools[0].inputSchema.properties.turn_id);
+    assert.equal(tools[0].inputSchema.properties.execution, undefined);
+    const result = await client.callTool({ name: 'palatial_agent', arguments: { turn_id: 'receipt-1' } });
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /not authenticated/);
   } finally {
     await client.close();
   }
