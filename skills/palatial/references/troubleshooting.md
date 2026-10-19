@@ -109,6 +109,31 @@ first. When the job offers no retry, the call says so, and a new asset is the
 way to build it again. Passing `from` always reprocesses that pipeline stage
 instead.
 
+## Media is pending, unavailable, or missing
+
+Read `details.media` from `palatial_get_asset` before downloading. It reports
+`mesh`, `texture`, and `export` separately. `available` includes an API `href`,
+not a signed URL. `pending` with `MEDIA_NOT_READY` means poll the same asset;
+a billing or input pause may need action. `unavailable` with
+`MEDIA_NOT_SUPPORTED` means the route does not produce that representation;
+with `MEDIA_GENERATION_FAILED`, generation ended without it. Do not poll those
+media types. `missing` with `MEDIA_ARTIFACT_MISSING` means the expected stored
+output is absent: contact support with the asset ID and correlation ID.
+
+`unknown` with `MEDIA_STORAGE_UNAVAILABLE` means storage could not be checked;
+wait and poll, without treating it as an absent artifact. Its download response
+is 503 and retryable.
+
+Direct API downloads return 409 `MEDIA_NOT_READY` (retryable), 422
+`MEDIA_NOT_SUPPORTED`, 409 `MEDIA_GENERATION_FAILED`, or 404
+`MEDIA_ARTIFACT_MISSING` (the latter three are not retryable). An unknown asset
+can fail the API-key scope check with 403, or return 404 `ASSET_NOT_FOUND` at
+the service boundary. A 404 alone is not evidence that generation is pending.
+Texture is a textured GLB, not a standalone texture image. Some routes provide
+an authored USD export without separate mesh or texture GLBs. `READY` alone
+never promises all representations. The manifest covers default media URLs,
+not the optional legacy `final_viewer=true` texture representation.
+
 ## The download failed
 
 Export itself does not consume tokens, and the client does not automatically
@@ -158,3 +183,32 @@ product_research_evidence_missing means research could not retain a usable
 product view. A useful real-product identity, page or reference photo may be
 needed. Preserve the existing run; do not retry or spend on another build
 without user authorization.
+
+## An Agent interaction is pending or its submission is uncertain
+
+Poll `palatial_get_agent_turn` with the receipt's `id`. A completed turn means
+that interaction finished; inspect its reply, question, references, confirmation
+and media before deciding the next step. It does not mean generation completed.
+If submission timed out, preserve the same `request_id` and identical input for
+replay. Never make a replacement request ID to retry. Report structured server
+errors unchanged. Do not answer a question, pick references, or confirm a paid
+proposal automatically to recover from an error.
+
+A stop recorded as requested during planning has not cancelled the build yet.
+Wait for the terminal turn's `result.stop`: native stop runs after the planner
+releases its lifecycle lease. A pinned legacy conversation returns 409
+`AGENT_LEGACY_CONVERSATION`; a disabled workspace returns 409
+`AGENT_UNAVAILABLE`. Explain the refusal and preserve the project identity;
+do not silently switch to low-level generation.
+
+## An Agent reply's download link does not work
+
+In the Dev preview, read `downloads` from `palatial_get_agent_turn` and use the
+exact host-resolved `downloadUrl` for the requested media type. The Palatial planner sees
+only the stable API `href`; do not reconstruct a signed token from its reply.
+Read the turn again for a freshly resolved URL after expiry, or use `href`
+with the API key through the native media endpoint. Check structured per-media
+errors (`{ href, error: { code, statusCode, message, retryable } }`) and the
+`media` manifest. Reading the turn revalidates read and export permissions. A
+completed turn alone proves neither output availability nor completed generation. Existing permissions and billing still
+apply; never create a replacement asset to repair a URL.

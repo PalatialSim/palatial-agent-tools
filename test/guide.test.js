@@ -94,7 +94,7 @@ test('every guide topic resolves, and the overview drops its frontmatter', async
   const overview = await readGuide();
   assert.equal(overview.topic, 'overview');
   assert.ok(!overview.text.startsWith('---'), 'Frontmatter is client metadata, not guidance.');
-  assert.match(overview.text, /palatial_create_asset/);
+  assert.match(overview.text, /sole MCP tool `palatial_agent`/);
 });
 
 test('an unknown topic names the topics that exist', async () => {

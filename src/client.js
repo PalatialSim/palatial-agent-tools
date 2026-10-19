@@ -7,11 +7,65 @@ import { z } from 'zod';
 import { createRoute, modeFields, validateMode } from './create-modes.js';
 import { createScene, getScene, listScenes, answerScene, cancelScene, recoverScene, retrySceneStart, downloadScene } from './scenes.js';
 import { createAuto, automaticCreateInput } from './auto-create.js';
+import { uploadAgentSource, submitAgentWithFiles } from './agent-sources.js';
 
 export const DEFAULT_API_URL = 'https://dashboard.palatial.cloud/api/v1/external/';
 const engine = z.enum(['isaac_sim', 'mujoco', 'newton']);
 const assetName = z.string().trim().min(4).max(50).regex(/^[a-zA-Z\d_\-.\s]+$/, 'Asset name may contain only letters, digits, spaces, underscores, hyphens, and periods.');
 export const assetIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/, 'Invalid asset ID.');
+// One native unattended asset intent; no public conversational decision protocol.
+const agentIdentity = z.string().min(1).max(192).regex(/^[A-Za-z0-9._:-]+$/);
+const agentRequestIdentity = z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/);
+const agentAttachmentSchema = z.object({
+  id: z.string().optional(), kind: z.string().optional(), name: z.string().optional(),
+  role: z.string().optional(), mimeType: z.string().optional(),
+  partName: z.string().optional(), referenceMeshArtifactId: z.string().optional(),
+  bytesInAsset: z.boolean().optional(),
+  inlineData: z.object({ mimeType: z.string(), data: z.string() }).strict().optional()
+}).strict();
+export const agentTurnSchema = z.object({
+  requestId: agentRequestIdentity, message: z.string().trim().min(1).max(16000),
+  assetId: assetIdSchema.optional(), conversationId: agentIdentity.optional(),
+  attachments: z.array(agentAttachmentSchema).max(50).optional()
+}).strict();
+export const mcpAgentTurnSchema = z.object({
+  turn_id: agentIdentity.describe('Read this returned request id without creating another request.').optional(),
+  request_id: agentRequestIdentity.describe('Stable identity for this intent. Reuse identical inputs after uncertainty.').optional(),
+  message: z.string().trim().min(1).max(16000).optional(),
+  asset_id: assetIdSchema.optional(), conversation_id: agentIdentity.optional(),
+  files: z.array(z.string().min(1).max(4096)).max(50).optional(),
+  attachments: z.array(z.object({
+    id: z.string().optional(), kind: z.string().optional(), name: z.string().optional(), role: z.string().optional(),
+    mime_type: z.string().optional(), part_name: z.string().optional(), reference_mesh_artifact_id: z.string().optional(),
+    bytes_in_asset: z.boolean().optional(), inline_data: z.object({ mime_type: z.string(), data: z.string() }).strict().optional()
+  }).strict()).max(50).optional()
+}).strict().superRefine((value, ctx) => {
+  if ((value.attachments?.length || 0) + (value.files?.length || 0) > 50) ctx.addIssue({ code: 'custom', message: 'At most 50 source attachments and files combined.' });
+  if (value.turn_id !== undefined) {
+    if (Object.keys(value).some(key => key !== 'turn_id')) ctx.addIssue({ code: 'custom', message: 'Poll with turn_id alone.' });
+  } else if (value.request_id === undefined || value.message === undefined) {
+    ctx.addIssue({ code: 'custom', message: 'Submit with request_id and message, or poll with turn_id alone.' });
+  }
+});
+export function mcpAgentTurnInput(input) {
+  const p = mcpAgentTurnSchema.parse(input);
+  if (p.turn_id !== undefined) return { turnId: p.turn_id };
+  return {
+    requestId: p.request_id, message: p.message,
+    ...(p.files?.length ? { files: p.files } : {}),
+    ...(p.asset_id !== undefined ? { assetId: p.asset_id } : {}),
+    ...(p.conversation_id !== undefined ? { conversationId: p.conversation_id } : {}),
+    ...(p.attachments !== undefined ? { attachments: p.attachments.map(a => ({
+      ...Object.fromEntries(Object.entries(a).filter(([key]) => !['mime_type', 'part_name', 'reference_mesh_artifact_id', 'bytes_in_asset', 'inline_data'].includes(key))),
+      ...(a.mime_type !== undefined ? { mimeType: a.mime_type } : {}),
+      ...(a.part_name !== undefined ? { partName: a.part_name } : {}),
+      ...(a.reference_mesh_artifact_id !== undefined ? { referenceMeshArtifactId: a.reference_mesh_artifact_id } : {}),
+      ...(a.bytes_in_asset !== undefined ? { bytesInAsset: a.bytes_in_asset } : {}),
+      ...(a.inline_data ? { inlineData: { mimeType: a.inline_data.mime_type, data: a.inline_data.data } } : {})
+    })) } : {})
+  };
+}
+
 export const reprocessSchema = z.object({
   from: z.string().min(1).max(100).describe('Pipeline stage to repair. Omit only to recover a researching job, without edit feedback.').optional(),
   mode: z.enum(['step', 'auto']).optional(),
@@ -379,7 +433,7 @@ export class PalatialApiError extends Error {
   }
 
   toJSON() {
-    const fields = ['http_status', 'code', 'reason', 'hint', 'remedy', 'assetId', 'asset_id', 'request_id', 'receipt_file', 'billingMode', 'tokens', 'billing', 'warnings', 'billing_guidance'];
+    const fields = ['http_status', 'code', 'retryable', 'correlationId', 'reason', 'hint', 'remedy', 'assetId', 'asset_id', 'request_id', 'receipt_file', 'billingMode', 'tokens', 'billing', 'warnings', 'billing_guidance'];
     return { message: this.message, ...Object.fromEntries(fields.filter(key => this[key] !== undefined).map(key => [key, this[key]])) };
   }
 }
@@ -457,6 +511,8 @@ export class PalatialClient {
       if (preserveStructuredError && typeof payload?.code === 'string' && /^[A-Za-z0-9_]{1,64}$/.test(payload.code)) {
         throw new PalatialApiError(`${reason} (HTTP ${response.status}).${detail}`, {
           http_status: response.status, code: payload.code,
+          ...(typeof payload.retryable === 'boolean' ? { retryable: payload.retryable } : {}),
+          ...(typeof payload.correlationId === 'string' && /^[A-Za-z0-9._:-]{1,192}$/.test(payload.correlationId) ? { correlationId: payload.correlationId } : {}),
           ...(typeof payload.hint === 'string' ? { hint: safeMessage(new Error(payload.hint), this.apiKey).slice(0, 2000) } : {}),
           ...(typeof payload.remedy === 'string' ? { remedy: safeMessage(new Error(payload.remedy), this.apiKey).slice(0, 2000) } : {}),
           ...(typeof payload.assetId === 'string' && assetIdSchema.safeParse(payload.assetId).success ? { assetId: payload.assetId, asset_id: payload.assetId } : {})
@@ -560,6 +616,20 @@ export class PalatialClient {
     return created;
   }
 
+  uploadAgentSource(input) { return uploadAgentSource(this, input); }
+
+  startAgentWithFiles(input) { return submitAgentWithFiles(this, input); }
+
+  startAgentTurn(input) {
+    const body = agentTurnSchema.parse(input);
+    return this.request('agent', { method: 'POST', body, structuredErrors: true });
+  }
+
+  getAgentTurn(turnId) {
+    agentIdentity.parse(turnId);
+    return this.request(`agent/${encodeURIComponent(turnId)}`, { structuredErrors: true });
+  }
+
   async getAsset(assetId) {
     assetIdSchema.parse(assetId);
     const record = await this.request(`assets/${assetId}/status`);
@@ -581,7 +651,7 @@ export class PalatialClient {
         result.generation_job_check = { status: 'unavailable', message: safeMessage(error, this.apiKey), action: 'Native research status could not be verified. Inspect the same asset in the dashboard; do not recreate it to check progress.' };
       }
     }
-    if (status === 'READY') result.ready_means = 'Outputs are available; inspect validation evidence and test in your target simulator.';
+    if (status === 'READY') result.ready_means = 'Generation is complete. Inspect details.media for mesh, texture and export availability; READY does not promise every representation. Inspect validation evidence and test in your target simulator.';
     if (status === 'PROCESSING_FAILED') result.failure_guidance = {
       message: 'Processing failed. Preserve this asset ID and inspect the dashboard or available validation evidence.',
       failed_stage: record.processingSummary?.failedStageKey || record.failedStageKey || record.failed_stage || record.stage || null,

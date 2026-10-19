@@ -183,17 +183,6 @@ test('omitted request ID is generated once and recoverable after a lost response
   assert.equal(receipt.status, 'submission_outcome_unknown');
 });
 
-test('auto tool exposes typed server selection errors and correction hints', async t => {
-  const dir = await directory(t);
-  const client = await connect(t, api(async () => response({ code: 'AUTO_INPUT_INSUFFICIENT', message: 'Specify the object.', remedy: 'Provide a clearer photo or a description.' }, 422), dir));
-  const result = await client.callTool({ name: 'palatial_create_auto', arguments: { description: 'An object', dryRun: true } });
-  assert.equal(result.isError, true);
-  assert.equal(result.structuredContent.code, 'AUTO_INPUT_INSUFFICIENT');
-  assert.equal(result.structuredContent.remedy, 'Provide a clearer photo or a description.');
-  assert.equal(result.structuredContent.http_status, 422);
-  assert.deepEqual(await readdir(dir), []);
-});
-
 test('submit rejection preserves typed error, request ID and definitive rejected receipt', async t => {
   const dir = await directory(t);
   const client = api(async () => response({ code: 'AUTO_REQUEST_CONFLICT', message: 'Inputs changed.', hint: 'Replay the original request.' }, 409), dir);
@@ -208,17 +197,6 @@ test('submit rejection preserves typed error, request ID and definitive rejected
   assert.equal(JSON.parse(await readFile(path.join(dir, file), 'utf8')).status, 'rejected');
 });
 
-test('replay recovery errors retain the owned asset identity in the MCP result', async t => {
-  const dir = await directory(t);
-  const client = await connect(t, api(async () => response({ code: 'AUTO_SUBMISSION_FAILED', message: 'This request owns a failed submission.', assetId: 'asset-owned', remedy: 'Inspect the existing asset and use ordinary retry.' }, 409), dir));
-  const result = await client.callTool({ name: 'palatial_create_auto', arguments: { description: 'A bin', request_id: requestId } });
-  assert.equal(result.isError, true);
-  assert.equal(result.structuredContent.asset_id, 'asset-owned');
-  assert.equal(result.structuredContent.assetId, 'asset-owned');
-  assert.equal(result.structuredContent.request_id, requestId);
-  assert.equal(result.structuredContent.code, 'AUTO_SUBMISSION_FAILED');
-});
-
 test('malformed replay asset identifiers stay out of typed errors', async t => {
   const dir = await directory(t);
   const client = api(async () => response({ code: 'AUTO_REQUEST_IN_PROGRESS', message: 'Request in progress.', assetId: '../unsafe' }, 409), dir);
@@ -229,64 +207,11 @@ test('malformed replay asset identifiers stay out of typed errors', async t => {
   });
 });
 
-test('selection service failure preserves its typed code and redacts credentials and URL queries', async t => {
-  const dir = await directory(t);
-  const client = await connect(t, api(async () => response({ code: 'AUTO_SELECTION_UNAVAILABLE', message: 'Selection failed test-key', hint: 'Try later: https://service.example/selection?token=private', ignored: 'private' }, 503), dir));
-  const result = await client.callTool({ name: 'palatial_create_auto', arguments: { description: 'A bin', dryRun: true } });
-  assert.equal(result.structuredContent.code, 'AUTO_SELECTION_UNAVAILABLE');
-  assert.equal(result.structuredContent.http_status, 503);
-  assert.match(result.structuredContent.message, /\[REDACTED\]/);
-  assert.equal(result.structuredContent.hint, 'Try later: https://service.example/selection');
-  assert.equal(result.structuredContent.ignored, undefined);
-  assert.ok(!JSON.stringify(result).includes('test-key'));
-});
-
-test('auto tool schema contains goals and source inputs but no generation decisions', async t => {
-  const client = await connect(t, {});
-  const tool = (await client.listTools()).tools.find(tool => tool.name === 'palatial_create_auto');
-  assert.equal(tool.inputSchema.additionalProperties, false);
-  assert.equal(tool.annotations.readOnlyHint, false);
-  assert.equal(tool.annotations.idempotentHint, false, 'Omission generates a new ID, so repeated empty-ID calls are not idempotent.');
-  for (const field of ['description', 'file_paths', 'source_urls', 'request_id', 'dryRun', 'quality', 'engine', 'source_up_axis', 'meters_per_unit']) assert.ok(tool.inputSchema.properties[field]);
-  for (const field of ['mode', 'effort', 'parameters', 'shape_model', 'source']) assert.equal(tool.inputSchema.properties[field], undefined);
-});
-
-test('registered automatic MCP path submits and replays through real HTTP with one server asset', async t => {
-  const dir = await directory(t);
-  const calls = []; const accepted = new Map(); let assets = 0;
-  const server = createHttpServer(async (req, res) => {
-    assert.equal(req.url, '/api/v1/external/assets/create');
-    assert.equal(req.headers['x-api-key'], 'test-key');
-    const chunks = []; for await (const chunk of req) chunks.push(chunk);
-    const body = JSON.parse(Buffer.concat(chunks).toString());
-    const id = req.headers['idempotency-key'];
-    calls.push({ body, id }); res.setHeader('content-type', 'application/json');
-    if (body.dryRun) { assert.equal(id, undefined); res.end(JSON.stringify({ selection, dryRun: true })); return; }
-    const prior = accepted.get(id);
-    if (prior && prior.body !== JSON.stringify(body)) { res.statusCode = 409; res.end(JSON.stringify({ code: 'AUTO_REQUEST_CONFLICT', message: 'Changed inputs.', hint: 'Replay the original inputs.' })); return; }
-    if (!prior) accepted.set(id, { body: JSON.stringify(body), result: { id: `asset-${++assets}`, selection, dryRun: false, request_id: id } });
-    res.end(JSON.stringify(accepted.get(id).result));
-  });
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  t.after(() => new Promise(resolve => server.close(resolve)));
-  const client = await connect(t, new PalatialClient({ apiKey: 'test-key', baseUrl: `http://127.0.0.1:${server.address().port}/api/v1/external/`, allowHttpForTests: true, receiptDir: dir }));
-  const input = { description: 'A storage bin', request_id: requestId };
-  const preview = await client.callTool({ name: 'palatial_create_auto', arguments: { ...input, dryRun: true } });
-  assert.equal(preview.structuredContent.dryRun, true);
-  const created = await client.callTool({ name: 'palatial_create_auto', arguments: input });
-  const replay = await client.callTool({ name: 'palatial_create_auto', arguments: input });
-  assert.equal(created.structuredContent.asset_id, replay.structuredContent.asset_id);
-  assert.deepEqual(created.structuredContent.selection, selection);
-  assert.equal(created.structuredContent.request_id, requestId);
-  const conflict = await client.callTool({ name: 'palatial_create_auto', arguments: { ...input, description: 'A changed bin' } });
-  assert.equal(conflict.isError, true);
-  assert.equal(conflict.structuredContent.code, 'AUTO_REQUEST_CONFLICT');
-  assert.equal(assets, 1);
-  assert.equal(calls.length, 4);
-});
-
-test('packaged overview and recipes explain automatic dryRun and idempotent recovery', async () => {
-  for (const topic of ['overview', 'recipes']) {
+test('compatibility recipes retain dryRun and replay while MCP overview uses unified intent', async () => {
+  const overview = await readGuide('overview');
+  assert.match(overview.text, /sole MCP tool `palatial_agent`/);
+  assert.doesNotMatch(overview.text, /palatial_create_auto/);
+  for (const topic of ['recipes']) {
     const guide = await readGuide(topic);
     assert.match(guide.text, /palatial_create_auto/);
     assert.match(guide.text, /dryRun/);

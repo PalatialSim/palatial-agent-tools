@@ -31,62 +31,6 @@ async function connect(t, client) {
   return mcp;
 }
 
-test('scene MCP tools use closed schemas, stable identity and explicit authorization', async t => {
-  const mcp = await connect(t, {});
-  const tools = (await mcp.listTools()).tools.filter(tool => /palatial_.*scene/.test(tool.name));
-  assert.equal(tools.length, 5);
-  assert.ok(!tools.some(tool => /recover|retry|list/.test(tool.name)));
-  const create = tools.find(tool => tool.name === 'palatial_create_scene');
-  assert.equal(create.inputSchema.additionalProperties, false);
-  assert.ok(create.inputSchema.required.includes('request_id'));
-  assert.equal(create.inputSchema.properties.confirm_spend.const, true);
-  assert.equal(create.inputSchema.properties.options.additionalProperties, false);
-  assert.equal(create.inputSchema.properties.options.properties.max_total_usd, undefined);
-  assert.match(create.description, /changed inputs conflict/);
-  assert.equal(tools.find(tool => tool.name === 'palatial_cancel_scene').annotations.idempotentHint, true);
-  assert.equal(createSceneSchema.safeParse({ ...input, confirm_spend: false }).success, false);
-  assert.equal(createSceneSchema.safeParse({ ...input, request_id: '../unsafe' }).success, false);
-  assert.equal(createSceneSchema.safeParse({ ...input, floor_plan: 'missing.pdf' }).success, false);
-  assert.equal(createSceneSchema.safeParse({ ...input, source_paths: ['/a/file.png', '/b/file.png'] }).success, false);
-  assert.equal(createSceneSchema.safeParse({ ...input, options: { max_total_usd: 20 } }).success, false);
-});
-
-test('registered MCP API-key scene workflow creates, uploads, answers, downloads and stops over HTTP', async t => {
-  const directory = await temporary(t);
-  const photo = path.join(directory, 'room.png');
-  await writeFile(photo, 'photo');
-  const calls = [];
-  let state = { scene_id: sceneId, request_id: requestId, revision: 0, status: 'draft', sources: [] };
-  const server = httpServer(async (req, res) => {
-    assert.equal(req.headers['x-api-key'], 'test-key');
-    const chunks = []; for await (const chunk of req) chunks.push(chunk);
-    const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : undefined;
-    calls.push({ method: req.method, path: req.url, body });
-    res.setHeader('content-type', 'application/json');
-    if (req.url.endsWith('/download?version=' + encodeURIComponent(version))) { res.setHeader('content-type', 'application/zip'); res.setHeader('ETag', `"${version}"`); res.setHeader('Content-Length', zip.length); res.end(zip); return; }
-    if (req.url.endsWith('/start')) { assert.equal(body.sources[0].base64, Buffer.from('photo').toString('base64')); assert.equal(body.autoContinue, false); assert.equal(body.confirm_spend, true); assert.equal(body.options.object_build_mode, 'mock_mad_max'); state = { ...state, status: 'needs_input', sources: body.sources, input: { question: 'What is the bench width?', expected_head: version } }; }
-    else if (req.url.endsWith('/answer')) { assert.equal(body.expected_head, version); state = { ...state, status: 'delivered', input: null, download: { version }, cost: { director: 1.5, objects: 0, total: 1.5 }, objects: [{ status: 'delivered' }] }; }
-    else if (req.url.endsWith('/stop')) state = { ...state, cancellation: { requested: true, unconfirmedOperationIds: ['pending-child'] } };
-    if (req.url.includes('/workspaces/') && req.method === 'GET') res.end(JSON.stringify({ scenes: [state], next_cursor: null }));
-    else res.end(JSON.stringify(state));
-  });
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  t.after(() => new Promise(resolve => server.close(resolve)));
-  const client = new PalatialClient({ apiKey: 'test-key', baseUrl: `http://127.0.0.1:${server.address().port}/api/v1/external/`, allowHttpForTests: true });
-  const mcp = await connect(t, client);
-  const call = async (name, args) => { const result = await mcp.callTool({ name, arguments: args }); assert.notEqual(result.isError, true, result.content[0].text); return result.structuredContent; };
-  assert.equal((await call('palatial_create_scene', { ...input, source_paths: [photo] })).scene_id, sceneId);
-  const question = await call('palatial_get_scene', { scene_id: sceneId });
-  assert.equal(question.input.question, 'What is the bench width?');
-  assert.equal((await call('palatial_answer_scene', { scene_id: sceneId, expected_head: question.input.expected_head, instruction: 'The bench is 2 meters wide.' })).status, 'delivered');
-  const receipt = await call('palatial_download_scene', { scene_id: sceneId, version, output_dir: path.join(directory, 'export') });
-  assert.equal(receipt.sha256, hash(zip));
-  assert.equal((await readFile(receipt.file)).length, zip.length);
-  assert.deepEqual((await call('palatial_cancel_scene', { scene_id: sceneId })).cancellation.unconfirmedOperationIds, ['pending-child']);
-  assert.equal(calls.filter(call => call.path.endsWith('/start')).length, 1);
-  assert.ok(!calls.some(call => /sources|generate$/.test(call.path)));
-});
-
 test('all local input files are checked before creating a scene draft', async t => {
   const directory = await temporary(t);
   const photo = path.join(directory, 'photo.png'); await writeFile(photo, 'valid');
@@ -152,15 +96,6 @@ test('failed upload returns recoverable identity without starting or automatical
 test('read preserves unknown costs and cancellation partial failures', async () => {
   const value = { scene_id: sceneId, cost: { director: null, objects: null, total: null }, cancellation: { requested: true, failures: ['child'] } };
   assert.deepEqual(await api(async () => response(value)).getScene(sceneId), value);
-});
-
-test('stale answer returns server conflict with no retry or implicit regeneration', async t => {
-  let requests = 0;
-  const mcp = await connect(t, api(async () => { requests++; return new Response(JSON.stringify({ code: 'SCENE_HEAD_CONFLICT', message: 'Read the current question.' }), { status: 409 }); }));
-  const result = await mcp.callTool({ name: 'palatial_answer_scene', arguments: { scene_id: sceneId, expected_head: version, instruction: 'Answer.' } });
-  assert.equal(result.isError, true);
-  assert.match(result.content[0].text, /SCENE_HEAD_CONFLICT/);
-  assert.equal(requests, 1);
 });
 
 test('versioned scene download caches verified receipts and preserves existing output', async t => {
@@ -332,34 +267,4 @@ test('combined inline bytes stay bounded and remaining small files use signed up
   });
   await client.createScene({ ...input, source_paths: filenames });
   assert.equal(uploaded, 20 * 1024 ** 2);
-});
-
-test('cached deprecated scene tool names remain callable but stay absent from every discovery', async t => {
-  const calls = [];
-  const mcp = await connect(t, api(async (url, options) => {
-    calls.push({ path: url.pathname, body: options.body ? JSON.parse(options.body) : null });
-    return response({ scene_id: sceneId, status: 'running' });
-  }));
-  const legacy = ['palatial_list_scenes', 'palatial_recover_scene', 'palatial_retry_scene_start'];
-  assert.ok(!(await mcp.listTools()).tools.some(tool => legacy.includes(tool.name)));
-  for (const [name, args] of [
-    ['palatial_list_scenes', { workspace }],
-    ['palatial_recover_scene', { scene_id: sceneId, expected_head: version }],
-    ['palatial_retry_scene_start', { scene_id: sceneId, confirm_spend: true }]
-  ]) assert.notEqual((await mcp.callTool({ name, arguments: args })).isError, true);
-  assert.equal(calls.length, 3);
-  assert.deepEqual(calls[1].body, { expected_head: version });
-  assert.deepEqual(calls[2].body, { confirm_spend: true });
-  assert.ok(!(await mcp.listTools()).tools.some(tool => legacy.includes(tool.name)));
-  assert.equal((await mcp.callTool({ name: legacy[2], arguments: { scene_id: sceneId, confirm_spend: false } })).isError, true);
-  assert.equal((await mcp.callTool({ name: legacy[1], arguments: { scene_id: sceneId, expected_head: 'invalid' } })).isError, true);
-  assert.equal(calls.length, 3);
-});
-
-test('hidden legacy recovery still reports server refusals without retrying', async t => {
-  let calls = 0;
-  const mcp = await connect(t, api(async () => { calls++; return new Response(JSON.stringify({ code: 'SCENE_HEAD_CONFLICT', message: 'Read the current scene.' }), { status: 409 }); }));
-  const result = await mcp.callTool({ name: 'palatial_recover_scene', arguments: { scene_id: sceneId, expected_head: version } });
-  assert.equal(result.isError, true); assert.match(result.content[0].text, /SCENE_HEAD_CONFLICT/);
-  assert.equal(calls, 1);
 });

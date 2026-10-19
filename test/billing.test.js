@@ -63,39 +63,6 @@ test('billing metadata removes credentials and signed URL secrets without requir
 
 // Catches request(), create(), or MCP catch handlers losing the financial
 // rejection, and catches any retry or checkout introduced on that error path.
-test('MCP keeps a structured insufficient-token create rejection and actionable guidance', async t => {
-  const calls = [];
-  const { client: api } = await fixture(t, async (url, init) => {
-    calls.push({ path: url.pathname, method: init.method });
-    return json({ statusCode: 403, code: 'insufficient_tokens', reason: 'insufficient_credits', billingMode: 'postpaid_stage_v1',
-      message: `Do not expose server text: ${secret}`, tokens: { balance: -0.5, apiKey: secret }, path: `?apiKey=${secret}` }, 403);
-  });
-  const server = createServer({ clientFactory: async () => api });
-  const client = new Client({ name: 'billing-test', version: '1.0' });
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await server.connect(a); await client.connect(b);
-  t.after(async () => { await client.close(); await server.close(); });
-  const result = await client.callTool({ name: 'palatial_create_asset', arguments: { ...basic, mode: 'diffusion' } });
-  assert.equal(result.isError, true);
-  assert.equal(result.structuredContent?.code, 'insufficient_tokens');
-  assert.equal(result.structuredContent.reason, 'insufficient_credits');
-  assert.equal(result.structuredContent.http_status, 403);
-  assert.equal(result.structuredContent.billingMode, 'postpaid_stage_v1');
-  assert.deepEqual(result.structuredContent.tokens, { balance: -0.5 });
-  let textDetails;
-  assert.doesNotThrow(() => { textDetails = JSON.parse(result.content[0].text); }, 'MCP clients reading only text must also receive the billing code and balance.');
-  assert.equal(textDetails.code, 'insufficient_tokens');
-  assert.deepEqual(textDetails.tokens, { balance: -0.5 });
-  assert.match(result.content[0].text, /top up/i);
-  assert.match(result.content[0].text, /net balance.*above zero/i);
-  assert.match(result.structuredContent.billing_guidance.message, /Nothing was created/);
-  assert.doesNotMatch(result.structuredContent.billing_guidance.message, /same asset|poll|resumes automatically/i);
-  assert.doesNotMatch(result.structuredContent.message, /Recovery receipt/);
-  assert.ok(!JSON.stringify(result).includes(secret));
-  assert.ok(!JSON.stringify(result).includes('Do not expose server text'));
-  assert.deepEqual(calls, [{ path: '/api/v1/external/assets/create/texttosim', method: 'POST' }]);
-});
-
 test('ordinary 403 and 409 create rejections keep their API reason alongside billing handling', async t => {
   for (const status of [403, 409]) {
     const { client } = await fixture(t, async () => json({ code: 'WORKSPACE_REJECTED', message: `Workspace is disabled ${secret}` }, status));
@@ -143,31 +110,6 @@ test('a new-generation start gate explains the route minimum and confirms that n
   assert.equal(receipt.rejection.code, 'insufficient_tokens');
   assert.deepEqual(receipt.rejection.tokens, { required: 40, balance: 12, shortfall: 28 });
   assert.ok(!JSON.stringify(receipt).includes(secret));
-});
-
-test('MCP reports a start-gate rejection without conflicting recovery instructions', async t => {
-  let calls = 0;
-  const { client: api } = await fixture(t, async () => {
-    calls++;
-    return json({ statusCode: 403, code: 'insufficient_tokens', error: 'Insufficient tokens',
-      tokens: { required: 20, balance: 0, shortfall: 20 } }, 403);
-  });
-  const server = createServer({ clientFactory: async () => api });
-  const client = new Client({ name: 'billing-test', version: '1.0' });
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await server.connect(a); await client.connect(b);
-  t.after(async () => { await client.close(); await server.close(); });
-
-  const result = await client.callTool({ name: 'palatial_create_asset', arguments: { ...basic, mode: 'diffusion' } });
-  const textResult = JSON.parse(result.content[0].text);
-  assert.equal(result.isError, true);
-  assert.deepEqual(textResult, result.structuredContent);
-  assert.equal(textResult.code, 'insufficient_tokens');
-  assert.deepEqual(textResult.tokens, { required: 20, balance: 0, shortfall: 20 });
-  assert.match(textResult.message, /Nothing was created.*submit once/i);
-  assert.doesNotMatch(textResult.message, /Recovery receipt|may have accepted|uncertain/i);
-  assert.equal(textResult.billing_guidance.resume_asset_id, undefined);
-  assert.equal(calls, 1);
 });
 
 test('a receipt write failure does not make a definite start rejection uncertain', async t => {

@@ -90,6 +90,18 @@ test('status polling preserves processing and export phases without inferring co
   assert.deepEqual(result.details, record);
 });
 
+test('READY retains per-media availability without promising all downloads', async t => {
+  const media = {
+    mesh: { state: 'unavailable', code: 'MEDIA_NOT_SUPPORTED', retryable: false },
+    texture: { state: 'missing', code: 'MEDIA_ARTIFACT_MISSING', retryable: false },
+    export: { state: 'available', retryable: false, href: '/api/v1/external/assets/asset-1/media/export' },
+  };
+  const { client } = await fixture(t, async () => json({ status: 'READY', media }));
+  const result = await client.getAsset('asset-1');
+  assert.deepEqual(result.details.media, media);
+  assert.match(result.ready_means, /READY does not promise every representation/);
+});
+
 test('asset reads surface the public generation route and how to request it again', async t => {
   const madMax = { status: { status: 'READY' }, generationAgent: 'mad_max', parameters: { shape_model: 'parametric', madMaxBuild: { status: 'complete' } } };
   const { client } = await fixture(t, async () => json(madMax));
@@ -739,4 +751,62 @@ test('Variant batches preserve the server ambiguous-count refusal without inferr
   });
   await assert.rejects(client.createVariantBatch('source-a', { feedback: 'Make some alternatives', request_id: 'ambiguous-count' }), error => error.code === 'VARIANT_BATCH_COUNT_REQUIRED');
   assert.equal(calls, 1);
+});
+
+test('Agent turns use the public owner routes and replay identical request identity without client planning', async t => {
+  const calls = [];
+  const receipt = { id: 'turn-1', assetId: 'asset-1', conversationId: 'conv-1', status: 'running', statusUrl: '/api/v1/external/agent/turn-1', replayed: false };
+  const { client } = await fixture(t, async (url, init) => {
+    calls.push({ url: String(url), method: init.method, body: init.body });
+    return init.method === 'POST' ? json(receipt, 202) : json({ ...receipt, status: 'completed', reply: 'Native continuation active', automation: { state: 'active' }, media: { texture: { state: 'unavailable' } } });
+  });
+  const input = { requestId: 'request-1', assetId: 'asset-1', message: 'Make this chair taller.' };
+  assert.deepEqual(await client.startAgentTurn(input), receipt);
+  await client.startAgentTurn(input);
+  assert.equal(calls[0].body, calls[1].body);
+  assert.deepEqual(JSON.parse(calls[0].body), input);
+  assert.match(calls[0].url, /\/external\/agent$/);
+  const result = await client.getAgentTurn(receipt.id);
+  assert.match(calls[2].url, /\/external\/agent\/turn-1$/);
+  assert.equal(result.automation.state, 'active');
+  assert.equal(calls.length, 3);
+  await assert.rejects(async () => client.getAgentTurn('../escape'));
+});
+
+test('Agent turn errors preserve public code and actionable hint without retrying', async t => {
+  let calls = 0;
+  const { client } = await fixture(t, async () => { calls++; return json({ code: 'AGENT_TURN_CONFLICT', retryable: false, correlationId: 'request-correlation-1', hint: 'Replay the original requestId and input.', remedy: 'Keep the same conversation.' }, 409); });
+  await assert.rejects(client.startAgentTurn({ requestId: 'request-1', message: 'Continue' }), error => {
+    assert.equal(error.code, 'AGENT_TURN_CONFLICT');
+    assert.equal(error.hint, 'Replay the original requestId and input.');
+    assert.equal(error.remedy, 'Keep the same conversation.');
+    assert.equal(error.http_status, 409);
+    assert.equal(error.toJSON().retryable, false);
+    assert.equal(error.toJSON().correlationId, 'request-correlation-1');
+    return true;
+  });
+  assert.equal(calls, 1);
+});
+
+test('Agent transport enforces public field bounds without interpreting the user intent', async t => {
+  let calls = 0;
+  const { client } = await fixture(t, async () => { calls++; return json({ id: 'turn-1', status: 'running' }, 202); });
+  await client.startAgentTurn({ requestId: 'r'.repeat(128), message: 'm'.repeat(16000) });
+  for (const input of [
+    { requestId: 'r'.repeat(129), message: 'Hello' },
+    { requestId: 'r', message: 'm'.repeat(16001) },
+    { requestId: 'r', answer: { askId: 'ask-1', expectedRevision: 0, clientMutationId: 'm'.repeat(129), answerText: 'Yes' } },
+    { requestId: 'r', confirmation: { actionId: 'action-1', expectedRevision: 0, destination: 'unsupported' } }
+  ]) await assert.rejects(async () => client.startAgentTurn(input));
+  assert.equal(calls, 1);
+});
+
+
+test('Agent intent rejects removed manual and execution policy fields', async t => {
+  let calls = 0;
+  const { client } = await fixture(t, async () => { calls++; return json({ id: 'receipt' }, 202); });
+  for (const extra of [{ execution: { mode: 'automatic' } }, { maxTokens: 40 }, { answer: {} }, { selection: {} }, { confirmation: {} }]) {
+    await assert.rejects(async () => client.startAgentTurn({ requestId: 'r', message: 'Build this.', ...extra }));
+  }
+  assert.equal(calls, 0);
 });
