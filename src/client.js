@@ -581,7 +581,7 @@ export class PalatialClient {
         result.generation_job_check = { status: 'unavailable', message: safeMessage(error, this.apiKey), action: 'Native research status could not be verified. Inspect the same asset in the dashboard; do not recreate it to check progress.' };
       }
     }
-    if (status === 'READY') result.ready_means = 'Outputs are available; inspect validation evidence and test in your target simulator.';
+    if (status === 'READY') result.ready_means = 'Generation is complete. Inspect details.media for mesh, texture and export availability; READY does not promise every representation. Inspect validation evidence and test in your target simulator.';
     if (status === 'PROCESSING_FAILED') result.failure_guidance = {
       message: 'Processing failed. Preserve this asset ID and inspect the dashboard or available validation evidence.',
       failed_stage: record.processingSummary?.failedStageKey || record.failedStageKey || record.failed_stage || record.stage || null,

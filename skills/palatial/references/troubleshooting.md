@@ -109,6 +109,31 @@ first. When the job offers no retry, the call says so, and a new asset is the
 way to build it again. Passing `from` always reprocesses that pipeline stage
 instead.
 
+## Media is pending, unavailable, or missing
+
+Read `details.media` from `palatial_get_asset` before downloading. It reports
+`mesh`, `texture`, and `export` separately. `available` includes an API `href`,
+not a signed URL. `pending` with `MEDIA_NOT_READY` means poll the same asset;
+a billing or input pause may need action. `unavailable` with
+`MEDIA_NOT_SUPPORTED` means the route does not produce that representation;
+with `MEDIA_GENERATION_FAILED`, generation ended without it. Do not poll those
+media types. `missing` with `MEDIA_ARTIFACT_MISSING` means the expected stored
+output is absent: contact support with the asset ID and correlation ID.
+
+`unknown` with `MEDIA_STORAGE_UNAVAILABLE` means storage could not be checked;
+wait and poll, without treating it as an absent artifact. Its download response
+is 503 and retryable.
+
+Direct API downloads return 409 `MEDIA_NOT_READY` (retryable), 422
+`MEDIA_NOT_SUPPORTED`, 409 `MEDIA_GENERATION_FAILED`, or 404
+`MEDIA_ARTIFACT_MISSING` (the latter three are not retryable). An unknown asset
+can fail the API-key scope check with 403, or return 404 `ASSET_NOT_FOUND` at
+the service boundary. A 404 alone is not evidence that generation is pending.
+Texture is a textured GLB, not a standalone texture image. Some routes provide
+an authored USD export without separate mesh or texture GLBs. `READY` alone
+never promises all representations. The manifest covers default media URLs,
+not the optional legacy `final_viewer=true` texture representation.
+
 ## The download failed
 
 Export itself does not consume tokens, and the client does not automatically

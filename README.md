@@ -4,7 +4,7 @@ Generate simulation assets from text, images, or CAD without leaving your coding
 
 This is Palatial's **public thin client**: a command-line application and a local MCP server. It uploads selected inputs to the existing Palatial API, tracks assets, and downloads export ZIPs. Generation, provider orchestration, and proprietary prompts remain on Palatial's servers. No proprietary `SKILL.md` is distributed.
 
-**Release status:** Public preview. API contract tests and MCP transport tests are included. A paid, live generation-to-simulator acceptance run has not been performed for this release. An API `READY` status means outputs are available; it does not certify your simulation task.
+**Release status:** Public preview. API contract tests and MCP transport tests are included. A paid, live generation-to-simulator acceptance run has not been performed for this release. An API `READY` status means generation is complete; inspect `details.media` for each downloadable representation. It does not certify your simulation task.
 
 ## Install
 
@@ -205,6 +205,8 @@ palatial-agent download --asset-id YOUR_ASSET_ID --output-dir ./assets
 ```
 
 Creation returns immediately with an asset ID. Status polling does not create another asset. A local submission receipt is saved under `~/.local/state/palatial-agent` (or `PALATIAL_STATE_DIR`) so accepted IDs can be recovered after a terminal session ends. A definite start-gate rejection is recorded as `rejected`: nothing was created, so add tokens to meet the minimum and submit once. A receipt with `submission_outcome_unknown` means you should inspect the dashboard before submitting again; the receipt is not server-side idempotency.
+
+Asset status responses retain the API media manifest in `details.media`. Check `mesh`, `texture`, and `export` individually: `available` includes an API `href`; `pending` (`MEDIA_NOT_READY`) should be polled; `unavailable` (`MEDIA_NOT_SUPPORTED` or `MEDIA_GENERATION_FAILED`) should not; `missing` (`MEDIA_ARTIFACT_MISSING`) requires support; `unknown` (`MEDIA_STORAGE_UNAVAILABLE`) means a temporary storage-check failure and is retryable. Texture means a textured GLB, not a standalone image. Some routes provide only an authored USD export. `READY` does not imply every representation exists. The manifest is a snapshot, and access and balance rules still apply at download time.
 
 Exports include an absolute local path, SHA-256, byte count, and asset ID. A completed download with a matching receipt is reused locally without calling the export endpoint again. Existing files are preserved. Failed assets are not exported automatically: the user must confirm the possible partial or unvalidated result before `allow_failed_export` is set. The client does not automatically retry a failed download.
 

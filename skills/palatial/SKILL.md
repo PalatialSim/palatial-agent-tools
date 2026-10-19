@@ -192,7 +192,8 @@ Submit the previewed plan:
   a batch of assets from one request.
 - A failed asset may have a partial export. Ask first, then pass
   `allow_failed_export: true` and label the result partial or unvalidated.
-- `READY` means the outputs exist. It does not mean the asset behaves correctly
+- `READY` means generation is complete. Inspect `details.media` for each available
+  representation; it does not promise every media type. It does not mean the asset behaves correctly
   in the user's simulator. Report generation and validation separately, and do
   not claim a simulator accepted an asset unless the user tested it.
 

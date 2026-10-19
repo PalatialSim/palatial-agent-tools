@@ -90,6 +90,18 @@ test('status polling preserves processing and export phases without inferring co
   assert.deepEqual(result.details, record);
 });
 
+test('READY retains per-media availability without promising all downloads', async t => {
+  const media = {
+    mesh: { state: 'unavailable', code: 'MEDIA_NOT_SUPPORTED', retryable: false },
+    texture: { state: 'missing', code: 'MEDIA_ARTIFACT_MISSING', retryable: false },
+    export: { state: 'available', retryable: false, href: '/api/v1/external/assets/asset-1/media/export' },
+  };
+  const { client } = await fixture(t, async () => json({ status: 'READY', media }));
+  const result = await client.getAsset('asset-1');
+  assert.deepEqual(result.details.media, media);
+  assert.match(result.ready_means, /READY does not promise every representation/);
+});
+
 test('asset reads surface the public generation route and how to request it again', async t => {
   const madMax = { status: { status: 'READY' }, generationAgent: 'mad_max', parameters: { shape_model: 'parametric', madMaxBuild: { status: 'complete' } } };
   const { client } = await fixture(t, async () => json(madMax));
