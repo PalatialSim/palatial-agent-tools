@@ -18,7 +18,7 @@ test('real MCP protocol lists tools and calls the shared client without a model'
   await server.connect(a); await client.connect(b);
   t.after(async () => { await client.close(); await server.close(); });
   const list = await client.listTools();
-  assert.equal(list.tools.length, 21);
+  assert.equal(list.tools.length, 23);
   assert.equal(list.tools.find(x => x.name === 'palatial_download_asset').annotations.readOnlyHint, false);
   const result = await client.callTool({ name: 'palatial_get_asset', arguments: { asset_id: 'asset-test' } });
   assert.equal(result.structuredContent.asset_id, 'asset-test');
@@ -174,7 +174,7 @@ test('packaged CLI speaks stdio MCP and lists tools without authentication', asy
   const client = new Client({ name: 'stdio-test', version: '1.0' });
   await client.connect(transport);
   t.after(() => client.close());
-  assert.equal((await client.listTools()).tools.length, 21);
+  assert.equal((await client.listTools()).tools.length, 23);
   const result = await client.callTool({ name: 'palatial_doctor', arguments: {} });
   assert.equal(result.isError, true);
   assert.match(result.content[0].text, /not authenticated/);
@@ -311,4 +311,41 @@ test('MCP optional Variant count stays absent through preview, direct, explicit 
     assert.equal((await client.callTool({ name: tool.name, arguments: { asset_id: 'source-a', feedback, count, request_id: 'invalid-count' } })).isError, true);
   }
   assert.equal(calls.length, bodies.length);
+});
+
+test('primary Agent MCP tools map snake_case interaction metadata and poll the receipt without planning', async t => {
+  const calls = [];
+  const server = createServer({ clientFactory: async () => ({
+    startAgentTurn: async input => { calls.push(input); return { id: 'turn-1', assetId: 'asset-1', status: 'running', replayed: true }; },
+    getAgentTurn: async id => ({ id, status: 'completed', confirmation: { actionId: 'action-1', expectedRevision: 2 } })
+  }) });
+  const client = new Client({ name: 'agent-turn-test', version: '1.0' });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a); await client.connect(b);
+  t.after(async () => { await client.close(); await server.close(); });
+  const input = {
+    request_id: 'request-1', asset_id: 'asset-1', conversation_id: 'conv-1', message: 'Keep the uploaded source.',
+    attachments: [{ name: 'source.png', mime_type: 'image/png', inline_data: { mime_type: 'image/png', data: 'AQ==' } }],
+  };
+  const result = await client.callTool({ name: 'palatial_agent', arguments: input });
+  assert.equal(result.structuredContent.replayed, true);
+  assert.deepEqual(calls[0], { requestId: 'request-1', assetId: 'asset-1', conversationId: 'conv-1', message: input.message,
+    attachments: [{ name: 'source.png', mimeType: 'image/png', inlineData: { mimeType: 'image/png', data: 'AQ==' } }],
+  });
+  const poll = await client.callTool({ name: 'palatial_get_agent_turn', arguments: { turn_id: 'turn-1' } });
+  assert.deepEqual(poll.structuredContent.confirmation, { actionId: 'action-1', expectedRevision: 2 });
+  await client.callTool({ name: 'palatial_agent', arguments: { request_id: 'request-2', selection: { artifact_id: 'ref-1', action_id: 'action-1' } } });
+  assert.deepEqual(calls[1].selection, { artifactId: 'ref-1', actionId: 'action-1' });
+  await client.callTool({ name: 'palatial_agent', arguments: { request_id: 'request-3', confirmation: { action_id: 'action-1', expected_revision: 2, quote_id: 'quote-1', destination: 'overwrite' } } });
+  assert.deepEqual(calls[2].confirmation, { actionId: 'action-1', expectedRevision: 2, quoteId: 'quote-1', destination: 'overwrite' });
+  const invalid = await client.callTool({ name: 'palatial_agent', arguments: { request_id: 'request-4', attachments: [{ file_path: '/private/file' }] } });
+  assert.equal(invalid.isError, true);
+  assert.equal(calls.length, 3);
+  await client.callTool({ name: 'palatial_agent', arguments: { request_id: 'request-5', answer: { ask_id: 'ask-1', option_id: 'choice-1', sub_option_id: 'sub-1', expected_revision: 2, client_mutation_id: 'mutation-1' } } });
+  assert.deepEqual(calls[3].answer, { askId: 'ask-1', optionId: 'choice-1', subOptionId: 'sub-1', expectedRevision: 2, clientMutationId: 'mutation-1' });
+  for (const invalidInput of [{ request_id: 'empty' }, { request_id: 'mixed', message: 'Proceed', selection: { artifact_id: 'ref-1' } }, { request_id: 'attachment-decision', attachments: [], selection: { artifact_id: 'ref-1' } }]) {
+    assert.equal((await client.callTool({ name: 'palatial_agent', arguments: invalidInput })).isError, true);
+  }
+  assert.equal(calls.length, 4);
+  assert.match(client.getInstructions(), /palatial_agent as the primary entry/);
 });

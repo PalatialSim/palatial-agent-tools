@@ -752,3 +752,60 @@ test('Variant batches preserve the server ambiguous-count refusal without inferr
   await assert.rejects(client.createVariantBatch('source-a', { feedback: 'Make some alternatives', request_id: 'ambiguous-count' }), error => error.code === 'VARIANT_BATCH_COUNT_REQUIRED');
   assert.equal(calls, 1);
 });
+
+test('Agent turns use the public owner routes and replay identical request identity without client planning', async t => {
+  const calls = [];
+  const receipt = { id: 'turn-1', assetId: 'asset-1', conversationId: 'conv-1', status: 'running', statusUrl: '/api/v1/external/agent/turns/turn-1', replayed: false };
+  const { client } = await fixture(t, async (url, init) => {
+    calls.push({ url: String(url), method: init.method, body: init.body });
+    return init.method === 'POST' ? json(receipt, 202) : json({ ...receipt, status: 'completed', reply: 'Question ready', question: { id: 'ask-1' }, media: { texture: { state: 'unavailable' } } });
+  });
+  const input = { requestId: 'request-1', assetId: 'asset-1', message: 'Make this chair taller.' };
+  assert.deepEqual(await client.startAgentTurn(input), receipt);
+  await client.startAgentTurn(input);
+  assert.equal(calls[0].body, calls[1].body);
+  assert.deepEqual(JSON.parse(calls[0].body), input);
+  assert.match(calls[0].url, /\/external\/agent\/turns$/);
+  const result = await client.getAgentTurn(receipt.id);
+  assert.match(calls[2].url, /\/external\/agent\/turns\/turn-1$/);
+  assert.equal(result.question.id, 'ask-1');
+  assert.equal(calls.length, 3);
+  await assert.rejects(async () => client.getAgentTurn('../escape'));
+});
+
+test('Agent turn errors preserve public code and actionable hint without retrying', async t => {
+  let calls = 0;
+  const { client } = await fixture(t, async () => { calls++; return json({ code: 'AGENT_TURN_CONFLICT', retryable: false, correlationId: 'request-correlation-1', hint: 'Replay the original requestId and input.', remedy: 'Keep the same conversation.' }, 409); });
+  await assert.rejects(client.startAgentTurn({ requestId: 'request-1', message: 'Continue' }), error => {
+    assert.equal(error.code, 'AGENT_TURN_CONFLICT');
+    assert.equal(error.hint, 'Replay the original requestId and input.');
+    assert.equal(error.remedy, 'Keep the same conversation.');
+    assert.equal(error.http_status, 409);
+    assert.equal(error.toJSON().retryable, false);
+    assert.equal(error.toJSON().correlationId, 'request-correlation-1');
+    return true;
+  });
+  assert.equal(calls, 1);
+});
+
+test('Agent confirmation transports opaque quote identity up to 8192 characters', async t => {
+  let posted;
+  const { client } = await fixture(t, async (_url, init) => { posted = JSON.parse(init.body); return json({ id: 'turn-quote', status: 'running' }, 202); });
+  const quoteId = 'opaque/quote+value='.padEnd(8192, 'x');
+  await client.startAgentTurn({ requestId: 'confirm-1', assetId: 'asset-1', confirmation: { actionId: 'action-1', expectedRevision: 3, destination: 'variant', quoteId } });
+  assert.equal(posted.confirmation.quoteId, quoteId);
+  await assert.rejects(async () => client.startAgentTurn({ requestId: 'confirm-2', confirmation: { actionId: 'action-1', expectedRevision: 3, quoteId: quoteId + 'x' } }));
+});
+
+test('Agent transport enforces public field bounds without interpreting the user intent', async t => {
+  let calls = 0;
+  const { client } = await fixture(t, async () => { calls++; return json({ id: 'turn-1', status: 'running' }, 202); });
+  await client.startAgentTurn({ requestId: 'r'.repeat(128), message: 'm'.repeat(16000) });
+  for (const input of [
+    { requestId: 'r'.repeat(129), message: 'Hello' },
+    { requestId: 'r', message: 'm'.repeat(16001) },
+    { requestId: 'r', answer: { askId: 'ask-1', expectedRevision: 0, clientMutationId: 'm'.repeat(129), answerText: 'Yes' } },
+    { requestId: 'r', confirmation: { actionId: 'action-1', expectedRevision: 0, destination: 'unsupported' } }
+  ]) await assert.rejects(async () => client.startAgentTurn(input));
+  assert.equal(calls, 1);
+});

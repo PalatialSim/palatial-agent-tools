@@ -183,3 +183,20 @@ product_research_evidence_missing means research could not retain a usable
 product view. A useful real-product identity, page or reference photo may be
 needed. Preserve the existing run; do not retry or spend on another build
 without user authorization.
+
+## An Agent interaction is pending or its submission is uncertain
+
+Poll `palatial_get_agent_turn` with the receipt's `id`. A completed turn means
+that interaction finished; inspect its reply, question, references, confirmation
+and media before deciding the next step. It does not mean generation completed.
+If submission timed out, preserve the same `request_id` and identical input for
+replay. Never make a replacement request ID to retry. Report structured server
+errors unchanged. Do not answer a question, pick references, or confirm a paid
+proposal automatically to recover from an error.
+
+A stop recorded as requested during planning has not cancelled the build yet.
+Wait for the terminal turn's `result.stop`: native stop runs after the planner
+releases its lifecycle lease. A pinned legacy conversation returns 409
+`AGENT_LEGACY_CONVERSATION`; a disabled workspace returns 409
+`AGENT_UNAVAILABLE`. Explain the refusal and preserve the project identity;
+do not silently switch to low-level generation.

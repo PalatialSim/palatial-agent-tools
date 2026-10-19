@@ -10,6 +10,28 @@ simulation-ready 3D asset and exports it as a ZIP. These tools are a thin
 client: they validate input, upload only the files named in the request, and
 download results. Generation runs on Palatial servers.
 
+## Primary workflow: one user interaction
+
+**Dev preview only:** `palatial_agent` and `palatial_get_agent_turn` require
+`https://dashboard.dev.palatial.cloud/api/v1/external/` and a Dev API key.
+These routes are not available on Production. Do not fall back automatically.
+The main release must wait for the owning Backend rollout. An initial 202
+receipt can omit `conversationId` until the first turn binds its conversation;
+retain it once returned.
+
+Use `palatial_agent` first for a user's intent or existing-project change. Send
+a stable `request_id`, message and any known `asset_id`/`conversation_id`. The
+server owns planning against saved project state. Poll the returned turn `id`
+with `palatial_get_agent_turn`; never create another turn just to poll.
+
+Relay questions, references and confirmations faithfully. Use their exact IDs
+and revisions in the next answer, selection or confirmation interaction. Never
+approve a paid proposal automatically: obtain explicit user approval first.
+Replay identical inputs with the same request ID after uncertainty. Attachments
+are explicit metadata or inline bytes; this entry does not read local paths.
+The low-level workflows below remain available for compatibility and explicit
+requests for those operations.
+
 ## Before anything else
 
 Run `palatial_doctor` once per session. It is read-only and confirms the
@@ -302,3 +324,13 @@ For a complete scene reconstructed from videos, photos or a floor plan, read
 Use the scene tools to track object orders, answer questions, stop work and
 download the accepted scene package. The scene ID also opens the same scene
 in the Dashboard Viewer.
+
+For Agent proposals, regeneration returns `choices.variant` and
+`choices.overwrite`, each with its own `quote`; confirm only the selected
+user-approved destination and its `quoteId` (up to 8192 characters). Creation
+proposals expose `quote`. Reference options contain authenticated API `href`s
+under `agent/turns/:id/references/:artifactId`.
+A requested stop is not a confirmed cancellation. Wait for the terminal turn's
+`result.stop`, after native planning releases its lifecycle lease.
+`AGENT_LEGACY_CONVERSATION` and `AGENT_UNAVAILABLE` are 409 refusals; report them
+without silently falling back to low-level generation.

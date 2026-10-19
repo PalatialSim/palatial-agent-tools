@@ -12,6 +12,69 @@ export const DEFAULT_API_URL = 'https://dashboard.palatial.cloud/api/v1/external
 const engine = z.enum(['isaac_sim', 'mujoco', 'newton']);
 const assetName = z.string().trim().min(4).max(50).regex(/^[a-zA-Z\d_\-.\s]+$/, 'Asset name may contain only letters, digits, spaces, underscores, hyphens, and periods.');
 export const assetIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/, 'Invalid asset ID.');
+// Public Agent interactions are transported unchanged; the server owns planning,
+// saved project state, question validity, and paid-action authorization.
+const agentIdentity = z.string().min(1).max(192).regex(/^[A-Za-z0-9._:-]+$/);
+const agentRequestIdentity = z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/);
+const agentAttachmentSchema = z.object({
+  id: z.string().optional(), kind: z.string().optional(), name: z.string().optional(),
+  role: z.string().optional(), mimeType: z.string().optional(), url: z.string().optional(),
+  partName: z.string().optional(), referenceMeshArtifactId: z.string().optional(),
+  sceneSourceRef: z.string().optional(), bytesInAsset: z.boolean().optional(),
+  inlineData: z.object({ mimeType: z.string(), data: z.string() }).strict().optional()
+}).strict();
+const agentAnswerSchema = z.object({
+  askId: agentIdentity, optionId: agentIdentity.optional(), answerText: z.string().min(1).max(4000).optional(),
+  subOptionId: agentIdentity.optional(), expectedRevision: z.number().int().nonnegative(),
+  clientMutationId: agentRequestIdentity
+}).strict();
+function validateAgentInteraction(value, ctx) {
+  const interactions = ['message', 'answer', 'selection', 'confirmation'].filter(key => value[key] !== undefined);
+  if (interactions.length !== 1) ctx.addIssue({ code: 'custom', message: 'Supply exactly one of message, answer, selection or confirmation.' });
+  if (value.message !== undefined && !value.message.trim()) ctx.addIssue({ code: 'custom', path: ['message'], message: 'Message must contain text.' });
+  if (value.attachments !== undefined && value.message === undefined) ctx.addIssue({ code: 'custom', path: ['attachments'], message: 'Attachments must accompany a message, not a decision.' });
+}
+export const agentTurnSchema = z.object({
+  requestId: agentRequestIdentity, message: z.string().max(16000).optional(), assetId: assetIdSchema.optional(),
+  conversationId: agentIdentity.optional(), attachments: z.array(agentAttachmentSchema).optional(),
+  answer: agentAnswerSchema.optional(),
+  selection: z.object({ artifactId: agentIdentity, actionId: agentIdentity.optional() }).strict().optional(),
+  confirmation: z.object({ actionId: agentIdentity, expectedRevision: z.number().int().nonnegative(),
+    quoteId: z.string().min(1).max(8192).optional(), destination: z.enum(['variant', 'overwrite']).optional() }).strict().optional()
+}).strict().superRefine(validateAgentInteraction);
+export const mcpAgentTurnSchema = z.object({
+  request_id: agentRequestIdentity.describe('Stable identity for this one user interaction. Replay identical inputs with this ID after uncertainty; use a new ID only for a new interaction.'),
+  message: z.string().max(16000).optional(), asset_id: assetIdSchema.optional(), conversation_id: agentIdentity.optional(),
+  attachments: z.array(z.object({
+    id: z.string().optional(), kind: z.string().optional(), name: z.string().optional(), role: z.string().optional(),
+    mime_type: z.string().optional(), url: z.string().optional(), part_name: z.string().optional(),
+    reference_mesh_artifact_id: z.string().optional(), scene_source_ref: z.string().optional(),
+    bytes_in_asset: z.boolean().optional(), inline_data: z.object({ mime_type: z.string(), data: z.string() }).strict().optional()
+  }).strict()).describe('Explicit public attachment metadata or base64 inline bytes. This tool does not read local files.').optional(),
+  answer: z.object({ ask_id: agentIdentity, option_id: agentIdentity.optional(), answer_text: z.string().min(1).max(4000).optional(),
+    sub_option_id: agentIdentity.optional(), expected_revision: z.number().int().nonnegative(), client_mutation_id: agentRequestIdentity }).strict().optional(),
+  selection: z.object({ artifact_id: agentIdentity, action_id: agentIdentity.optional() }).strict().optional(),
+  confirmation: z.object({ action_id: agentIdentity, expected_revision: z.number().int().nonnegative(), quote_id: z.string().min(1).max(8192).optional(), destination: z.enum(['variant', 'overwrite']).optional() }).strict()
+    .describe('Send only after the user explicitly approves the exact server proposal. Never manufacture confirmation from an ordinary message.').optional()
+}).strict().superRefine(validateAgentInteraction);
+export function mcpAgentTurnInput(input) {
+  const p = mcpAgentTurnSchema.parse(input);
+  const rename = (value, mapping) => Object.fromEntries(Object.entries(value).map(([key, val]) => [mapping[key] || key, val]));
+  return {
+    requestId: p.request_id, ...(p.message !== undefined ? { message: p.message } : {}),
+    ...(p.asset_id !== undefined ? { assetId: p.asset_id } : {}),
+    ...(p.conversation_id !== undefined ? { conversationId: p.conversation_id } : {}),
+    ...(p.attachments !== undefined ? { attachments: p.attachments.map(attachment => {
+      const result = rename(attachment, { mime_type: 'mimeType', part_name: 'partName', reference_mesh_artifact_id: 'referenceMeshArtifactId', scene_source_ref: 'sceneSourceRef', bytes_in_asset: 'bytesInAsset', inline_data: 'inlineData' });
+      if (result.inlineData) result.inlineData = rename(result.inlineData, { mime_type: 'mimeType' });
+      return result;
+    }) } : {}),
+    ...(p.answer ? { answer: rename(p.answer, { ask_id: 'askId', option_id: 'optionId', answer_text: 'answerText', sub_option_id: 'subOptionId', expected_revision: 'expectedRevision', client_mutation_id: 'clientMutationId' }) } : {}),
+    ...(p.selection ? { selection: rename(p.selection, { artifact_id: 'artifactId', action_id: 'actionId' }) } : {}),
+    ...(p.confirmation ? { confirmation: rename(p.confirmation, { action_id: 'actionId', expected_revision: 'expectedRevision', quote_id: 'quoteId' }) } : {})
+  };
+}
+
 export const reprocessSchema = z.object({
   from: z.string().min(1).max(100).describe('Pipeline stage to repair. Omit only to recover a researching job, without edit feedback.').optional(),
   mode: z.enum(['step', 'auto']).optional(),
@@ -379,7 +442,7 @@ export class PalatialApiError extends Error {
   }
 
   toJSON() {
-    const fields = ['http_status', 'code', 'reason', 'hint', 'remedy', 'assetId', 'asset_id', 'request_id', 'receipt_file', 'billingMode', 'tokens', 'billing', 'warnings', 'billing_guidance'];
+    const fields = ['http_status', 'code', 'retryable', 'correlationId', 'reason', 'hint', 'remedy', 'assetId', 'asset_id', 'request_id', 'receipt_file', 'billingMode', 'tokens', 'billing', 'warnings', 'billing_guidance'];
     return { message: this.message, ...Object.fromEntries(fields.filter(key => this[key] !== undefined).map(key => [key, this[key]])) };
   }
 }
@@ -457,6 +520,8 @@ export class PalatialClient {
       if (preserveStructuredError && typeof payload?.code === 'string' && /^[A-Za-z0-9_]{1,64}$/.test(payload.code)) {
         throw new PalatialApiError(`${reason} (HTTP ${response.status}).${detail}`, {
           http_status: response.status, code: payload.code,
+          ...(typeof payload.retryable === 'boolean' ? { retryable: payload.retryable } : {}),
+          ...(typeof payload.correlationId === 'string' && /^[A-Za-z0-9._:-]{1,192}$/.test(payload.correlationId) ? { correlationId: payload.correlationId } : {}),
           ...(typeof payload.hint === 'string' ? { hint: safeMessage(new Error(payload.hint), this.apiKey).slice(0, 2000) } : {}),
           ...(typeof payload.remedy === 'string' ? { remedy: safeMessage(new Error(payload.remedy), this.apiKey).slice(0, 2000) } : {}),
           ...(typeof payload.assetId === 'string' && assetIdSchema.safeParse(payload.assetId).success ? { assetId: payload.assetId, asset_id: payload.assetId } : {})
@@ -558,6 +623,16 @@ export class PalatialClient {
     try { await writeFile(requestReceipt, JSON.stringify({ ...intent, ...created }, null, 2) + '\n', { mode: 0o600 }); }
     catch { created.receipt_warning = 'Asset was submitted successfully, but the local receipt could not be updated. Save asset_id from this response.'; }
     return created;
+  }
+
+  startAgentTurn(input) {
+    const body = agentTurnSchema.parse(input);
+    return this.request('agent/turns', { method: 'POST', body, structuredErrors: true });
+  }
+
+  getAgentTurn(turnId) {
+    agentIdentity.parse(turnId);
+    return this.request(`agent/turns/${encodeURIComponent(turnId)}`, { structuredErrors: true });
   }
 
   async getAsset(assetId) {

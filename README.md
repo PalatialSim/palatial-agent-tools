@@ -6,6 +6,31 @@ This is Palatial's **public thin client**: a command-line application and a loca
 
 **Release status:** Public preview. API contract tests and MCP transport tests are included. A paid, live generation-to-simulator acceptance run has not been performed for this release. An API `READY` status means generation is complete; inspect `details.media` for each downloadable representation. It does not certify your simulation task.
 
+## Start with user intent
+
+**Dev preview only:** `palatial_agent` and `palatial_get_agent_turn` require
+`https://dashboard.dev.palatial.cloud/api/v1/external/` and a Dev API key.
+These routes are not available on Production. Do not fall back automatically.
+The main release must wait for the owning Backend rollout. An initial 202
+receipt can omit `conversationId` until the first turn binds its conversation;
+retain it once returned.
+
+Use `palatial_agent` as the primary MCP entry. Send the user's message with a
+stable `request_id`, and keep `asset_id` and `conversation_id` when continuing an
+existing project. Ordinary turns require a nonblank message; attachments accompany that message only. Answers, selections and confirmations are exclusive decision interactions. POST requires `asset:create` plus `asset:write` when targeting an existing asset, polling requires `asset:read`, and owning actions retain their separate permission and billing checks. The server owns planning, settings, questions and proposals.
+Poll the returned `id` with `palatial_get_agent_turn` (`turn_id`); do not send a
+new interaction to poll. Forward the returned question, references and
+confirmation to the user. Submit an answer, selection or confirmation as the
+next interaction using the exact server IDs and revision. A paid confirmation
+requires explicit user approval of that proposal; never infer it from a general
+request. After an uncertain response, replay identical inputs with the same
+`request_id`. Attachments accept public metadata or base64 inline bytes; this
+tool does not read local paths. Existing low-level tools remain compatible.
+
+The JavaScript client exposes `startAgentTurn(input)` with camelCase public API
+fields and `getAgentTurn(id)`. These call `POST agent/turns` and
+`GET agent/turns/:id` without client-side planning or automatic retries.
+
 ## Install
 
 You need Node.js 22 or newer, a Palatial workspace API key, and Codex CLI or Claude Code. Generation uses the shared organization/workspace token balance and charges as stages complete. Export itself does not consume tokens. Your coding agent's subscription or API charges are separate.
@@ -323,3 +348,13 @@ remain client compatibility methods; cached deprecated MCP names also remain cal
 and are absent from the advertised MCP tools. All routes are relative to
 `/api/v1/external/` and use the same API-key authentication as assets.
 See the [scene guide](skills/palatial/references/scenes.md) for limits and examples.
+
+For Agent proposals, regeneration returns `choices.variant` and
+`choices.overwrite`, each with its own `quote`; confirm only the selected
+user-approved destination and its `quoteId` (up to 8192 characters). Creation
+proposals expose `quote`. Reference options contain authenticated API `href`s
+under `agent/turns/:id/references/:artifactId`.
+A requested stop is not a confirmed cancellation. Wait for the terminal turn's
+`result.stop`, after native planning releases its lifecycle lease.
+`AGENT_LEGACY_CONVERSATION` and `AGENT_UNAVAILABLE` are 409 refusals; report them
+without silently falling back to low-level generation.
