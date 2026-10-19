@@ -358,3 +358,20 @@ A requested stop is not a confirmed cancellation. Wait for the terminal turn's
 `result.stop`, after native planning releases its lifecycle lease.
 `AGENT_LEGACY_CONVERSATION` and `AGENT_UNAVAILABLE` are 409 refusals; report them
 without silently falling back to low-level generation.
+
+For download requests in the Dev Agent preview, use the host-owned structured
+`downloads` result from `palatial_get_agent_turn`. It is keyed by requested
+`mesh`, `texture`, or `export`; an available entry contains `href`,
+`downloadUrl`, and optionally `fileName`. The native asset service resolves the
+signed URL; the Palatial planner receives only a stable API path. Use the exact structured
+URL promptly, without copying or reconstructing credentials from `reply`.
+Only media identities are persisted, and the host resolves signed URLs afresh
+when the turn is read. A requested unavailable media type has a structured
+entry `{ href, error: { code, statusCode, message, retryable } }`; handle it
+explicitly. Only requested media keys appear in `downloads`; `media` still
+describes all three. Reading the turn revalidates current read and export
+permissions. Stable API paths require an API key; Dashboard users can use
+existing Viewer download controls. Existing billing rules apply. A completed
+interaction does not mean
+completed generation or availability of every output. This remains Dev-only;
+do not fall back to a Production route automatically.

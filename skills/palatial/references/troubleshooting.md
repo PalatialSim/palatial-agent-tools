@@ -200,3 +200,15 @@ releases its lifecycle lease. A pinned legacy conversation returns 409
 `AGENT_LEGACY_CONVERSATION`; a disabled workspace returns 409
 `AGENT_UNAVAILABLE`. Explain the refusal and preserve the project identity;
 do not silently switch to low-level generation.
+
+## An Agent reply's download link does not work
+
+In the Dev preview, read `downloads` from `palatial_get_agent_turn` and use the
+exact host-resolved `downloadUrl` for the requested media type. The Palatial planner sees
+only the stable API `href`; do not reconstruct a signed token from its reply.
+Read the turn again for a freshly resolved URL after expiry, or use `href`
+with the API key through the native media endpoint. Check structured per-media
+errors (`{ href, error: { code, statusCode, message, retryable } }`) and the
+`media` manifest. Reading the turn revalidates read and export permissions. A
+completed turn alone proves neither output availability nor completed generation. Existing permissions and billing still
+apply; never create a replacement asset to repair a URL.
