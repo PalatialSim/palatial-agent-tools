@@ -16,8 +16,8 @@ export const assetIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/, 'Invalid
 // Public Agent interactions are transported unchanged; the server owns planning,
 // saved project state, question validity, and paid-action authorization.
 const agentIdentity = z.string().min(1).max(192).regex(/^[A-Za-z0-9._:-]+$/);
-const agentExecutionSchema = z.object({ mode: z.literal('automatic'), maxTokens: z.number().int().positive().optional() }).strict();
-const mcpAgentExecutionSchema = z.object({ mode: z.literal('automatic'), max_tokens: z.number().int().positive().optional() }).strict();
+const agentExecutionSchema = z.object({ mode: z.literal('automatic'), maxTokens: z.number().int().positive().describe('Maximum accepted quoted token price; native postpaid actual charges still apply.').optional() }).strict();
+const mcpAgentExecutionSchema = z.object({ mode: z.literal('automatic'), max_tokens: z.number().int().positive().describe('Maximum accepted quoted token price; native postpaid actual charges still apply.').optional() }).strict();
 const agentRequestIdentity = z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/);
 const agentAttachmentSchema = z.object({
   id: z.string().optional(), kind: z.string().optional(), name: z.string().optional(),
@@ -48,7 +48,7 @@ export const agentTurnSchema = z.object({
 export const mcpAgentTurnSchema = z.object({
   request_id: agentRequestIdentity.describe('Stable identity for this one user interaction. Replay identical inputs with this ID after uncertainty; use a new ID only for a new interaction.'),
   message: z.string().max(16000).optional(), asset_id: assetIdSchema.optional(), conversation_id: agentIdentity.optional(),
-  execution: mcpAgentExecutionSchema.describe('Explicit authorization for unattended execution of this asset task. The native server Agent chooses supported options and confirms within max_tokens when supplied; omit to keep interactive decisions.').optional(),
+  execution: mcpAgentExecutionSchema.describe('Explicit authorization for unattended execution of this asset task. The native server Agent chooses supported options and accepts quoted prices within max_tokens when supplied; this does not override actual postpaid settlement; omit to keep interactive decisions.').optional(),
   attachments: z.array(z.object({
     id: z.string().optional(), kind: z.string().optional(), name: z.string().optional(), role: z.string().optional(),
     mime_type: z.string().optional(), url: z.string().optional(), part_name: z.string().optional(),
