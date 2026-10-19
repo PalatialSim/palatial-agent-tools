@@ -809,3 +809,18 @@ test('Agent transport enforces public field bounds without interpreting the user
   ]) await assert.rejects(async () => client.startAgentTurn(input));
   assert.equal(calls, 1);
 });
+
+
+test('Agent automatic authorization is strictly transported without manufacturing confirmation', async t => {
+  const calls = [];
+  const { client } = await fixture(t, async (url, init) => {
+    calls.push(JSON.parse(init.body)); return json({ id: 'automatic-1', status: 'running' }, 202);
+  });
+  const input = { requestId: 'automatic-1', message: 'Build this uploaded cabinet.', execution: { mode: 'automatic', maxTokens: 80 } };
+  await client.startAgentTurn(input);
+  assert.deepEqual(calls, [input]);
+  for (const execution of [{ mode: 'interactive' }, { mode: 'automatic', maxTokens: 0 }, { mode: 'automatic', maxTokens: -1 }, { mode: 'automatic', maxTokens: 1.5 }, { mode: 'automatic', maxTokens: '80' }, { mode: 'automatic', bypass: true }]) {
+    await assert.rejects(async () => client.startAgentTurn({ ...input, execution }));
+  }
+  assert.equal(calls.length, 1);
+});

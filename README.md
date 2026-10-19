@@ -15,21 +15,17 @@ The main release must wait for the owning Backend rollout. An initial 202
 receipt can omit `conversationId` until the first turn binds its conversation;
 retain it once returned.
 
-Use `palatial_agent` as the primary MCP entry. Send the user's message with a
-stable `request_id`, and keep `asset_id` and `conversation_id` when continuing an
-existing project. Ordinary turns require a nonblank message; attachments accompany that message only. Answers, selections and confirmations are exclusive decision interactions. POST requires `asset:create` plus `asset:write` when targeting an existing asset, polling requires `asset:read`, and owning actions retain their separate permission and billing checks. The server owns planning, settings, questions and proposals.
-Poll the returned `id` with `palatial_get_agent_turn` (`turn_id`); do not send a
-new interaction to poll. Forward the returned question, references and
-confirmation to the user. Submit an answer, selection or confirmation as the
-next interaction using the exact server IDs and revision. A paid confirmation
-requires explicit user approval of that proposal; never infer it from a general
-request. After an uncertain response, replay identical inputs with the same
-`request_id`. Attachments accept public metadata or base64 inline bytes; this
-tool does not read local paths. Existing low-level tools remain compatible.
+Use `palatial_agent` as the primary entry for Palatial asset intent and existing-project work. The same native server Agent reads saved state, interprets text, image, CAD/3D or video evidence and selects supported capabilities. Unrelated tasks are refused. Preserve `request_id`, `asset_id` and `conversation_id`; poll the returned turn `id` with `palatial_get_agent_turn`, never a new interaction.
 
-The JavaScript client exposes `startAgentTurn(input)` with camelCase public API
-fields and `getAgentTurn(id)`. These call `POST agent/turns` and
-`GET agent/turns/:id` without client-side planning or automatic retries.
+- Omit `execution` for interactive questions, reference choices and explicit paid-proposal approval. Relay exact server IDs and revisions; do not manufacture confirmation.
+- When the user explicitly authorizes unattended execution, send `execution: { mode: "automatic", max_tokens: 40 }` (`max_tokens` optional positive integer). This authorizes this asset task, including native option/reference selection and host quote/confirmation checks. The server handles those checkpoints without client auto-clicks or a second planner. It retains shared permissions, prerequisites, billing and replay rules.
+- Read `execution.state`: `active`, `completed`, `blocked` or `superseded`. `blocked` reports the required fact, authorization or budget issue through a code. Do not invent facts, raise a spending ceiling or fall back to another generation endpoint to bypass it. Authorization never carries into future Dashboard turns.
+- Automatic `completed` means the authorized action was accepted. Generation can still run; check asset status, validation outcome and the media manifest before claiming delivery or simulation success.
+- Replay identical inputs with the same request ID after uncertainty. The thin client does not retry mutations or generation automatically.
+
+`palatial_agent` attachments are metadata or base64 inline bytes, not local paths. For local files, use `palatial_upload_agent_source` with the existing unpaid `asset_id` and one explicit `file_path`; pass its returned `attachment` unchanged to `palatial_agent`. Uploading alone does not generate or spend tokens. For a new upload-backed project, first ask the interactive Agent to prepare a project without building, wait for that turn to settle, upload sources, then send the automatic intent with the same asset ID. PNG/JPEG/WebP and supported CAD/3D files are accepted; MP4/MOV video is limited to 300 MiB. Native format and route restrictions remain authoritative. URL-only attachments do not upload source bytes.
+
+The JavaScript client exposes `startAgentTurn(input)` with camelCase API fields (`execution.maxTokens`), `getAgentTurn(id)` and `uploadAgentSource({ asset_id, file_path })`. The upload method uses the native `agent/assets/:assetId/sources/init`, `sign-parts` and `complete` endpoints, reads only the named regular file in bounded chunks, and sends no API key to object storage. It returns after verified completion; it does not plan or submit. The low-level tools remain available for compatibility.
 
 ## Install
 
@@ -179,6 +175,7 @@ This preference is inspectable and editable. It does not guarantee that every na
 | `palatial_guide` | Read the packaged usage and parameter guidance | Local and read-only; no API call |
 | `palatial_check_docs` | Check live documentation and report changed pages | Public read; writes a local comparison snapshot |
 | `palatial_doctor` | Check credentials and API connectivity | Read-only; no generation or export |
+| `palatial_upload_agent_source` | Upload one explicit local source to an unpaid Agent project | Stores source bytes; no generation or token charge |
 | `palatial_create_asset` | Submit text, image, multiview, or CAD generation | Creates an asset; charges tokens as stages complete |
 | `palatial_get_asset` | Check an existing asset's processing status | Read-only |
 | `palatial_get_asset_details` | Retrieve the complete asset record | Read-only |

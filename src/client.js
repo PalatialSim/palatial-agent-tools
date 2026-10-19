@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { createRoute, modeFields, validateMode } from './create-modes.js';
 import { createScene, getScene, listScenes, answerScene, cancelScene, recoverScene, retrySceneStart, downloadScene } from './scenes.js';
 import { createAuto, automaticCreateInput } from './auto-create.js';
+import { uploadAgentSource } from './agent-sources.js';
 
 export const DEFAULT_API_URL = 'https://dashboard.palatial.cloud/api/v1/external/';
 const engine = z.enum(['isaac_sim', 'mujoco', 'newton']);
@@ -15,6 +16,8 @@ export const assetIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/, 'Invalid
 // Public Agent interactions are transported unchanged; the server owns planning,
 // saved project state, question validity, and paid-action authorization.
 const agentIdentity = z.string().min(1).max(192).regex(/^[A-Za-z0-9._:-]+$/);
+const agentExecutionSchema = z.object({ mode: z.literal('automatic'), maxTokens: z.number().int().positive().optional() }).strict();
+const mcpAgentExecutionSchema = z.object({ mode: z.literal('automatic'), max_tokens: z.number().int().positive().optional() }).strict();
 const agentRequestIdentity = z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/);
 const agentAttachmentSchema = z.object({
   id: z.string().optional(), kind: z.string().optional(), name: z.string().optional(),
@@ -36,7 +39,7 @@ function validateAgentInteraction(value, ctx) {
 }
 export const agentTurnSchema = z.object({
   requestId: agentRequestIdentity, message: z.string().max(16000).optional(), assetId: assetIdSchema.optional(),
-  conversationId: agentIdentity.optional(), attachments: z.array(agentAttachmentSchema).optional(),
+  conversationId: agentIdentity.optional(), execution: agentExecutionSchema.optional(), attachments: z.array(agentAttachmentSchema).optional(),
   answer: agentAnswerSchema.optional(),
   selection: z.object({ artifactId: agentIdentity, actionId: agentIdentity.optional() }).strict().optional(),
   confirmation: z.object({ actionId: agentIdentity, expectedRevision: z.number().int().nonnegative(),
@@ -45,6 +48,7 @@ export const agentTurnSchema = z.object({
 export const mcpAgentTurnSchema = z.object({
   request_id: agentRequestIdentity.describe('Stable identity for this one user interaction. Replay identical inputs with this ID after uncertainty; use a new ID only for a new interaction.'),
   message: z.string().max(16000).optional(), asset_id: assetIdSchema.optional(), conversation_id: agentIdentity.optional(),
+  execution: mcpAgentExecutionSchema.describe('Explicit authorization for unattended execution of this asset task. The native server Agent chooses supported options and confirms within max_tokens when supplied; omit to keep interactive decisions.').optional(),
   attachments: z.array(z.object({
     id: z.string().optional(), kind: z.string().optional(), name: z.string().optional(), role: z.string().optional(),
     mime_type: z.string().optional(), url: z.string().optional(), part_name: z.string().optional(),
@@ -55,13 +59,14 @@ export const mcpAgentTurnSchema = z.object({
     sub_option_id: agentIdentity.optional(), expected_revision: z.number().int().nonnegative(), client_mutation_id: agentRequestIdentity }).strict().optional(),
   selection: z.object({ artifact_id: agentIdentity, action_id: agentIdentity.optional() }).strict().optional(),
   confirmation: z.object({ action_id: agentIdentity, expected_revision: z.number().int().nonnegative(), quote_id: z.string().min(1).max(8192).optional(), destination: z.enum(['variant', 'overwrite']).optional() }).strict()
-    .describe('Send only after the user explicitly approves the exact server proposal. Never manufacture confirmation from an ordinary message.').optional()
+    .describe('For interactive execution, send only after the user explicitly approves the exact server proposal. Automatic execution is authorized by execution.mode, not by manufacturing confirmation fields.').optional()
 }).strict().superRefine(validateAgentInteraction);
 export function mcpAgentTurnInput(input) {
   const p = mcpAgentTurnSchema.parse(input);
   const rename = (value, mapping) => Object.fromEntries(Object.entries(value).map(([key, val]) => [mapping[key] || key, val]));
   return {
     requestId: p.request_id, ...(p.message !== undefined ? { message: p.message } : {}),
+    ...(p.execution ? { execution: { mode: p.execution.mode, ...(p.execution.max_tokens !== undefined ? { maxTokens: p.execution.max_tokens } : {}) } } : {}),
     ...(p.asset_id !== undefined ? { assetId: p.asset_id } : {}),
     ...(p.conversation_id !== undefined ? { conversationId: p.conversation_id } : {}),
     ...(p.attachments !== undefined ? { attachments: p.attachments.map(attachment => {
@@ -624,6 +629,8 @@ export class PalatialClient {
     catch { created.receipt_warning = 'Asset was submitted successfully, but the local receipt could not be updated. Save asset_id from this response.'; }
     return created;
   }
+
+  uploadAgentSource(input) { return uploadAgentSource(this, input); }
 
   startAgentTurn(input) {
     const body = agentTurnSchema.parse(input);

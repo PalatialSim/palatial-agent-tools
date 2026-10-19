@@ -18,7 +18,7 @@ test('real MCP protocol lists tools and calls the shared client without a model'
   await server.connect(a); await client.connect(b);
   t.after(async () => { await client.close(); await server.close(); });
   const list = await client.listTools();
-  assert.equal(list.tools.length, 23);
+  assert.equal(list.tools.length, 24);
   assert.equal(list.tools.find(x => x.name === 'palatial_download_asset').annotations.readOnlyHint, false);
   const result = await client.callTool({ name: 'palatial_get_asset', arguments: { asset_id: 'asset-test' } });
   assert.equal(result.structuredContent.asset_id, 'asset-test');
@@ -174,7 +174,7 @@ test('packaged CLI speaks stdio MCP and lists tools without authentication', asy
   const client = new Client({ name: 'stdio-test', version: '1.0' });
   await client.connect(transport);
   t.after(() => client.close());
-  assert.equal((await client.listTools()).tools.length, 23);
+  assert.equal((await client.listTools()).tools.length, 24);
   const result = await client.callTool({ name: 'palatial_doctor', arguments: {} });
   assert.equal(result.isError, true);
   assert.match(result.content[0].text, /not authenticated/);
@@ -347,5 +347,11 @@ test('primary Agent MCP tools map snake_case interaction metadata and poll the r
     assert.equal((await client.callTool({ name: 'palatial_agent', arguments: invalidInput })).isError, true);
   }
   assert.equal(calls.length, 4);
+  await client.callTool({ name: 'palatial_agent', arguments: { request_id: 'automatic-1', message: 'Build within my limit.', execution: { mode: 'automatic', max_tokens: 40 } } });
+  assert.deepEqual(calls[4], { requestId: 'automatic-1', message: 'Build within my limit.', execution: { mode: 'automatic', maxTokens: 40 } });
+  for (const execution of [{ mode: 'automatic', max_tokens: 0 }, { mode: 'automatic', maxTokens: 40 }, { mode: 'automatic', bypass: true }]) {
+    assert.equal((await client.callTool({ name: 'palatial_agent', arguments: { request_id: 'invalid-auto', message: 'Build', execution } })).isError, true);
+  }
+  assert.equal(calls.length, 5);
   assert.match(client.getInstructions(), /palatial_agent as the primary entry/);
 });

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.16 — native Agent intent and unattended execution
+
+- Add the Dev-preview unified Agent entry, strict scoped unattended authorization, native turn polling and authoritative structured download results. The server owns planning, choices, quotes and confirmations; legacy tools remain compatible.
+- Upload an explicit local image, CAD or video source through verified native multipart storage before sending its returned attachment to the same Agent. No API key is sent to storage and client mutations are never retried automatically.
+- Explain per-media availability and distinguish pending, unsupported and genuinely missing artifacts. Keep the new Agent path explicitly Dev-only until Backend promotion.
+
 ## 0.1.15 — optional Variant batch count
 
 - Let the server model infer omitted batch `count` from feedback without a

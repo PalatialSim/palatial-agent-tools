@@ -19,18 +19,17 @@ The main release must wait for the owning Backend rollout. An initial 202
 receipt can omit `conversationId` until the first turn binds its conversation;
 retain it once returned.
 
-Use `palatial_agent` first for a user's intent or existing-project change. Send
-a stable `request_id`, message and any known `asset_id`/`conversation_id`. The
-server owns planning against saved project state. Poll the returned turn `id`
-with `palatial_get_agent_turn`; never create another turn just to poll.
+Use `palatial_agent` as the primary entry for Palatial asset intent and existing-project work. The same native server Agent reads saved state, interprets text, image, CAD/3D or video evidence and selects supported capabilities. Unrelated tasks are refused. Preserve `request_id`, `asset_id` and `conversation_id`; poll the returned turn `id` with `palatial_get_agent_turn`, never a new interaction.
 
-Relay questions, references and confirmations faithfully. Use their exact IDs
-and revisions in the next answer, selection or confirmation interaction. Never
-approve a paid proposal automatically: obtain explicit user approval first.
-Replay identical inputs with the same request ID after uncertainty. Attachments
-are explicit metadata or inline bytes; this entry does not read local paths.
-The low-level workflows below remain available for compatibility and explicit
-requests for those operations.
+- Omit `execution` for interactive questions, reference choices and explicit paid-proposal approval. Relay exact server IDs and revisions; do not manufacture confirmation.
+- When the user explicitly authorizes unattended execution, send `execution: { mode: "automatic", max_tokens: 40 }` (`max_tokens` optional positive integer). This authorizes this asset task, including native option/reference selection and host quote/confirmation checks. The server handles those checkpoints without client auto-clicks or a second planner. It retains shared permissions, prerequisites, billing and replay rules.
+- Read `execution.state`: `active`, `completed`, `blocked` or `superseded`. `blocked` reports the required fact, authorization or budget issue through a code. Do not invent facts, raise a spending ceiling or fall back to another generation endpoint to bypass it. Authorization never carries into future Dashboard turns.
+- Automatic `completed` means the authorized action was accepted. Generation can still run; check asset status, validation outcome and the media manifest before claiming delivery or simulation success.
+- Replay identical inputs with the same request ID after uncertainty. The thin client does not retry mutations or generation automatically.
+
+`palatial_agent` attachments are metadata or base64 inline bytes, not local paths. For local files, use `palatial_upload_agent_source` with the existing unpaid `asset_id` and one explicit `file_path`; pass its returned `attachment` unchanged to `palatial_agent`. Uploading alone does not generate or spend tokens. For a new upload-backed project, first ask the interactive Agent to prepare a project without building, wait for that turn to settle, upload sources, then send the automatic intent with the same asset ID. PNG/JPEG/WebP and supported CAD/3D files are accepted; MP4/MOV video is limited to 300 MiB. Native format and route restrictions remain authoritative. URL-only attachments do not upload source bytes.
+
+The JavaScript client exposes `startAgentTurn(input)` with camelCase API fields (`execution.maxTokens`), `getAgentTurn(id)` and `uploadAgentSource({ asset_id, file_path })`. The upload method uses the native `agent/assets/:assetId/sources/init`, `sign-parts` and `complete` endpoints, reads only the named regular file in bounded chunks, and sends no API key to object storage. It returns after verified completion; it does not plan or submit. The low-level tools remain available for compatibility.
 
 ## Before anything else
 
