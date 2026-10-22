@@ -834,3 +834,22 @@ test('invalid explicit Agent request identities are rejected before direct submi
   }
   assert.equal(calls, 0);
 });
+
+// Description capacity is a server contract. Clients must preserve the submitted
+// text and relay an owning API refusal instead of maintaining a second limit.
+test('creation preserves long descriptions and relays server length refusals once', async t => {
+  const description = 'A precise cabinet requirement. '.repeat(130) + 'TAIL';
+  let calls = 0;
+  const { client } = await fixture(t, async (_url, init) => {
+    calls++;
+    assert.equal(JSON.parse(init.body).description, description);
+    return json({ id: 'long-description' }, 201);
+  });
+  await client.create({ ...basic, description });
+  assert.equal(calls, 1);
+  const rejected = await fixture(t, async (_url, init) => {
+    assert.equal(JSON.parse(init.body).description, description);
+    return json({ message: 'Description is too long (max 4000 characters)' }, 400);
+  });
+  await assert.rejects(rejected.client.create({ ...basic, description }), /Description is too long/);
+});

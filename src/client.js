@@ -96,13 +96,13 @@ const flatCreateSchema = z.object({
     purpose: z.enum(['exact_geometry', 'shape_reference', 'unused']).describe('3D files only. exact_geometry keeps this shape (the CAD build, at most one); shape_reference guides a Mad Max build (GLB, STEP, OBJ, STL or PLY up to 20 MiB; non-GLB files are converted; needs mode=mad_max); unused leaves it out. Omit to let Palatial decide: a lone 3D file, or one that can only be built as-is, is exact_geometry; a GLB, STEP, OBJ, STL or PLY file sent with photos must be declared.').optional()
   }).strict()).min(1).max(60).describe('files source only: every input in one list. The 3D-file purposes decide the build route, with the same rules as the Palatial Dashboard.').optional(),
   name: assetName.describe('Asset name, 4-50 characters. Required for explicit/legacy creation; mode=auto can supply it.').optional(),
-  description: z.string().trim().min(1).max(2000, 'Description is too long (max 2000 characters)').describe('What to build. Required for explicit/legacy creation or automatic text-only input; optional with automatic media.').optional(),
+  description: z.string().trim().min(1).describe('What to build. The server owns the description length limit. Required for explicit/legacy creation or automatic text-only input; optional with automatic media.').optional(),
   workspace: z.string().regex(/^[a-fA-F0-9]{24}$/, 'Workspace must be a 24-character MongoDB ObjectId.').describe('All sources: optional workspace ID; omit to use the API-key workspace.').optional(),
   engine: z.array(engine).min(1).max(3).default(['isaac_sim']).describe('All sources: simulator profiles; isaac_sim, mujoco, or newton; defaults to isaac_sim.').optional(),
   image_path: z.string().describe('Image: one PNG/JPEG/WebP input; CAD: optional PNG/JPEG/WebP reference for texture generation; use instead of views.').optional(),
-  image_paths: z.array(z.string()).min(1).max(50).describe('Image: 1-50 photos for Parametric Low or a video build; Mad Max accepts 8, or 7 with reference_mesh_path. Uploaded as repeated file fields.').optional(),
+  image_paths: z.array(z.string()).min(1).max(50).describe('Image: 1-50 photos for Parametric Low or a video build; Mad Max counts all inputs, including its generated specification, against the server-owned build budget. Uploaded as repeated file fields.').optional(),
   video_path: z.string().min(1).describe('Image only: one MP4/MOV product video, at most 300 MiB and 60 seconds. May accompany photos on any route; parameters must be empty. The server validates duration and video bytes.').optional(),
-  reference_mesh_path: z.string().min(1).describe('Text/image Mad Max only: optional scanned GLB, uploaded as reference_mesh. Reduces the photo limit from 8 to 7.').optional(),
+  reference_mesh_path: z.string().min(1).describe('Text/image Mad Max only: optional scanned GLB, uploaded as reference_mesh. Counts as one input in the server-owned build budget, beside photos, video and the generated specification.').optional(),
   views: z.object({ front: z.string().describe('Image multiview: front PNG/JPEG/WebP path.').optional(), left: z.string().describe('Image multiview: left PNG/JPEG/WebP path.').optional(), back: z.string().describe('Image multiview: back PNG/JPEG/WebP path.').optional(), right: z.string().describe('Image multiview: right PNG/JPEG/WebP path.').optional() }).strict().describe('Image only: named views of one object; provide at least two.').optional(),
   reconstruct: z.boolean().describe('Legacy image option accepted by the API but currently ignored by the Queue. It does not generate views from one image or change how supplied views are processed.').optional(),
   mesh_path: z.string().describe('CAD only: path to the mesh file.').optional(),
@@ -117,7 +117,7 @@ const flatCreateSchema = z.object({
   auto_scale: z.boolean().describe('All sources: scale the finished asset to the real-world size stated in the description.').optional(),
   mesh_quality: z.enum(['low', 'medium', 'high']).describe('Image and text only: mesh quality preset; not used for CAD.').optional(),
   collision_quality: z.enum(['low', 'medium', 'high', 'x_high', 'sdf']).describe('Image, text, and CAD: collision quality; sdf means signed-distance-field collision.').optional(),
-  shape_model: z.enum(['auto', 'diffusion', 'parametric']).describe('Image and text only: auto lets Palatial select a supported generation route; diffusion is faster, cheaper, and better for organic shapes and accepts one image or named multiview inputs; parametric is controllable, better for articulation, and accepts up to 50 photos at Low effort; Mad Max accepts 8, or 7 with a reference mesh. Prefer mode for new requests.').optional(),
+  shape_model: z.enum(['auto', 'diffusion', 'parametric']).describe('Image and text only: auto lets Palatial select a supported generation route; diffusion is faster, cheaper, and better for organic shapes and accepts one image or named multiview inputs; parametric is controllable, better for articulation, and accepts up to 50 photos at Low effort; Mad Max uses the server-owned combined input budget, including its generated specification. Prefer mode for new requests.').optional(),
   effort: z.enum(['low', 'mad_max']).describe('Text/image Parametric mode or legacy shape_model=parametric: low is the default; mad_max researches and authors the model. CAD has no effort.').optional(),
   product_research: z.enum(['on', 'specs_only', 'off']).describe('Mad Max or any video build: on (default) researches the product and web photos; specs_only researches specifications without web photos; off skips web lookup. specs_only/off require uploaded photos or a video.').optional(),
   texture_model: z.literal('auto').describe('Image, text, and CAD: auto selects the supported texture model.').optional(),
@@ -709,7 +709,7 @@ export class PalatialClient {
     const body = z.object({
       feedback: z.string().trim().min(1).max(2000),
       name: z.string().min(4).max(50).optional(),
-      description: z.string().min(1).max(2000, 'Description is too long (max 2000 characters)').optional(),
+      description: z.string().min(1).optional(),
       parameters: z.record(z.string(), z.unknown()).optional()
     }).strict().parse(input);
     const result = await this.request(`assets/${assetId}/variants`, { method: 'POST', body });

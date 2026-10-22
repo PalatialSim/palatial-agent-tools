@@ -164,8 +164,8 @@ A phone walkaround of one object. Parametric Low takes up to 50 photos.
 ```
 
 For Mad Max, use `mode: parametric` with `effort: mad_max` and remove
-`parameters`: research decides the build settings. Use one engine and at most
-8 photos (7 with a scanned GLB reference_mesh_path).
+`parameters`: research decides the build settings. Use one engine and keep inputs
+within the server-owned combined budget, counting every photo, video, reference mesh and generated specification.
 
 ## CAD
 

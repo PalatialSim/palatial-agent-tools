@@ -40,7 +40,7 @@ The JavaScript methods `startAgentTurn(input)` and `getAgentTurn(id)` use camelC
 Requires Node.js 22 or newer and a Palatial workspace API key. Generation charges the shared workspace balance according to native postpaid stage billing. Your coding agent's model charges are separate.
 
 ```sh
-npm install --global https://github.com/PalatialSim/palatial-agent-tools/releases/download/v0.1.17/palatial-agent-tools-0.1.17.tgz
+npm install --global https://github.com/PalatialSim/palatial-agent-tools/releases/download/v0.1.18/palatial-agent-tools-0.1.18.tgz
 palatial-agent login
 palatial-agent setup --client codex
 ```

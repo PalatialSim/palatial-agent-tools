@@ -16,7 +16,7 @@ const sourceUrl = z.url().check(z.maxLength(maxUrlLength)).superRefine((value, c
   catch (error) { ctx.addIssue({ code: 'custom', message: error.message }); }
 });
 export const autoCreateSchema = z.object({
-  description: z.string().trim().min(1).max(2000).describe('What to build, including dimensions, materials, moving parts and intended use. Optional when media supplies the input.').optional(),
+  description: z.string().trim().min(1).describe('What to build, including dimensions, materials, moving parts and intended use. The server owns the description length limit. Optional when media supplies the input.').optional(),
   name: z.string().trim().min(4).max(50).regex(/^[a-zA-Z\d_\-.\s]+$/).describe('Optional asset name; the server supplies one when omitted.').optional(),
   workspace: z.string().regex(/^[a-fA-F0-9]{24}$/).describe('Optional workspace ID; defaults to the API-key workspace.').optional(),
   engine: z.array(z.enum(['isaac_sim', 'mujoco', 'newton'])).min(1).max(3).describe('Optional simulator targets; the server validates the selected route against them.').optional(),
