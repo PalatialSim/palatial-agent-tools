@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.18
+
+- Preserve generation descriptions beyond older client caps and relay the server-owned length validation.
+- Read Mad Max combined input limits from the server contract instead of stale local guidance.
+
 ## 0.1.17 — optional Agent request identity
 
 - Make `request_id` optional for `palatial_agent` and `requestId` optional for the JavaScript client. Each omitted-ID submission is new work; explicit identical IDs and input retain idempotent replay and billing protection.

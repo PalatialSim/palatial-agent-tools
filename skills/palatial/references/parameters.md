@@ -62,7 +62,7 @@ a primitive collider on Diffusion/Low.
 | --- | --- | --- | --- | --- |
 | `source` | `text`, `image`, `cad`, `files` | required | all | Decides which file fields are legal. See the source rules below. |
 | `name` | 4 to 50 characters | required except auto | all | Letters, digits, spaces, underscores, hyphens, periods. |
-| `description` | 1 to 2000 characters | required for explicit and text-only auto | all | What to build, including dimensions, materials, articulation, and intended use. For `source: image` this is the only place size and orientation can be stated. |
+| `description` | non-empty; server validates the maximum | required for explicit and text-only auto | all | What to build, including dimensions, materials, articulation, and intended use. For `source: image` this is the only place size and orientation can be stated. |
 
 ## Common
 
@@ -92,9 +92,9 @@ not the preference alone, when describing the result.
 | Field | Values | Default | Sources | Notes |
 | --- | --- | --- | --- | --- |
 | `image_path` | one PNG, JPEG, or WebP path | none | `image`, `cad` | Required for a single-image request. Optional for CAD; provide it when asking to generate textures from a reference. |
-| `image_paths` | 1 to 50 PNG, JPEG, or WebP paths | none | `image` | Parametric Low or any video build. Mad Max: at most 8 photos, or 7 with a reference mesh; total includes named views and image_path. |
+| `image_paths` | 1 to 50 PNG, JPEG, or WebP paths | none | `image` | Parametric Low or any video build. Mad Max uses the server-owned combined input budget; each photo, mesh, video and generated specification counts. |
 | `video_path` | one MP4 or MOV path | none | `image` | Up to 300 MiB and 60 seconds; may accompany photos. Every video route requires empty parameters. Server validates duration and video bytes. |
-| `reference_mesh_path` | scanned GLB path | none | `text`, `image` | Mad Max only; uploaded as reference_mesh. Counts as one of its 8 inputs. |
+| `reference_mesh_path` | scanned GLB path | none | `text`, `image` | Mad Max only; uploaded as reference_mesh. Counts as one input in the server-owned combined budget. |
 | `views` | object with `front`, `left`, `back`, `right` | none | `image` | Named angles of one object. Diffusion without video needs 2-4; Parametric or video builds can mix these with uploaded photos. |
 | `reconstruct` | boolean | ignored | `image` | Legacy API field. The current Queue ignores it: one image does not trigger synthetic view generation, and supplied views are processed directly. Omit this field. The client rejects it with `mad_max` effort. |
 | `mesh_path` | path to the mesh file | none | `cad` | Required for CAD. |

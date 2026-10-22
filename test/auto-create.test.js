@@ -219,3 +219,13 @@ test('compatibility recipes retain dryRun and replay while MCP overview uses uni
     assert.match(guide.text, /same|identical/);
   }
 });
+
+test('automatic description transport preserves text beyond older client limits', async t => {
+  const dir = await directory(t);
+  const description = 'A cabinet with exact requirements. '.repeat(110) + 'TAIL';
+  const client = api(async (_url, options) => {
+    assert.equal(JSON.parse(options.body).description, description);
+    return response({ selection, dryRun: true });
+  }, dir);
+  await client.createAuto({ description, dryRun: true });
+});
