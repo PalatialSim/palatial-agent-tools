@@ -3,15 +3,16 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, open, unlink, rename } from 'node:fs/promises';
 import { z } from 'zod';
 import { progressUpload } from './upload-progress.js';
+import { agentFileMaxBytes, assertAgentFileSize } from './agent-file-limits.js';
+export { agentFileMaxBytes } from './agent-file-limits.js';
 import { assertLocalPath, assertPublicHttpsUrl, digestHandle, digestRegularFile, openRegularFile, readCappedRegularFile, resolveOutputDirectory, assertResolvedDirectory } from './input-guards.js';
 
 export const agentSourceUploadSchema = z.object({
   asset_id: z.string().regex(/^[a-fA-F0-9]{24}$/),
-  file_path: z.string().min(1).describe('Explicit local image, CAD/3D or MP4/MOV source to upload to this unpaid project. Uploading alone never submits generation.')
+  file_path: z.string().min(1).describe('Explicit local image, CAD/3D or MP4/MOV source. Videos must be at most 300 MiB, the current Mad Max processing limit; other files at most 1 GiB. Uploading alone never submits generation.')
 }).strict();
 const extensions = new Set(['.png', '.jpg', '.jpeg', '.webp', '.glb', '.gltf', '.obj', '.stl', '.ply', '.fbx', '.dae', '.3ds', '.step', '.stp', '.iges', '.igs', '.usd', '.usdz', '.mp4', '.mov', '.pdf', '.txt']);
 const mimeTypes = new Map([['.png', 'image/png'], ['.jpg', 'image/jpeg'], ['.jpeg', 'image/jpeg'], ['.webp', 'image/webp'], ['.mp4', 'video/mp4'], ['.mov', 'video/quicktime'], ['.glb', 'model/gltf-binary'], ['.pdf', 'application/pdf'], ['.txt', 'text/plain']]);
-export const agentFileMaxBytes = 1024 ** 3;
 const multipartMaxBytes = 64 * 1024 ** 2;
 // Legacy receipts can include the full 12 MiB inline budget encoded as base64.
 const intentReceiptMaxBytes = 20 * 1024 ** 2;
@@ -27,8 +28,7 @@ export async function uploadAgentSource(client, input) {
   const opened = await openRegularFile(p.file_path);
   try {
     const bytes = opened.info.size;
-    const limit = agentFileMaxBytes;
-    if (bytes < 1 || bytes > limit) throw new Error(`Agent source must be a nonempty file at most ${limit} bytes.`);
+    assertAgentFileSize({ originalName: filename, sizeBytes: bytes });
     const digest = await digestHandle(opened.handle, bytes);
     const route = `agent/assets/${p.asset_id}/sources`;
     const upload = await client.request(`${route}/init`, { method: 'POST', structuredErrors: true, body: { fileName: filename, sizeBytes: bytes } });
@@ -72,6 +72,7 @@ export async function uploadAgentSource(client, input) {
 
 /** Stream one request without materializing file bytes in a receipt or in memory. */
 export function agentMultipart(intent, sources) {
+  for (const source of sources) assertAgentFileSize({ originalName: path.basename(source.path), sizeBytes: source.size });
   const boundary = `palatial-${randomUUID()}`;
   const fields = sources.map((source, index) => ({
     part: `file${index}`, originalName: path.basename(source.path),
@@ -121,9 +122,11 @@ export async function submitAgentWithFiles(client, input) {
     const name = path.basename(filename);
     if (!extensions.has(path.extname(filename).toLowerCase())) throw new Error('Unsupported Agent source file type.');
     if (name.length > 240 || name.includes('..') || /[\\/\x00-\x1f]/.test(name)) throw new Error('Use a plain source filename.');
-    const identity = await digestRegularFile(filename, agentFileMaxBytes);
-    if (identity.size < 1) throw new Error('Agent source must be nonempty.');
-    sources.push({ path: path.resolve(filename), ...identity });
+    const opened = await openRegularFile(filename);
+    try {
+      assertAgentFileSize({ originalName: name, sizeBytes: opened.info.size });
+      sources.push({ path: path.resolve(filename), size: opened.info.size, sha256: await digestHandle(opened.handle, opened.info.size) });
+    } finally { await opened.handle.close(); }
   }
   if (sources.reduce((sum, source) => sum + source.size, 0) > agentFileMaxBytes) throw new Error('One Agent request supports at most 1 GiB of files.');
   const fingerprint = createHash('sha256').update(JSON.stringify({ intent, sources })).digest('hex');
