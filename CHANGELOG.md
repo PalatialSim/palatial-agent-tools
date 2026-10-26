@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.20-dev.0
+
+- Send prompt, images, videos, CAD and documents in one streaming multipart request up to 64 MiB; retain resumable transport for larger files up to 1 GiB.
+- Replace the fixed upload deadline with progress and response deadlines. Recover uncertain submissions using a digest manifest without resending files unless bytes are missing.
+- Store file manifests instead of new inline-byte receipts; preserve exact replay of older receipts.
+
 ## 0.1.19-dev.0
 
 - Send small PNG, JPEG and WebP files with Agent intent in the JavaScript client and MCP. Count existing inline attachments toward the shared limits.

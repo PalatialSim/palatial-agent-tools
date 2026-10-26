@@ -82,73 +82,46 @@ test('packaged stdio discovery exposes only the unified tool without login or st
   assert.match(result.content[0].text, /not authenticated/);
 });
 
-test('sole MCP tool sends a small local photo in one intent POST and replays the same request', async t => {
-  const directory = await mkdtemp(path.join(tmpdir(), 'palatial-inline-photo-'));
+test('sole MCP tool sends one multipart POST and repeats only the digest manifest after response loss', async t => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'palatial-multipart-photo-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const filename = path.join(directory, 'bin.png');
   const photo = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64');
   await writeFile(filename, photo);
   const calls = [];
   const native = new PalatialClient({ apiKey: 'fixture-key', baseUrl: 'https://dashboard.dev.palatial.cloud/api/v1/external/', receiptDir: path.join(directory, 'receipts'), fetchImpl: async (url, init) => {
-    calls.push({ url: String(url), method: init.method, body: JSON.parse(init.body) });
     assert.equal(new URL(url).pathname, '/api/v1/external/agent');
-    return Response.json({ id: 'photo-1', replayed: calls.length > 1 }, { status: 202 });
+    if (typeof init.body !== 'string') {
+      const chunks = [];
+      for await (const chunk of init.body) chunks.push(chunk);
+      const bytes = Buffer.concat(chunks);
+      calls.push({ method: init.method, bytes, headers: init.headers });
+      assert.equal(init.duplex, 'half');
+      throw new Error('response lost after native admission');
+    }
+    calls.push({ method: init.method, body: JSON.parse(init.body) });
+    return Response.json({ id: 'photo-1', replayed: true }, { status: 202 });
   } });
   const client = await connect(t, async () => native);
   const args = { request_id: 'small-photo', message: 'Create the bin in this photo.', files: [filename] };
   const result = await client.callTool({ name: 'palatial_agent', arguments: args });
   assert.equal(result.isError, undefined);
-  assert.equal(calls.length, 1);
+  assert.equal(result.structuredContent.replayed, true);
+  assert.equal(calls.length, 2);
   assert.equal(calls[0].method, 'POST');
-  assert.equal(calls[0].body.assetId, undefined);
-  assert.deepEqual(calls[0].body.attachments, [{ name: 'bin.png', kind: 'image', inlineData: { mimeType: 'image/png', data: photo.toString('base64') } }]);
+  assert.match(calls[0].headers['Content-Type'], /^multipart\/form-data/);
+  assert.ok(calls[0].bytes.includes(photo));
+  assert.equal(calls[1].body.requestId, 'small-photo');
+  assert.equal(calls[1].body.files[0].originalName, 'bin.png');
+  assert.equal(calls[1].body.files[0].sizeBytes, photo.length);
+  assert.equal(calls[1].body.files[0].sha256.length, 64);
+  assert.equal(calls[1].body.attachments, undefined);
   const replay = await client.callTool({ name: 'palatial_agent', arguments: args });
   assert.equal(replay.structuredContent.replayed, true);
-  assert.deepEqual(calls[1].body, calls[0].body);
-});
-
-test('sole MCP tool reserves and uploads local files before native intent, then replays exact stored metadata after response loss', async t => {
-  const directory = await mkdtemp(path.join(tmpdir(), 'palatial-intent-files-'));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  const filename = path.join(directory, 'cabinet.mp4');
-  await writeFile(filename, Buffer.from('0000ftyp0000video-evidence'));
-  const calls = [];
-  const assetId = '333333333333333333333333';
-  const attachment = { id: 'cabinet.mp4', name: 'cabinet.mp4', kind: 'video', mimeType: 'video/mp4', bytesInAsset: true };
-  let loseResponse = true;
-  const native = new PalatialClient({ apiKey: 'fixture-key', baseUrl: 'https://dashboard.dev.palatial.cloud/api/v1/external/', receiptDir: path.join(directory, 'receipts'), fetchImpl: async (url, init) => {
-    const route = new URL(url).pathname;
-    calls.push({ route, method: init.method, headers: init.headers, body: typeof init.body === 'string' ? JSON.parse(init.body) : undefined });
-    if (route.endsWith('/agent/sources')) return Response.json({ assetId });
-    if (route.endsWith('/sources/init')) return Response.json({ key: `uploads/projects/${assetId}/uploads/cabinet.mp4`, uploadId: 'upload-1', completionToken: 'token-1' });
-    if (route.endsWith('/sources/sign-parts')) return Response.json({ signedUrls: [`https://${'a'.repeat(32)}.r2.cloudflarestorage.com/bucket/file?private=signature`] });
-    if (route === '/bucket/file') return new Response('', { headers: { etag: 'part-etag' } });
-    if (route.endsWith('/sources/complete')) return Response.json({ attachment });
-    if (route.endsWith('/external/agent')) {
-      if (loseResponse) { loseResponse = false; throw new Error('response lost after native admission'); }
-      return Response.json({ id: 'receipt-1', assetId, replayed: true }, { status: 202 });
-    }
-    throw new Error('Unexpected route');
-  } });
-  const client = await connect(t, async () => native);
-  const args = { request_id: 'video-1', message: 'Build the cabinet shown in my video.', files: [filename] };
-  const first = await client.callTool({ name: 'palatial_agent', arguments: args });
-  assert.equal(first.isError, true);
-  const replay = await client.callTool({ name: 'palatial_agent', arguments: args });
-  assert.equal(replay.isError, undefined);
-  assert.equal(replay.structuredContent.replayed, true);
-  assert.equal(calls.filter(call => call.route.endsWith('/agent/sources')).length, 1);
-  assert.equal(calls.filter(call => call.route.endsWith('/sources/init')).length, 1);
-  const posts = calls.filter(call => call.route.endsWith('/external/agent'));
-  assert.equal(posts.length, 2);
-  assert.deepEqual(posts[0].body, posts[1].body);
-  assert.deepEqual(posts[0].body, { requestId: 'video-1', message: args.message, assetId, attachments: [attachment] });
-  assert.equal(calls.find(call => call.route === '/bucket/file').headers, undefined);
+  assert.deepEqual(calls[2].body, calls[1].body);
   await writeFile(filename, Buffer.from('changed-source'));
-  const changed = await client.callTool({ name: 'palatial_agent', arguments: args });
-  assert.equal(changed.isError, true);
-  assert.match(changed.content[0].text, /different intent or source bytes/);
-  assert.equal(calls.filter(call => call.route.endsWith('/external/agent')).length, 2);
+  assert.equal((await client.callTool({ name: 'palatial_agent', arguments: args })).isError, true);
+  assert.equal(calls.length, 3);
 });
 
 test('message-only MCP calls omit request identity and remain new requests, while explicit IDs stay unchanged', async t => {
