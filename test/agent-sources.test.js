@@ -224,7 +224,7 @@ test('multipart refuses changed file bytes before sending its file part', async 
 
 test('a file above 1 GiB is refused before allocation or network transfer', async t => {
   const f = await intentFixture(t);
-  const filename = path.join(path.dirname(f.filename), 'oversized.mp4');
+  const filename = path.join(path.dirname(f.filename), 'oversized.step');
   const handle = await open(filename, 'w');
   await handle.truncate(1024 ** 3 + 1);
   await handle.close();
@@ -301,4 +301,43 @@ test('hidden storage PUT keeps progressing beyond 30 seconds without a whole-tra
   assert.equal(chunks, 3);
   assert.equal(f.calls.filter(call => call.route?.endsWith('/init')).length, 1);
   assert.equal(f.calls.filter(call => call.route?.endsWith('/complete')).length, 1);
+});
+
+
+test('MP4 and MOV above 300 MiB are refused before hashing, receipts, or network on both transports', async t => {
+  const f = await intentFixture(t);
+  for (const extension of ['.mp4', '.MOV']) {
+    const filename = path.join(path.dirname(f.filename), `too-large${extension}`);
+    const handle = await open(filename, 'w');
+    await handle.truncate(300 * 1024 ** 2 + 1);
+    const prototype = Object.getPrototypeOf(handle);
+    await handle.close();
+    const reading = t.mock.method(prototype, 'read', () => { throw new Error('Oversized videos must not be hashed.'); });
+    const expected = error => error.code === 'AGENT_VIDEO_TOO_LARGE' && /300 MiB \(314572800 bytes\).*Mad Max/.test(error.message);
+    await assert.rejects(uploadAgentSource(f.client, { asset_id: f.assetId, file_path: filename }), expected);
+    await assert.rejects(submitAgentWithFiles(f.client, { requestId: 'too-large-video', message: 'Build it.', files: [filename] }), expected);
+    assert.equal(reading.mock.callCount(), 0);
+    reading.mock.restore();
+  }
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.intents.length, 0);
+  await assert.rejects(readdir(f.client.receiptDir), error => error.code === 'ENOENT');
+});
+
+test('a non-video larger than 300 MiB retains resumable transport and the 1 GiB budget', async t => {
+  const f = await intentFixture(t);
+  const filename = path.join(path.dirname(f.filename), 'large.step');
+  const handle = await open(filename, 'w');
+  await handle.truncate(300 * 1024 ** 2 + 1);
+  await handle.close();
+  const reachedTransport = new Error('Reached supported resumable transport.');
+  f.client.request = async route => { f.calls.push({route}); throw reachedTransport; };
+  await assert.rejects(submitAgentWithFiles(f.client, { requestId: 'large-cad', message: 'Use this CAD.', files: [filename] }), error => error === reachedTransport);
+  assert.equal(f.calls[0].route, 'agent/sources');
+});
+
+test('manual multipart metadata accepts the exact video cap and refuses one byte more', () => {
+  const source = { path: '/explicit/clip.mp4', size: 300 * 1024 ** 2, sha256: 'a'.repeat(64) };
+  assert.equal(agentMultipart({ message: 'Use this clip.' }, [source]).manifest.files[0].sizeBytes, source.size);
+  assert.throws(() => agentMultipart({ message: 'Use this clip.' }, [{...source,size:source.size+1}]), error => error.code === 'AGENT_VIDEO_TOO_LARGE');
 });

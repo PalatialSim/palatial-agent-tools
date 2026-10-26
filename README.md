@@ -4,7 +4,7 @@ Palatial's thin JavaScript/CLI client and MCP server. Generation, planning, prov
 
 ## One native Agent entry
 
-Package **0.1.20-dev.0** exposes exactly one MCP tool: `palatial_agent`. It is a **Dev preview**: configure `PALATIAL_API_URL=https://dashboard.dev.palatial.cloud/api/v1/external/` and a Dev workspace API key until the owning Backend is promoted.
+Package **0.1.21-dev.0** exposes exactly one MCP tool: `palatial_agent`. It is a **Dev preview**: configure `PALATIAL_API_URL=https://dashboard.dev.palatial.cloud/api/v1/external/` and a Dev workspace API key until the owning Backend is promoted.
 
 The native Agent handles Palatial asset creation, configuration, modification, recovery, status and delivery. It reads the user's intent and existing project data. Unrelated tasks are refused. The public path always executes unattended: the server chooses supported routes, preferences, references and justified dimension estimates, and executes through shared owning services. No caller execution policy, token ceiling, answers, selections or confirmation messages exist.
 
@@ -31,7 +31,7 @@ Poll with the same tool:
 - Read `automation.state` (`active`, `completed`, `blocked`, `paused`, `superseded`) for unattended progress, and keep polling the same id while active even when the underlying planner `status` is completed. A handled request or admitted action is not finished generation. Check the returned project/media/validation facts before claiming delivery or simulation success. A cancellation acknowledgment alone is not a completed stop.
 - Requested downloads are authoritative structured results. Use exact host-issued URLs promptly; do not reconstruct credentials from model text. A representation may be pending, unsupported or genuinely missing independently of asset completion.
 
-A request accepts at most 50 attachments and up to 1 GiB of files total, including a single MP4/MOV video up to 1 GiB. At most 64 MiB uses one multipart HTTP POST. Larger inputs use an internal resumable transport; callers still make one method or MCP call. Active transfer has a 60-second idle timeout, followed by a 120-second response timeout. A slow but progressing transfer has no fixed 30-second total deadline. Raw URLs are rejected; format and route capabilities remain server-owned.
+A request accepts at most 50 attachments and up to 1 GiB of files total. MP4/MOV videos must be at most 300 MiB (314572800 bytes), the current Mad Max processing limit; larger videos are rejected before transfer. Other supported file types retain the 1 GiB total file budget. At most 64 MiB uses one multipart HTTP POST. The current Dev gateway accepts at most 100 MiB (104857600 bytes) for the complete HTTP request body, including metadata and multipart framing; it does not support a 1 GiB single POST. Larger inputs use an internal resumable transport; callers still make one method or MCP call. Active transfer has a 60-second idle timeout, followed by a 120-second response timeout. A slow but progressing transfer has no fixed 30-second total deadline. Raw URLs are rejected; format and route capabilities remain server-owned.
 
 Use `files` for all new file bytes in this call; existing owned attachment metadata may accompany it. JSON-only requests can still use small inline images within the existing 2 MiB per image, eight-image and 12 MiB total limits.
 
@@ -54,7 +54,7 @@ The JavaScript methods `startAgentTurn(input)` and `getAgentTurn(id)` use camelC
 Requires Node.js 22 or newer and a Palatial workspace API key. Generation charges the shared workspace balance according to native postpaid stage billing. Your coding agent's model charges are separate.
 
 ```sh
-npm install --global https://github.com/PalatialSim/palatial-agent-tools/releases/download/v0.1.20-dev.0/palatial-agent-tools-0.1.20-dev.0.tgz
+npm install --global https://github.com/PalatialSim/palatial-agent-tools/releases/download/v0.1.21-dev.0/palatial-agent-tools-0.1.21-dev.0.tgz
 palatial-agent login
 palatial-agent setup --client codex
 ```

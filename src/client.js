@@ -9,6 +9,7 @@ import { createScene, getScene, listScenes, answerScene, cancelScene, recoverSce
 import { createAuto, automaticCreateInput } from './auto-create.js';
 import { progressUpload } from './upload-progress.js';
 import { uploadAgentSource, submitAgentWithFiles } from './agent-sources.js';
+import { agentFileMaxBytes, agentVideoMaxBytes, agentVideoLimitMessage, isAgentVideo } from './agent-file-limits.js';
 
 export const DEFAULT_API_URL = 'https://dashboard.palatial.cloud/api/v1/external/';
 const engine = z.enum(['isaac_sim', 'mujoco', 'newton']);
@@ -30,15 +31,18 @@ export const agentTurnSchema = z.object({
   attachments: z.array(agentAttachmentSchema).max(50).optional(),
   files: z.array(z.object({
     originalName: z.string().min(1).max(240), kind: z.string().optional(), mimeType: z.string().optional(),
-    sha256: z.string().regex(/^[a-f0-9]{64}$/i), sizeBytes: z.number().int().positive().max(1024 ** 3)
-  }).strict()).max(50).optional()
+    sha256: z.string().regex(/^[a-f0-9]{64}$/i), sizeBytes: z.number().int().positive().max(agentFileMaxBytes)
+  }).strict().superRefine((file, ctx) => {
+    if (isAgentVideo(file) && file.sizeBytes > agentVideoMaxBytes)
+      ctx.addIssue({ code: 'custom', path: ['sizeBytes'], message: agentVideoLimitMessage, params: { code: 'AGENT_VIDEO_TOO_LARGE' } });
+  })).max(50).optional()
 }).strict();
 export const mcpAgentTurnSchema = z.object({
   turn_id: agentIdentity.describe('Read this returned request id without creating another request.').optional(),
   request_id: agentRequestIdentity.describe('Optional stable identity. Omit for a new request on every call; supply the same ID and identical inputs for safe replay after uncertainty.').optional(),
   message: z.string().trim().min(1).max(16000).optional(),
   asset_id: assetIdSchema.optional(), conversation_id: agentIdentity.optional(),
-  files: z.array(z.string().min(1).max(4096)).max(50).optional(),
+  files: z.array(z.string().min(1).max(4096)).max(50).describe('Explicit local files. MP4/MOV videos: at most 300 MiB (314572800 bytes), the current Mad Max processing limit. Other files: at most 1 GiB total. Dev raw HTTP bodies: at most 100 MiB including metadata/framing; larger files use this tool’s internal resumable transport.').optional(),
   attachments: z.array(z.object({
     id: z.string().optional(), kind: z.string().optional(), name: z.string().optional(), role: z.string().optional(),
     mime_type: z.string().optional(), part_name: z.string().optional(), reference_mesh_artifact_id: z.string().optional(),

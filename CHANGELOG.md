@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.21-dev.0
+
+- Refuse videos above 300 MiB before transfer or local receipt creation, matching the current Mad Max processing limit. Apply the same limit to digest manifests and hidden file transport.
+- Keep the 1 GiB budget for other files and document the current Dev gateway’s 100 MiB complete-request limit separately from internal resumable transport.
+
 ## 0.1.20-dev.0
 
 - Send prompt, images, videos, CAD and documents in one streaming multipart request up to 64 MiB; retain resumable transport for larger files up to 1 GiB.

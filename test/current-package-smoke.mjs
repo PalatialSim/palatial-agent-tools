@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, open } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { VERSION } from '../src/version.js';
@@ -43,6 +44,8 @@ try {
     assert.equal(client.getServerVersion().version, VERSION);
     const tools = (await client.listTools()).tools;
     assert.deepEqual(tools.map(tool => tool.name), ['palatial_agent']);
+    assert.match(tools[0].description, /300 MiB.*314572800 bytes.*Mad Max/);
+    assert.match(tools[0].inputSchema.properties.files.description, /300 MiB.*100 MiB/);
     assert.ok(tools[0].inputSchema.properties.request_id);
     assert.equal(tools[0].inputSchema.required?.includes('request_id') ?? false, false);
     assert.ok(tools[0].inputSchema.properties.turn_id);
@@ -53,6 +56,15 @@ try {
   } finally {
     await client.close();
   }
+  const { PalatialClient } = await import(pathToFileURL(path.join(packageRoot, 'src', 'client.js')));
+  const oversized = path.join(root, 'too-large.mp4');
+  const handle = await open(oversized, 'w');
+  await handle.truncate(300 * 1024 ** 2 + 1);
+  await handle.close();
+  let requests = 0;
+  const native = new PalatialClient({ apiKey: 'fixture', fetchImpl: () => { requests++; throw new Error('No request expected.'); }, receiptDir: path.join(root, 'receipts') });
+  await assert.rejects(native.startAgentWithFiles({ message: 'Use this clip.', files: [oversized] }), error => error.code === 'AGENT_VIDEO_TOO_LARGE' && /300 MiB.*Mad Max/.test(error.message));
+  assert.equal(requests, 0);
   console.log(`Current package smoke passed: ${path.basename(tarball)}`);
 } finally {
   await rm(root, { recursive: true, force: true });
