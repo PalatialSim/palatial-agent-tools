@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.19-dev.0
+
+- Send small PNG, JPEG and WebP files with Agent intent in the JavaScript client and MCP. Count existing inline attachments toward the shared limits.
+- Keep larger photos, CAD and videos on verified multipart upload. Preserve request identity and exact input on replay.
+- Document single-request photos as the recommended small-image path.
+
 ## 0.1.18
 
 - Preserve generation descriptions beyond older client caps and relay the server-owned length validation.
