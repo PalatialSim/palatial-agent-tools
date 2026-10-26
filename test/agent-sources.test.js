@@ -281,3 +281,24 @@ test('Node fetch sends the multipart stream over HTTP with the declared byte cou
   assert.equal((await client.startAgentWithFiles({ requestId: 'http', message: 'Build it.', files: [photo] })).id, 'http-turn');
   assert.equal(multipartRequest(received).files[0].originalName, 'front.png');
 });
+
+test('hidden storage PUT keeps progressing beyond 30 seconds without a whole-transfer deadline', async t => {
+  const f = await fixture(t);
+  await writeFile(f.filename, Buffer.alloc(3 * 64 * 1024, 7));
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let chunks = 0;
+  f.client.fetch = async (_url, options) => {
+    assert.equal(options.duplex, 'half');
+    for await (const chunk of options.body) {
+      assert.ok(Buffer.isBuffer(chunk));
+      chunks++;
+      t.mock.timers.tick(20000);
+      assert.equal(options.signal.aborted, false);
+    }
+    return new Response('', { headers: { etag: 'part-etag' } });
+  };
+  await uploadAgentSource(f.client, { asset_id: f.assetId, file_path: f.filename });
+  assert.equal(chunks, 3);
+  assert.equal(f.calls.filter(call => call.route?.endsWith('/init')).length, 1);
+  assert.equal(f.calls.filter(call => call.route?.endsWith('/complete')).length, 1);
+});
