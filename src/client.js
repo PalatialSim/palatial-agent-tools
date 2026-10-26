@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { createRoute, modeFields, validateMode } from './create-modes.js';
 import { createScene, getScene, listScenes, answerScene, cancelScene, recoverScene, retrySceneStart, downloadScene } from './scenes.js';
 import { createAuto, automaticCreateInput } from './auto-create.js';
+import { progressUpload } from './upload-progress.js';
 import { uploadAgentSource, submitAgentWithFiles } from './agent-sources.js';
 
 export const DEFAULT_API_URL = 'https://dashboard.palatial.cloud/api/v1/external/';
@@ -26,7 +27,11 @@ const agentAttachmentSchema = z.object({
 export const agentTurnSchema = z.object({
   requestId: agentRequestIdentity.optional(), message: z.string().trim().min(1).max(16000),
   assetId: assetIdSchema.optional(), conversationId: agentIdentity.optional(),
-  attachments: z.array(agentAttachmentSchema).max(50).optional()
+  attachments: z.array(agentAttachmentSchema).max(50).optional(),
+  files: z.array(z.object({
+    originalName: z.string().min(1).max(240), kind: z.string().optional(), mimeType: z.string().optional(),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/i), sizeBytes: z.number().int().positive().max(1024 ** 3)
+  }).strict()).max(50).optional()
 }).strict();
 export const mcpAgentTurnSchema = z.object({
   turn_id: agentIdentity.describe('Read this returned request id without creating another request.').optional(),
@@ -466,64 +471,68 @@ export class PalatialClient {
     this.receiptDir = receiptDir;
   }
 
-  async request(route, { method = 'GET', body, binaryBody, raw = false, idempotencyKey, timeoutMs = this.timeoutMs, structuredErrors = false } = {}) {
+  async request(route, { method = 'GET', body, binaryBody, uploadBody, raw = false, idempotencyKey, timeoutMs = this.timeoutMs, structuredErrors = false } = {}) {
     const url = new URL(route, this.base);
     if (url.origin !== this.base.origin || !url.pathname.startsWith(this.base.pathname)) throw new Error('Request is outside the configured API.');
     const headers = { 'x-api-key': this.apiKey, Accept: 'application/json' };
     if (idempotencyKey !== undefined) headers['Idempotency-Key'] = idempotencyKey;
-    if (binaryBody !== undefined) { headers['Content-Type'] = 'application/octet-stream'; headers['Content-Length'] = String(binaryBody.byteLength); }
+    if (uploadBody) { headers['Content-Type'] = uploadBody.contentType; headers['Content-Length'] = String(uploadBody.length); }
+    else if (binaryBody !== undefined) { headers['Content-Type'] = 'application/octet-stream'; headers['Content-Length'] = String(binaryBody.byteLength); }
     else if (body && !(body instanceof FormData)) headers['Content-Type'] = 'application/json';
     let response;
+    const transfer = uploadBody ? progressUpload(uploadBody.body, uploadBody) : undefined;
     try {
-      response = await this.fetch(url, { method, headers, body: binaryBody !== undefined ? binaryBody : body instanceof FormData ? body : body ? JSON.stringify(body) : undefined, redirect: raw ? 'manual' : 'error', signal: AbortSignal.timeout(timeoutMs) });
-    } catch (error) {
-      const uncertain = method !== 'GET' ? ' The server may have accepted the request. Check your workspace before submitting again; this client does not retry mutations.' : '';
-      throw new Error(safeMessage(error, this.apiKey) + uncertain);
-    }
-    if (raw && response.status >= 300 && response.status < 400) return response;
-    if (!response.ok) {
-      const preserveStructuredError = structuredErrors || route === 'assets/create/auto';
-      const reason = { 400: 'Invalid request', 401: 'Invalid or expired API key', 403: 'Access denied or insufficient credits', 404: 'Asset or workspace not found', 409: 'Request conflicts with asset state', 429: 'Rate limit reached' }[response.status] || 'Service request failed';
-      let payload;
-      if (response.status < 500 || preserveStructuredError) {
-        try { payload = await response.json(); } catch { /* Non-JSON errors use the generic fallback. */ }
+      try {
+        response = await this.fetch(url, { method, headers, body: transfer ? transfer.body : binaryBody !== undefined ? binaryBody : body instanceof FormData ? body : body ? JSON.stringify(body) : undefined, redirect: raw ? 'manual' : 'error', signal: transfer?.signal || AbortSignal.timeout(timeoutMs), ...(transfer ? { duplex: 'half' } : {}) });
+      } catch (error) {
+        const uncertain = method !== 'GET' ? ' The server may have accepted the request. Check your workspace before submitting again; this client does not retry mutations.' : '';
+        throw new Error(safeMessage(error, this.apiKey) + uncertain);
       }
-      if ([402, 403, 409].includes(response.status)) {
-        const body = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
-        const errorDetails = body.error && typeof body.error === 'object' && !Array.isArray(body.error) ? body.error : {};
-        const nestedDetails = errorDetails.details && typeof errorDetails.details === 'object' && !Array.isArray(errorDetails.details) ? errorDetails.details : {};
-        const record = { ...body, ...errorDetails, ...nestedDetails };
-        if (['insufficient_tokens', 'insufficient_credits'].includes(record.code)) {
-          const metadata = safeBillingValue(billingMetadata(record), this.apiKey);
-          const guidance = rejectedCreditGuidance(record, this.base.origin, route === 'assets/create' || route.startsWith('assets/create/'));
-          const tokens = Object.fromEntries(['balance', 'required', 'shortfall']
-            .filter(key => Number.isFinite(record.tokens?.[key]) && (key === 'balance' || record.tokens[key] >= 0))
-            .map(key => [key, record.tokens[key]]));
-          throw new PalatialApiError(`Insufficient credits (HTTP ${response.status}). ${guidance.message}`, {
-            http_status: response.status, code: record.code, reason: guidance.reason,
-            ...(typeof record.billingMode === 'string' ? { billingMode: safeBillingValue(record.billingMode, this.apiKey) } : {}),
-            ...(Object.keys(tokens).length ? { tokens } : {}),
-            ...metadata, billing_guidance: guidance
+      if (raw && response.status >= 300 && response.status < 400) return response;
+      if (!response.ok) {
+        const preserveStructuredError = structuredErrors || route === 'assets/create/auto';
+        const reason = { 400: 'Invalid request', 401: 'Invalid or expired API key', 403: 'Access denied or insufficient credits', 404: 'Asset or workspace not found', 409: 'Request conflicts with asset state', 429: 'Rate limit reached' }[response.status] || 'Service request failed';
+        let payload;
+        if (response.status < 500 || preserveStructuredError) {
+          try { payload = await response.json(); } catch { /* Non-JSON errors use the generic fallback. */ }
+        }
+        if ([402, 403, 409].includes(response.status)) {
+          const body = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
+          const errorDetails = body.error && typeof body.error === 'object' && !Array.isArray(body.error) ? body.error : {};
+          const nestedDetails = errorDetails.details && typeof errorDetails.details === 'object' && !Array.isArray(errorDetails.details) ? errorDetails.details : {};
+          const record = { ...body, ...errorDetails, ...nestedDetails };
+          if (['insufficient_tokens', 'insufficient_credits'].includes(record.code)) {
+            const metadata = safeBillingValue(billingMetadata(record), this.apiKey);
+            const guidance = rejectedCreditGuidance(record, this.base.origin, route === 'assets/create' || route.startsWith('assets/create/'));
+            const tokens = Object.fromEntries(['balance', 'required', 'shortfall']
+              .filter(key => Number.isFinite(record.tokens?.[key]) && (key === 'balance' || record.tokens[key] >= 0))
+              .map(key => [key, record.tokens[key]]));
+            throw new PalatialApiError(`Insufficient credits (HTTP ${response.status}). ${guidance.message}`, {
+              http_status: response.status, code: record.code, reason: guidance.reason,
+              ...(typeof record.billingMode === 'string' ? { billingMode: safeBillingValue(record.billingMode, this.apiKey) } : {}),
+              ...(Object.keys(tokens).length ? { tokens } : {}),
+              ...metadata, billing_guidance: guidance
+            });
+          }
+        }
+        const detail = response.status < 500 || preserveStructuredError ? apiErrorDetail(payload, this.apiKey) : '';
+        if (preserveStructuredError && typeof payload?.code === 'string' && /^[A-Za-z0-9_]{1,64}$/.test(payload.code)) {
+          throw new PalatialApiError(`${reason} (HTTP ${response.status}).${detail}`, {
+            http_status: response.status, code: payload.code,
+            ...(typeof payload.retryable === 'boolean' ? { retryable: payload.retryable } : {}),
+            ...(typeof payload.correlationId === 'string' && /^[A-Za-z0-9._:-]{1,192}$/.test(payload.correlationId) ? { correlationId: payload.correlationId } : {}),
+            ...(typeof payload.hint === 'string' ? { hint: safeMessage(new Error(payload.hint), this.apiKey).slice(0, 2000) } : {}),
+            ...(typeof payload.remedy === 'string' ? { remedy: safeMessage(new Error(payload.remedy), this.apiKey).slice(0, 2000) } : {}),
+            ...(typeof payload.assetId === 'string' && assetIdSchema.safeParse(payload.assetId).success ? { assetId: payload.assetId, asset_id: payload.assetId } : {})
           });
         }
+        const error = new Error(`${reason} (HTTP ${response.status}).${detail}${method !== 'GET' && response.status >= 500 ? ' Submission outcome is uncertain; inspect your workspace before retrying.' : ''}`);
+        error.status = response.status;
+        throw error;
       }
-      const detail = response.status < 500 || preserveStructuredError ? apiErrorDetail(payload, this.apiKey) : '';
-      if (preserveStructuredError && typeof payload?.code === 'string' && /^[A-Za-z0-9_]{1,64}$/.test(payload.code)) {
-        throw new PalatialApiError(`${reason} (HTTP ${response.status}).${detail}`, {
-          http_status: response.status, code: payload.code,
-          ...(typeof payload.retryable === 'boolean' ? { retryable: payload.retryable } : {}),
-          ...(typeof payload.correlationId === 'string' && /^[A-Za-z0-9._:-]{1,192}$/.test(payload.correlationId) ? { correlationId: payload.correlationId } : {}),
-          ...(typeof payload.hint === 'string' ? { hint: safeMessage(new Error(payload.hint), this.apiKey).slice(0, 2000) } : {}),
-          ...(typeof payload.remedy === 'string' ? { remedy: safeMessage(new Error(payload.remedy), this.apiKey).slice(0, 2000) } : {}),
-          ...(typeof payload.assetId === 'string' && assetIdSchema.safeParse(payload.assetId).success ? { assetId: payload.assetId, asset_id: payload.assetId } : {})
-        });
-      }
-      const error = new Error(`${reason} (HTTP ${response.status}).${detail}${method !== 'GET' && response.status >= 500 ? ' Submission outcome is uncertain; inspect your workspace before retrying.' : ''}`);
-      error.status = response.status;
-      throw error;
-    }
-    if (raw) return response;
-    try { return sanitizeBillingFields(await response.json(), this.apiKey); } catch { throw new Error('Palatial returned an invalid JSON response. For a create request, inspect your workspace before submitting again.'); }
+      if (raw) return response;
+      try { return sanitizeBillingFields(await response.json(), this.apiKey); } catch { throw new Error('Palatial returned an invalid JSON response. For a create request, inspect your workspace before submitting again.'); }
+    } finally { transfer?.close(); }
   }
 
   createScene(input) { return createScene(this, input); }

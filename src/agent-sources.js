@@ -1,19 +1,19 @@
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, open, unlink } from 'node:fs/promises';
+import { mkdir, open, unlink, rename } from 'node:fs/promises';
 import { z } from 'zod';
+import { progressUpload } from './upload-progress.js';
 import { assertLocalPath, assertPublicHttpsUrl, digestHandle, digestRegularFile, openRegularFile, readCappedRegularFile, resolveOutputDirectory, assertResolvedDirectory } from './input-guards.js';
 
 export const agentSourceUploadSchema = z.object({
   asset_id: z.string().regex(/^[a-fA-F0-9]{24}$/),
   file_path: z.string().min(1).describe('Explicit local image, CAD/3D or MP4/MOV source to upload to this unpaid project. Uploading alone never submits generation.')
 }).strict();
-const extensions = new Set(['.png', '.jpg', '.jpeg', '.webp', '.glb', '.gltf', '.obj', '.stl', '.ply', '.fbx', '.dae', '.3ds', '.step', '.stp', '.iges', '.igs', '.usd', '.usdz', '.mp4', '.mov']);
-const inlineImageTypes = new Map([['.png', 'image/png'], ['.jpg', 'image/jpeg'], ['.jpeg', 'image/jpeg'], ['.webp', 'image/webp']]);
-const inlineImageMaxBytes = 2 * 1024 ** 2;
-const inlineMaxCount = 8;
-const inlineMaxBytes = 12 * 1024 ** 2;
-// A saved intent can include the full 12 MiB inline budget encoded as base64.
+const extensions = new Set(['.png', '.jpg', '.jpeg', '.webp', '.glb', '.gltf', '.obj', '.stl', '.ply', '.fbx', '.dae', '.3ds', '.step', '.stp', '.iges', '.igs', '.usd', '.usdz', '.mp4', '.mov', '.pdf', '.txt']);
+const mimeTypes = new Map([['.png', 'image/png'], ['.jpg', 'image/jpeg'], ['.jpeg', 'image/jpeg'], ['.webp', 'image/webp'], ['.mp4', 'video/mp4'], ['.mov', 'video/quicktime'], ['.glb', 'model/gltf-binary'], ['.pdf', 'application/pdf'], ['.txt', 'text/plain']]);
+export const agentFileMaxBytes = 1024 ** 3;
+const multipartMaxBytes = 64 * 1024 ** 2;
+// Legacy receipts can include the full 12 MiB inline budget encoded as base64.
 const intentReceiptMaxBytes = 20 * 1024 ** 2;
 
 /** Transport bytes only: the server owns source admission and the Agent owns intent. */
@@ -27,7 +27,7 @@ export async function uploadAgentSource(client, input) {
   const opened = await openRegularFile(p.file_path);
   try {
     const bytes = opened.info.size;
-    const limit = ['.mp4', '.mov'].includes(ext) ? 300 * 1024 ** 2 : 256 * 1024 ** 2;
+    const limit = agentFileMaxBytes;
     if (bytes < 1 || bytes > limit) throw new Error(`Agent source must be a nonempty file at most ${limit} bytes.`);
     const digest = await digestHandle(opened.handle, bytes);
     const route = `agent/assets/${p.asset_id}/sources`;
@@ -44,11 +44,23 @@ export async function uploadAgentSource(client, input) {
       const buffer = Buffer.alloc(Math.min(chunkSize, bytes - offset));
       const { bytesRead } = await opened.handle.read(buffer, 0, buffer.length, offset);
       if (bytesRead !== buffer.length) throw new Error('Source file changed during upload.');
-      // Never send the API key to storage, follow redirects or retry a mutation.
-      const response = await client.fetch(url, { method: 'PUT', body: buffer, redirect: 'error', signal: AbortSignal.timeout(client.autoTimeoutMs) });
-      if (!response.ok) throw new Error(`Source upload failed (HTTP ${response.status}). Inspect the project before retrying.`);
+      // A signed PUT addresses one immutable part: only that part may be retried.
+      let response;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const body = async function* () {
+          for (let offset = 0; offset < buffer.length; offset += 64 * 1024) yield buffer.subarray(offset, offset + 64 * 1024);
+        };
+        const transfer = progressUpload(body());
+        try {
+          response = await client.fetch(url, { method: 'PUT', headers: { 'Content-Length': String(buffer.length) }, body: transfer.body, duplex: 'half', redirect: 'error', signal: transfer.signal });
+          if (!response.ok && response.status >= 500 && attempt === 0) { await response.body?.cancel(); continue; }
+          break;
+        } catch (error) { if (attempt === 1) throw error; }
+        finally { transfer.close(); }
+      }
+      if (!response?.ok) throw new Error(`File transfer failed (HTTP ${response?.status}). Inspect the project before retrying.`);
       const eTag = response.headers.get('etag');
-      if (!eTag) throw new Error('Source upload returned no part identity.');
+      if (!eTag) throw new Error('File transfer returned no part identity.');
       parts.push({ eTag, partNumber });
     }
     const finalInfo = await opened.handle.stat();
@@ -58,84 +70,138 @@ export async function uploadAgentSource(client, input) {
 }
 
 
-/** Send small photos with intent; keep native uploads and exact response-loss replay for other files. */
+/** Stream one request without materializing file bytes in a receipt or in memory. */
+export function agentMultipart(intent, sources) {
+  const boundary = `palatial-${randomUUID()}`;
+  const fields = sources.map((source, index) => ({
+    part: `file${index}`, originalName: path.basename(source.path),
+    kind: mimeTypes.get(path.extname(source.path).toLowerCase())?.startsWith('image/') ? 'image' : ['.mp4', '.mov'].includes(path.extname(source.path).toLowerCase()) ? 'video' : ['.pdf', '.txt'].includes(path.extname(source.path).toLowerCase()) ? 'document' : 'cad',
+    mimeType: mimeTypes.get(path.extname(source.path).toLowerCase()) || 'application/octet-stream',
+    sha256: source.sha256, sizeBytes: source.size
+  }));
+  const manifest = { ...intent, files: fields.map(({ part, ...file }) => file) };
+  const head = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="request"\r\nContent-Type: application/json\r\n\r\n${JSON.stringify({ ...intent, files: fields })}\r\n`);
+  const prefixes = fields.map(file => Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${file.part}"; filename="${file.originalName.replaceAll('"', '\\"')}"\r\nContent-Type: ${file.mimeType}\r\n\r\n`));
+  const end = Buffer.from(`--${boundary}--\r\n`);
+  const length = head.length + end.length + sources.reduce((sum, source, index) => sum + prefixes[index].length + source.size + 2, 0);
+  const body = async function* () {
+    yield head;
+    for (let index = 0; index < sources.length; index++) {
+      const source = sources[index];
+      const opened = await openRegularFile(source.path);
+      try {
+        if (opened.info.size !== source.size || await digestHandle(opened.handle, source.size) !== source.sha256) throw new Error('A source changed before submission.');
+        yield prefixes[index];
+        const hash = createHash('sha256');
+        for (let offset = 0; offset < source.size;) {
+          const buffer = Buffer.alloc(Math.min(64 * 1024, source.size - offset));
+          const { bytesRead } = await opened.handle.read(buffer, 0, buffer.length, offset);
+          if (bytesRead !== buffer.length) throw new Error('A source changed during submission.');
+          offset += bytesRead;
+          hash.update(buffer);
+          yield buffer;
+        }
+        if ((await opened.handle.stat()).size !== source.size || hash.digest('hex') !== source.sha256) throw new Error('A source changed during submission.');
+        yield Buffer.from('\r\n');
+      } finally { await opened.handle.close(); }
+    }
+    yield end;
+  };
+  return { manifest, uploadBody: { body: body(), contentType: `multipart/form-data; boundary=${boundary}`, length } };
+}
+
+/** One public operation: native multipart for small requests, resumable parts for large files. */
 export async function submitAgentWithFiles(client, input) {
   const { files, ...submittedIntent } = input;
-  // One source operation shares a fresh identity across reservation and intent.
-  // Never mutate the caller's object: another call without an ID is new work.
   const intent = { ...submittedIntent, requestId: submittedIntent.requestId ?? randomUUID() };
-  if (files.length + (intent.attachments?.length || 0) > 50) throw new Error('At most 50 source attachments and files combined.');
+  if (files.length + (intent.attachments?.length || 0) > 50) throw new Error('At most 50 attachments and files combined.');
   const sources = [];
   for (const filename of files) {
     assertLocalPath(filename);
-    const ext = path.extname(filename).toLowerCase();
-    if (!extensions.has(ext)) throw new Error('Unsupported Agent source file type.');
     const name = path.basename(filename);
+    if (!extensions.has(path.extname(filename).toLowerCase())) throw new Error('Unsupported Agent source file type.');
     if (name.length > 240 || name.includes('..') || /[\\/\x00-\x1f]/.test(name)) throw new Error('Use a plain source filename.');
-    const max = ['.mp4', '.mov'].includes(ext) ? 300 * 1024 ** 2 : 256 * 1024 ** 2;
-    const identity = await digestRegularFile(filename, max);
+    const identity = await digestRegularFile(filename, agentFileMaxBytes);
     if (identity.size < 1) throw new Error('Agent source must be nonempty.');
     sources.push({ path: path.resolve(filename), ...identity });
   }
+  if (sources.reduce((sum, source) => sum + source.size, 0) > agentFileMaxBytes) throw new Error('One Agent request supports at most 1 GiB of files.');
   const fingerprint = createHash('sha256').update(JSON.stringify({ intent, sources })).digest('hex');
   const owner = createHash('sha256').update(JSON.stringify([client.base.href, client.apiKey, intent.requestId])).digest('hex');
   const directory = await resolveOutputDirectory(client.receiptDir);
   await mkdir(directory, { recursive: true, mode: 0o700 });
   await assertResolvedDirectory(directory);
   const receipt = path.join(directory, `agent-source-intent-${owner}.json`);
-  const replay = async () => {
+  const readReceipt = async () => {
     const bytes = await readCappedRegularFile(receipt, intentReceiptMaxBytes);
     if (!bytes) return undefined;
     const saved = JSON.parse(bytes.toString('utf8'));
     if (saved.fingerprint !== fingerprint) throw new Error('Request ID already has different intent or source bytes. Preserve the original request and inspect its receipt.');
-    return saved.input;
+    return saved;
   };
-  const prior = await replay();
-  if (prior) return client.startAgentTurn(prior);
   const lock = await open(`${receipt}.lock`, 'wx', 0o600).catch(error => {
-    if (error.code === 'EEXIST') throw new Error('This source intent is already being prepared. Preserve request_id and inspect its local receipt before retrying.');
+    if (error.code === 'EEXIST') throw new Error('This intent is already being prepared. Preserve request_id and inspect its local receipt before retrying.');
     throw error;
   });
   try {
-    const raced = await replay();
-    if (raced) return await client.startAgentTurn(raced);
-    let inlineCount = 0;
-    let inlineBytes = 0;
-    for (const attachment of intent.attachments || []) {
-      if (typeof attachment.inlineData?.data !== 'string') continue;
-      inlineCount++;
-      inlineBytes += Buffer.byteLength(attachment.inlineData.data, 'base64');
-    }
-    const planned = sources.map(source => {
-      const mimeType = inlineImageTypes.get(path.extname(source.path).toLowerCase());
-      const inline = mimeType && source.size <= inlineImageMaxBytes && inlineCount < inlineMaxCount && inlineBytes + source.size <= inlineMaxBytes;
-      if (inline) { inlineCount++; inlineBytes += source.size; }
-      return { ...source, mimeType: inline ? mimeType : undefined };
-    });
-    let assetId = intent.assetId;
-    if (!assetId && planned.some(source => !source.mimeType)) {
-      const reserved = await client.request('agent/sources', { method: 'POST', structuredErrors: true, body: { requestId: intent.requestId } });
-      if (typeof reserved.assetId !== 'string' || !/^[a-f0-9]{24}$/i.test(reserved.assetId)) throw new Error('Native source reservation returned no asset identity. Preserve request_id.');
-      assetId = reserved.assetId;
-    }
-    const attachments = [...(intent.attachments || [])];
-    for (const source of planned) {
-      if (source.mimeType) {
-        const bytes = await readCappedRegularFile(source.path, inlineImageMaxBytes);
-        if (!bytes || bytes.length !== source.size || createHash('sha256').update(bytes).digest('hex') !== source.sha256) throw new Error('A source changed before submission.');
-        attachments.push({ name: path.basename(source.path), kind: 'image', inlineData: { mimeType: source.mimeType, data: bytes.toString('base64') } });
-        continue;
+    let saved = await readReceipt();
+    // Old inline receipts retain their original JSON fingerprint and exact request.
+    if (saved && saved.version !== 2) return await client.startAgentTurn(saved.input);
+    if (intent.attachments?.some(attachment => attachment.inlineData)) throw new Error('Use files for all file bytes when submitting local files; inlineData cannot be combined with multipart.');
+    const multipart = agentMultipart(intent, sources);
+    const save = async () => {
+      const temporary = `${receipt}.${randomUUID()}.tmp`;
+      const handle = await open(temporary, 'wx', 0o600);
+      try {
+        await handle.writeFile(JSON.stringify(saved) + '\n');
+        await handle.close();
+        await rename(temporary, receipt);
+      } catch (error) {
+        await handle.close().catch(() => {});
+        await unlink(temporary).catch(() => {});
+        throw error;
       }
-      if (JSON.stringify(await digestRegularFile(source.path, source.size)) !== JSON.stringify({ size: source.size, sha256: source.sha256 })) throw new Error('A source changed before upload.');
-      const uploaded = await uploadAgentSource(client, { asset_id: assetId, file_path: source.path });
-      if (!uploaded?.attachment?.bytesInAsset) throw new Error('Native upload returned no stored source attachment.');
-      attachments.push(uploaded.attachment);
+    };
+    const replay = async () => {
+      try { return { result: await client.request('agent', { method: 'POST', body: saved.input, structuredErrors: true }) }; }
+      catch (error) { if (error.code !== 'AGENT_SOURCE_BYTES_REQUIRED') throw error; return {}; }
+    };
+    if (saved) {
+      const recovered = await replay();
+      if (recovered.result) return recovered.result;
+    } else {
+      saved = { version: 2, transport: sources.reduce((sum, source) => sum + source.size, 0) <= multipartMaxBytes ? 'multipart' : 'parts', fingerprint, sources, input: multipart.manifest, uploaded: [] };
+      await save();
     }
-    const prepared = { ...intent, ...(assetId ? { assetId } : {}), attachments };
-    const handle = await open(receipt, 'wx', 0o600);
-    try { await handle.writeFile(JSON.stringify({ fingerprint, input: prepared }) + '\n'); }
-    finally { await handle.close(); }
-    return await client.startAgentTurn(prepared);
+    if (saved.transport === 'parts') {
+      if (!saved.assetId) {
+        const reserved = intent.assetId ? { assetId: intent.assetId } : await client.request('agent/sources', { method: 'POST', structuredErrors: true, body: { requestId: intent.requestId } });
+        if (typeof reserved.assetId !== 'string' || !/^[a-f0-9]{24}$/i.test(reserved.assetId)) throw new Error('File reservation returned no project identity. Preserve request_id.');
+        saved.assetId = reserved.assetId;
+        await save();
+      }
+      for (let index = saved.uploaded.length; index < sources.length; index++) {
+        const source = sources[index];
+        const identity = await digestRegularFile(source.path, source.size);
+        if (identity.sha256 !== source.sha256 || identity.size !== source.size) throw new Error('A source changed before upload.');
+        const uploaded = await uploadAgentSource(client, { asset_id: saved.assetId, file_path: source.path });
+        if (!uploaded?.attachment?.bytesInAsset) throw new Error('File upload returned no stored attachment.');
+        saved.uploaded.push(uploaded.attachment);
+        await save();
+      }
+      saved.input = { ...intent, assetId: saved.assetId, attachments: [...(intent.attachments || []), ...saved.uploaded] };
+      await save();
+      return await client.startAgentTurn(saved.input);
+    }
+    const send = () => client.request('agent', { method: 'POST', uploadBody: agentMultipart(intent, sources).uploadBody, structuredErrors: true });
+    try { return await send(); }
+    catch (error) {
+      if ((error.http_status || error.status) && (error.http_status || error.status) < 500) throw error;
+      const recovered = await replay();
+      if (recovered.result) return recovered.result;
+      // Only an authoritative missing-bytes refusal permits one full retransmission.
+      return await send();
+    }
   } finally {
     await lock.close();
     await unlink(`${receipt}.lock`).catch(() => {});
