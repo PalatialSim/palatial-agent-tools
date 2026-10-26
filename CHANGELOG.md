@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.22-dev.0
+
+- Add optional `intent: "edit" | "variant"` to the JavaScript Agent client and `palatial_agent` MCP tool. Either value requires an explicit asset ID; edit updates that asset in place, while variant preserves the source and creates an independent asset.
+- Preserve omitted-intent behavior and exact request identity through JSON, local-file transport and response-loss replay. Native permissions, supported capabilities, quotes and billing remain authoritative.
+
 ## 0.1.21-dev.0
 
 - Refuse videos above 300 MiB before transfer or local receipt creation, matching the current Mad Max processing limit. Apply the same limit to digest manifests and hidden file transport.

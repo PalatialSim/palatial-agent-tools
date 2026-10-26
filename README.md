@@ -4,7 +4,7 @@ Palatial's thin JavaScript/CLI client and MCP server. Generation, planning, prov
 
 ## One native Agent entry
 
-Package **0.1.21-dev.0** exposes exactly one MCP tool: `palatial_agent`. It is a **Dev preview**: configure `PALATIAL_API_URL=https://dashboard.dev.palatial.cloud/api/v1/external/` and a Dev workspace API key until the owning Backend is promoted.
+Package **0.1.22-dev.0** exposes exactly one MCP tool: `palatial_agent`. It is a **Dev preview**: configure `PALATIAL_API_URL=https://dashboard.dev.palatial.cloud/api/v1/external/` and a Dev workspace API key until the owning Backend is promoted.
 
 The native Agent handles Palatial asset creation, configuration, modification, recovery, status and delivery. It reads the user's intent and existing project data. Unrelated tasks are refused. The public path always executes unattended: the server chooses supported routes, preferences, references and justified dimension estimates, and executes through shared owning services. No caller execution policy, token ceiling, answers, selections or confirmation messages exist.
 
@@ -54,7 +54,7 @@ The JavaScript methods `startAgentTurn(input)` and `getAgentTurn(id)` use camelC
 Requires Node.js 22 or newer and a Palatial workspace API key. Generation charges the shared workspace balance according to native postpaid stage billing. Your coding agent's model charges are separate.
 
 ```sh
-npm install --global https://github.com/PalatialSim/palatial-agent-tools/releases/download/v0.1.21-dev.0/palatial-agent-tools-0.1.21-dev.0.tgz
+npm install --global https://github.com/PalatialSim/palatial-agent-tools/releases/download/v0.1.22-dev.0/palatial-agent-tools-0.1.22-dev.0.tgz
 palatial-agent login
 palatial-agent setup --client codex
 ```

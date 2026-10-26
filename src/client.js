@@ -18,6 +18,7 @@ export const assetIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/, 'Invalid
 // One native unattended asset intent; no public conversational decision protocol.
 const agentIdentity = z.string().min(1).max(192).regex(/^[A-Za-z0-9._:-]+$/);
 const agentRequestIdentity = z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/);
+const existingAssetIntent = z.enum(['edit', 'variant']).describe('Optional operation on an explicit asset: edit updates that asset in place; variant creates an independent asset and preserves the source. Omit to let the Agent infer the operation from the message and saved state. Native permissions, validation and billing still apply.');
 const agentAttachmentSchema = z.object({
   id: z.string().optional(), kind: z.string().optional(), name: z.string().optional(),
   role: z.string().optional(), mimeType: z.string().optional(),
@@ -28,6 +29,7 @@ const agentAttachmentSchema = z.object({
 export const agentTurnSchema = z.object({
   requestId: agentRequestIdentity.optional(), message: z.string().trim().min(1).max(16000),
   assetId: assetIdSchema.optional(), conversationId: agentIdentity.optional(),
+  intent: existingAssetIntent.optional(),
   attachments: z.array(agentAttachmentSchema).max(50).optional(),
   files: z.array(z.object({
     originalName: z.string().min(1).max(240), kind: z.string().optional(), mimeType: z.string().optional(),
@@ -36,12 +38,13 @@ export const agentTurnSchema = z.object({
     if (isAgentVideo(file) && file.sizeBytes > agentVideoMaxBytes)
       ctx.addIssue({ code: 'custom', path: ['sizeBytes'], message: agentVideoLimitMessage, params: { code: 'AGENT_VIDEO_TOO_LARGE' } });
   })).max(50).optional()
-}).strict();
+}).strict().refine(value => value.intent === undefined || value.assetId !== undefined, { path: ['assetId'], message: 'An explicit intent requires assetId.' });
 export const mcpAgentTurnSchema = z.object({
   turn_id: agentIdentity.describe('Read this returned request id without creating another request.').optional(),
   request_id: agentRequestIdentity.describe('Optional stable identity. Omit for a new request on every call; supply the same ID and identical inputs for safe replay after uncertainty.').optional(),
   message: z.string().trim().min(1).max(16000).optional(),
   asset_id: assetIdSchema.optional(), conversation_id: agentIdentity.optional(),
+  intent: existingAssetIntent.optional(),
   files: z.array(z.string().min(1).max(4096)).max(50).describe('Explicit local files. MP4/MOV videos: at most 300 MiB (314572800 bytes), the current Mad Max processing limit. Other files: at most 1 GiB total. Dev raw HTTP bodies: at most 100 MiB including metadata/framing; larger files use this tool’s internal resumable transport.').optional(),
   attachments: z.array(z.object({
     id: z.string().optional(), kind: z.string().optional(), name: z.string().optional(), role: z.string().optional(),
@@ -49,6 +52,7 @@ export const mcpAgentTurnSchema = z.object({
     bytes_in_asset: z.boolean().optional(), inline_data: z.object({ mime_type: z.string(), data: z.string() }).strict().optional()
   }).strict()).max(50).optional()
 }).strict().superRefine((value, ctx) => {
+  if (value.intent !== undefined && value.asset_id === undefined) ctx.addIssue({ code: 'custom', path: ['asset_id'], message: 'An explicit intent requires asset_id.' });
   if ((value.attachments?.length || 0) + (value.files?.length || 0) > 50) ctx.addIssue({ code: 'custom', message: 'At most 50 source attachments and files combined.' });
   if (value.turn_id !== undefined) {
     if (Object.keys(value).some(key => key !== 'turn_id')) ctx.addIssue({ code: 'custom', message: 'Poll with turn_id alone.' });
@@ -64,6 +68,7 @@ export function mcpAgentTurnInput(input) {
     ...(p.files?.length ? { files: p.files } : {}),
     ...(p.asset_id !== undefined ? { assetId: p.asset_id } : {}),
     ...(p.conversation_id !== undefined ? { conversationId: p.conversation_id } : {}),
+    ...(p.intent !== undefined ? { intent: p.intent } : {}),
     ...(p.attachments !== undefined ? { attachments: p.attachments.map(a => ({
       ...Object.fromEntries(Object.entries(a).filter(([key]) => !['mime_type', 'part_name', 'reference_mesh_artifact_id', 'bytes_in_asset', 'inline_data'].includes(key))),
       ...(a.mime_type !== undefined ? { mimeType: a.mime_type } : {}),
