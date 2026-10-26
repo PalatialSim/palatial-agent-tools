@@ -82,6 +82,31 @@ test('packaged stdio discovery exposes only the unified tool without login or st
   assert.match(result.content[0].text, /not authenticated/);
 });
 
+test('sole MCP tool sends a small local photo in one intent POST and replays the same request', async t => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'palatial-inline-photo-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const filename = path.join(directory, 'bin.png');
+  const photo = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64');
+  await writeFile(filename, photo);
+  const calls = [];
+  const native = new PalatialClient({ apiKey: 'fixture-key', baseUrl: 'https://dashboard.dev.palatial.cloud/api/v1/external/', receiptDir: path.join(directory, 'receipts'), fetchImpl: async (url, init) => {
+    calls.push({ url: String(url), method: init.method, body: JSON.parse(init.body) });
+    assert.equal(new URL(url).pathname, '/api/v1/external/agent');
+    return Response.json({ id: 'photo-1', replayed: calls.length > 1 }, { status: 202 });
+  } });
+  const client = await connect(t, async () => native);
+  const args = { request_id: 'small-photo', message: 'Create the bin in this photo.', files: [filename] };
+  const result = await client.callTool({ name: 'palatial_agent', arguments: args });
+  assert.equal(result.isError, undefined);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, 'POST');
+  assert.equal(calls[0].body.assetId, undefined);
+  assert.deepEqual(calls[0].body.attachments, [{ name: 'bin.png', kind: 'image', inlineData: { mimeType: 'image/png', data: photo.toString('base64') } }]);
+  const replay = await client.callTool({ name: 'palatial_agent', arguments: args });
+  assert.equal(replay.structuredContent.replayed, true);
+  assert.deepEqual(calls[1].body, calls[0].body);
+});
+
 test('sole MCP tool reserves and uploads local files before native intent, then replays exact stored metadata after response loss', async t => {
   const directory = await mkdtemp(path.join(tmpdir(), 'palatial-intent-files-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
