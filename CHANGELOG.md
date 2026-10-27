@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.23-dev.0
+
+- Remove the `intent` option from the JavaScript Agent client and `palatial_agent` MCP tool. The server Agent infers whether to edit an existing asset in place or create a Variant from the message and project context. A JavaScript caller that still passes `intent` has it dropped before transport.
+- Send existing-asset messages to `POST assets/{assetId}/agent` with the asset ID in the path. New-asset messages still use `POST agent`. Replay of an earlier request with the same request ID resolves to the same work on either route.
+
 ## 0.1.22-dev.0
 
 - Add optional `intent: "edit" | "variant"` to the JavaScript Agent client and `palatial_agent` MCP tool. Either value requires an explicit asset ID; edit updates that asset in place, while variant preserves the source and creates an independent asset.

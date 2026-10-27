@@ -8,7 +8,7 @@ import { createRoute, modeFields, validateMode } from './create-modes.js';
 import { createScene, getScene, listScenes, answerScene, cancelScene, recoverScene, retrySceneStart, downloadScene } from './scenes.js';
 import { createAuto, automaticCreateInput } from './auto-create.js';
 import { progressUpload } from './upload-progress.js';
-import { uploadAgentSource, submitAgentWithFiles } from './agent-sources.js';
+import { uploadAgentSource, submitAgentWithFiles, agentTurnRoute } from './agent-sources.js';
 import { agentFileMaxBytes, agentVideoMaxBytes, agentVideoLimitMessage, isAgentVideo } from './agent-file-limits.js';
 
 export const DEFAULT_API_URL = 'https://dashboard.palatial.cloud/api/v1/external/';
@@ -56,6 +56,12 @@ export const mcpAgentTurnSchema = z.object({
     ctx.addIssue({ code: 'custom', message: 'Submit with message and optional request_id, or poll with turn_id alone.' });
   }
 });
+// The retired 0.1.22 destination selector is dropped: the server Agent infers edit or Variant from the message.
+function withoutRetiredIntent(input) {
+  if (!input || typeof input !== 'object' || !Object.hasOwn(input, 'intent')) return input;
+  const { intent: _retired, ...rest } = input;
+  return rest;
+}
 export function mcpAgentTurnInput(input) {
   const p = mcpAgentTurnSchema.parse(input);
   if (p.turn_id !== undefined) return { turnId: p.turn_id };
@@ -632,13 +638,13 @@ export class PalatialClient {
   uploadAgentSource(input) { return uploadAgentSource(this, input); }
 
   startAgentWithFiles(input) {
-    const { files, ...intent } = input;
+    const { files, ...intent } = withoutRetiredIntent(input);
     return submitAgentWithFiles(this, { ...agentTurnSchema.parse(intent), files });
   }
 
   startAgentTurn(input) {
-    const body = agentTurnSchema.parse(input);
-    return this.request('agent', { method: 'POST', body, structuredErrors: true });
+    const { route, body } = agentTurnRoute(agentTurnSchema.parse(withoutRetiredIntent(input)));
+    return this.request(route, { method: 'POST', body, structuredErrors: true });
   }
 
   getAgentTurn(turnId) {

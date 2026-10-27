@@ -764,13 +764,27 @@ test('Agent turns use the public owner routes and replay identical request ident
   assert.deepEqual(await client.startAgentTurn(input), receipt);
   await client.startAgentTurn(input);
   assert.equal(calls[0].body, calls[1].body);
-  assert.deepEqual(JSON.parse(calls[0].body), input);
-  assert.match(calls[0].url, /\/external\/agent$/);
+  assert.deepEqual(JSON.parse(calls[0].body), { requestId: input.requestId, message: input.message });
+  assert.match(calls[0].url, /\/external\/assets\/asset-1\/agent$/);
   const result = await client.getAgentTurn(receipt.id);
   assert.match(calls[2].url, /\/external\/agent\/turn-1$/);
   assert.equal(result.automation.state, 'active');
   assert.equal(calls.length, 3);
   await assert.rejects(async () => client.getAgentTurn('../escape'));
+});
+
+test('new-asset turns keep the creation route and a retired intent is dropped before transport', async t => {
+  const calls = [];
+  const { client } = await fixture(t, async (url, init) => {
+    calls.push({ url: String(url), body: JSON.parse(init.body) });
+    return json({ id: 'turn-2' }, 202);
+  });
+  await client.startAgentTurn({ requestId: 'new-1', message: 'Make a red chair.' });
+  await client.startAgentTurn({ requestId: 'edit-1', assetId: 'asset-1', intent: 'variant', message: 'Create a variant of it.' });
+  assert.match(calls[0].url, /\/external\/agent$/);
+  assert.deepEqual(calls[0].body, { requestId: 'new-1', message: 'Make a red chair.' });
+  assert.match(calls[1].url, /\/external\/assets\/asset-1\/agent$/);
+  assert.deepEqual(calls[1].body, { requestId: 'edit-1', message: 'Create a variant of it.' });
 });
 
 test('Agent turn errors preserve public code and actionable hint without retrying', async t => {

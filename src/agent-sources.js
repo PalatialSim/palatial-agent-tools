@@ -7,6 +7,13 @@ import { agentFileMaxBytes, assertAgentFileSize } from './agent-file-limits.js';
 export { agentFileMaxBytes } from './agent-file-limits.js';
 import { assertLocalPath, assertPublicHttpsUrl, digestHandle, digestRegularFile, openRegularFile, readCappedRegularFile, resolveOutputDirectory, assertResolvedDirectory } from './input-guards.js';
 
+// An existing asset is addressed by path; the body carries only the message and optional extras.
+export function agentTurnRoute(body) {
+  if (body.assetId === undefined) return { route: 'agent', body };
+  const { assetId, ...rest } = body;
+  return { route: `assets/${encodeURIComponent(assetId)}/agent`, body: rest };
+}
+
 export const agentSourceUploadSchema = z.object({
   asset_id: z.string().regex(/^[a-fA-F0-9]{24}$/),
   file_path: z.string().min(1).describe('Explicit local image, CAD/3D or MP4/MOV source. Videos must be at most 300 MiB, the current Mad Max processing limit; other files at most 1 GiB. Uploading alone never submits generation.')
@@ -166,7 +173,8 @@ export async function submitAgentWithFiles(client, input) {
       }
     };
     const replay = async () => {
-      try { return { result: await client.request('agent', { method: 'POST', body: saved.input, structuredErrors: true }) }; }
+      const { route, body } = agentTurnRoute(saved.input);
+      try { return { result: await client.request(route, { method: 'POST', body, structuredErrors: true }) }; }
       catch (error) { if (error.code !== 'AGENT_SOURCE_BYTES_REQUIRED') throw error; return {}; }
     };
     if (saved) {
@@ -196,7 +204,10 @@ export async function submitAgentWithFiles(client, input) {
       await save();
       return await client.startAgentTurn(saved.input);
     }
-    const send = () => client.request('agent', { method: 'POST', uploadBody: agentMultipart(intent, sources).uploadBody, structuredErrors: true });
+    const send = () => {
+      const { route, body } = agentTurnRoute(intent);
+      return client.request(route, { method: 'POST', uploadBody: agentMultipart(body, sources).uploadBody, structuredErrors: true });
+    };
     try { return await send(); }
     catch (error) {
       if ((error.http_status || error.status) && (error.http_status || error.status) < 500) throw error;

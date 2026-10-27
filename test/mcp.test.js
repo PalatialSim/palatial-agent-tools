@@ -27,7 +27,7 @@ test('MCP advertises and registers exactly one native intent tool', async t => {
   assert.equal(tools[0].inputSchema.required?.includes('request_id') ?? false, false);
   assert.equal(tools[0].annotations.idempotentHint, false);
   assert.ok(tools[0].inputSchema.properties.turn_id);
-  for (const field of ['execution', 'max_tokens', 'answer', 'selection', 'confirmation']) assert.equal(tools[0].inputSchema.properties[field], undefined);
+  for (const field of ['execution', 'max_tokens', 'answer', 'selection', 'confirmation', 'intent']) assert.equal(tools[0].inputSchema.properties[field], undefined);
   assert.equal((await client.callTool({ name: 'palatial_create_asset', arguments: {} })).isError, true);
   assert.equal((await client.callTool({ name: 'palatial_doctor', arguments: {} })).isError, true);
   assert.match(client.getInstructions(), /always executes unattended/);
@@ -45,8 +45,8 @@ test('single MCP tool submits native intent then polls the same id without plann
   assert.equal(receipt.isError, undefined);
   const poll = await client.callTool({ name: 'palatial_agent', arguments: { turn_id: receipt.structuredContent.id } });
   assert.equal(poll.structuredContent.result.accepted, true);
-  assert.equal(calls[0].url, 'https://dashboard.dev.palatial.cloud/api/v1/external/agent');
-  assert.deepEqual(calls[0].body, { requestId: 'request-1', assetId: 'asset-1', conversationId: 'conversation-1', message: input.message, attachments: [{ id: 'cabinet.mp4', name: 'cabinet.mp4', kind: 'video', mimeType: 'video/mp4', bytesInAsset: true }] });
+  assert.equal(calls[0].url, 'https://dashboard.dev.palatial.cloud/api/v1/external/assets/asset-1/agent');
+  assert.deepEqual(calls[0].body, { requestId: 'request-1', conversationId: 'conversation-1', message: input.message, attachments: [{ id: 'cabinet.mp4', name: 'cabinet.mp4', kind: 'video', mimeType: 'video/mp4', bytesInAsset: true }] });
   assert.deepEqual(calls[1], { url: 'https://dashboard.dev.palatial.cloud/api/v1/external/agent/request-receipt', method: 'GET', body: undefined });
 });
 

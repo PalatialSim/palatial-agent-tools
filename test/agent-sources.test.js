@@ -76,12 +76,14 @@ async function intentFixture(t) {
   const f = await fixture(t);
   const request = f.client.request;
   f.intents = [];
+  f.routes = [];
   f.client.base = new URL('https://dashboard.dev.palatial.cloud/api/v1/external/');
   f.client.apiKey = 'fixture-key';
   f.client.receiptDir = path.join(path.dirname(f.filename), 'receipts');
   f.client.request = async (route, options) => {
     if (route === 'agent/sources') { f.calls.push({ route, ...options }); return { assetId: f.assetId }; }
-    if (route === 'agent') {
+    if (route === 'agent' || /^assets\/[^/]+\/agent$/.test(route)) {
+      f.routes.push(route);
       if (options.uploadBody) {
         const chunks = [];
         for await (const chunk of options.uploadBody.body) chunks.push(chunk);
@@ -114,12 +116,13 @@ test('one POST carries mixed files, preserves existing project and uses manifest
   await submitAgentWithFiles(f.client, input);
   assert.equal(f.calls.length, 0);
   const request = multipartRequest(f.intents[0].bytes);
-  assert.equal(request.assetId, f.assetId);
+  assert.equal(request.assetId, undefined);
   assert.deepEqual(request.files.map(file => [file.part, file.originalName, file.kind, file.sizeBytes]), [['file0', 'front.png', 'image', 16], ['file1', 'part.glb', 'cad', 16], ['file2', 'clip.mp4', 'video', 16]]);
   assert.equal(request.attachments, undefined);
   assert.match(f.intents[0].contentType, /^multipart\/form-data; boundary=/);
   assert.equal((await submitAgentWithFiles(f.client, input)).replayed, true);
   assert.deepEqual(f.intents[1], { ...request, files: request.files.map(({ part, ...file }) => file) });
+  assert.deepEqual(f.routes, [`assets/${f.assetId}/agent`, `assets/${f.assetId}/agent`]);
   const receipts = await readdir(f.client.receiptDir);
   const receipt = await readFile(path.join(f.client.receiptDir, receipts[0]), 'utf8');
   assert.equal(receipt.includes('inlineData'), false);
@@ -190,7 +193,10 @@ test('large inputs use internal parts and retry only the small stored request', 
   const before = f.calls.length;
   await submitAgentWithFiles(f.client, input);
   assert.equal(f.calls.length, before);
-  assert.deepEqual(f.intents[1], f.intents[0]);
+  const { assetId, ...stored } = f.intents[0];
+  assert.equal(assetId, f.assetId);
+  assert.deepEqual(f.intents[1], stored);
+  assert.deepEqual(f.routes, [`assets/${f.assetId}/agent`]);
 });
 
 test('legacy inline receipts replay their exact old JSON and reject changed files', async t => {
