@@ -27,8 +27,7 @@ test('MCP advertises and registers exactly one native intent tool', async t => {
   assert.equal(tools[0].inputSchema.required?.includes('request_id') ?? false, false);
   assert.equal(tools[0].annotations.idempotentHint, false);
   assert.ok(tools[0].inputSchema.properties.turn_id);
-  assert.deepEqual(tools[0].inputSchema.properties.intent.enum, ['edit', 'variant']);
-  for (const field of ['execution', 'max_tokens', 'answer', 'selection', 'confirmation']) assert.equal(tools[0].inputSchema.properties[field], undefined);
+  for (const field of ['execution', 'max_tokens', 'answer', 'selection', 'confirmation', 'intent']) assert.equal(tools[0].inputSchema.properties[field], undefined);
   assert.equal((await client.callTool({ name: 'palatial_create_asset', arguments: {} })).isError, true);
   assert.equal((await client.callTool({ name: 'palatial_doctor', arguments: {} })).isError, true);
   assert.match(client.getInstructions(), /always executes unattended/);
@@ -46,8 +45,8 @@ test('single MCP tool submits native intent then polls the same id without plann
   assert.equal(receipt.isError, undefined);
   const poll = await client.callTool({ name: 'palatial_agent', arguments: { turn_id: receipt.structuredContent.id } });
   assert.equal(poll.structuredContent.result.accepted, true);
-  assert.equal(calls[0].url, 'https://dashboard.dev.palatial.cloud/api/v1/external/agent');
-  assert.deepEqual(calls[0].body, { requestId: 'request-1', assetId: 'asset-1', conversationId: 'conversation-1', message: input.message, attachments: [{ id: 'cabinet.mp4', name: 'cabinet.mp4', kind: 'video', mimeType: 'video/mp4', bytesInAsset: true }] });
+  assert.equal(calls[0].url, 'https://dashboard.dev.palatial.cloud/api/v1/external/assets/asset-1/agent');
+  assert.deepEqual(calls[0].body, { requestId: 'request-1', conversationId: 'conversation-1', message: input.message, attachments: [{ id: 'cabinet.mp4', name: 'cabinet.mp4', kind: 'video', mimeType: 'video/mp4', bytesInAsset: true }] });
   assert.deepEqual(calls[1], { url: 'https://dashboard.dev.palatial.cloud/api/v1/external/agent/request-receipt', method: 'GET', body: undefined });
 });
 
@@ -58,29 +57,6 @@ test('MCP rejects mixed polling, manual checkpoints and caller execution policie
     assert.equal((await client.callTool({ name: 'palatial_agent', arguments: input })).isError, true);
   }
   assert.equal(calls, 0);
-});
-
-test('MCP binds either explicit existing-asset intent and rejects invalid or unbound operations', async t => {
-  const posts = [];
-  const native = new PalatialClient({ apiKey: 'fixture-key', baseUrl: 'https://dashboard.dev.palatial.cloud/api/v1/external/', fetchImpl: async (_url, init) => {
-    posts.push(JSON.parse(init.body));
-    return Response.json({ id: 'change-receipt' }, { status: 202 });
-  } });
-  const client = await connect(t, async () => native);
-  for (const intent of ['edit', 'variant']) {
-    const input = { request_id: `change-${intent}`, asset_id: 'source-asset', conversation_id: 'history-1', intent, message: 'Make it blue.' };
-    const result = await client.callTool({ name: 'palatial_agent', arguments: input });
-    assert.equal(result.isError, undefined);
-    assert.deepEqual(posts.at(-1), { requestId: input.request_id, assetId: input.asset_id, conversationId: input.conversation_id, intent, message: input.message });
-  }
-  for (const extra of [
-    { intent: 'edit' }, { intent: 'variant', conversation_id: 'history-1' },
-    { intent: 'create', asset_id: 'source-asset' }, { intent: null, asset_id: 'source-asset' },
-    { intent: 'edit', asset_id: '' }, { turn_id: 'change-receipt', intent: 'edit', asset_id: 'source-asset' }
-  ]) {
-    assert.equal((await client.callTool({ name: 'palatial_agent', arguments: { message: 'Make it blue.', ...extra } })).isError, true);
-  }
-  assert.equal(posts.length, 2);
 });
 
 test('MCP preserves structured owning-service blockers without retrying or fallback', async t => {
@@ -127,7 +103,7 @@ test('sole MCP tool sends one multipart POST and repeats only the digest manifes
     return Response.json({ id: 'photo-1', replayed: true }, { status: 202 });
   } });
   const client = await connect(t, async () => native);
-  const args = { request_id: 'small-photo', asset_id: 'source-asset', intent: 'variant', message: 'Make the bin look like this photo.', files: [filename] };
+  const args = { request_id: 'small-photo', message: 'Create the bin in this photo.', files: [filename] };
   const result = await client.callTool({ name: 'palatial_agent', arguments: args });
   assert.equal(result.isError, undefined);
   assert.equal(result.structuredContent.replayed, true);
@@ -136,9 +112,6 @@ test('sole MCP tool sends one multipart POST and repeats only the digest manifes
   assert.match(calls[0].headers['Content-Type'], /^multipart\/form-data/);
   assert.ok(calls[0].bytes.includes(photo));
   assert.equal(calls[1].body.requestId, 'small-photo');
-  assert.equal(calls[1].body.assetId, 'source-asset');
-  assert.equal(calls[1].body.intent, 'variant');
-  assert.ok(calls[0].bytes.includes(Buffer.from('"intent":"variant"')));
   assert.equal(calls[1].body.files[0].originalName, 'bin.png');
   assert.equal(calls[1].body.files[0].sizeBytes, photo.length);
   assert.equal(calls[1].body.files[0].sha256.length, 64);
@@ -146,8 +119,6 @@ test('sole MCP tool sends one multipart POST and repeats only the digest manifes
   const replay = await client.callTool({ name: 'palatial_agent', arguments: args });
   assert.equal(replay.structuredContent.replayed, true);
   assert.deepEqual(calls[2].body, calls[1].body);
-  assert.equal((await client.callTool({ name: 'palatial_agent', arguments: { ...args, intent: 'edit' } })).isError, true);
-  assert.equal(calls.length, 3);
   await writeFile(filename, Buffer.from('changed-source'));
   assert.equal((await client.callTool({ name: 'palatial_agent', arguments: args })).isError, true);
   assert.equal(calls.length, 3);

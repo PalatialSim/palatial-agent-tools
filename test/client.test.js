@@ -764,13 +764,27 @@ test('Agent turns use the public owner routes and replay identical request ident
   assert.deepEqual(await client.startAgentTurn(input), receipt);
   await client.startAgentTurn(input);
   assert.equal(calls[0].body, calls[1].body);
-  assert.deepEqual(JSON.parse(calls[0].body), input);
-  assert.match(calls[0].url, /\/external\/agent$/);
+  assert.deepEqual(JSON.parse(calls[0].body), { requestId: input.requestId, message: input.message });
+  assert.match(calls[0].url, /\/external\/assets\/asset-1\/agent$/);
   const result = await client.getAgentTurn(receipt.id);
   assert.match(calls[2].url, /\/external\/agent\/turn-1$/);
   assert.equal(result.automation.state, 'active');
   assert.equal(calls.length, 3);
   await assert.rejects(async () => client.getAgentTurn('../escape'));
+});
+
+test('new-asset turns keep the creation route and a retired intent is dropped before transport', async t => {
+  const calls = [];
+  const { client } = await fixture(t, async (url, init) => {
+    calls.push({ url: String(url), body: JSON.parse(init.body) });
+    return json({ id: 'turn-2' }, 202);
+  });
+  await client.startAgentTurn({ requestId: 'new-1', message: 'Make a red chair.' });
+  await client.startAgentTurn({ requestId: 'edit-1', assetId: 'asset-1', intent: 'variant', message: 'Create a variant of it.' });
+  assert.match(calls[0].url, /\/external\/agent$/);
+  assert.deepEqual(calls[0].body, { requestId: 'new-1', message: 'Make a red chair.' });
+  assert.match(calls[1].url, /\/external\/assets\/asset-1\/agent$/);
+  assert.deepEqual(calls[1].body, { requestId: 'edit-1', message: 'Create a variant of it.' });
 });
 
 test('Agent turn errors preserve public code and actionable hint without retrying', async t => {
@@ -786,38 +800,6 @@ test('Agent turn errors preserve public code and actionable hint without retryin
     return true;
   });
   assert.equal(calls, 1);
-});
-
-test('explicit existing-asset intents preserve the operation and replay identity on the public Agent route', async t => {
-  const calls = [];
-  const { client } = await fixture(t, async (url, init) => {
-    calls.push({ url: String(url), body: JSON.parse(init.body) });
-    return json({ id: 'intent-receipt' }, 202);
-  });
-  for (const intent of ['edit', 'variant']) {
-    const input = Object.freeze({ requestId: `change-${intent}`, assetId: 'source-asset', conversationId: 'history-1', intent, message: 'Make the handle thicker.' });
-    await client.startAgentTurn(input);
-    await client.startAgentTurn(input);
-    assert.deepEqual(calls.at(-1).body, input);
-    assert.deepEqual(calls.at(-1), calls.at(-2));
-    assert.match(calls.at(-1).url, /\/external\/agent$/);
-  }
-  assert.equal(calls.length, 4);
-});
-
-test('explicit Agent intent requires an asset and validates before JSON or file transport', async t => {
-  let calls = 0;
-  const { client } = await fixture(t, async () => { calls++; return json({}); });
-  for (const extra of [
-    { intent: 'edit' }, { intent: 'variant', conversationId: 'history-1' },
-    { intent: 'edit', assetId: '' }, { intent: 'variant', assetId: null },
-    ...['create', 'overwrite', '', null, 1].map(intent => ({ intent, assetId: 'source-asset' }))
-  ]) {
-    const input = { requestId: 'change-1', message: 'Make the handle thicker.', ...extra };
-    await assert.rejects(async () => client.startAgentTurn(input));
-    await assert.rejects(async () => client.startAgentWithFiles({ ...input, files: ['/not-read.png'] }));
-  }
-  assert.equal(calls, 0);
 });
 
 test('Agent transport enforces public field bounds without interpreting the user intent', async t => {
