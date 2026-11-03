@@ -759,6 +759,21 @@ export class PalatialClient {
     return this.request(`assets/${assetId}/cancel-processing`, { method: 'DELETE' });
   }
 
+  async archiveAsset(assetId) {
+    assetIdSchema.parse(assetId);
+    return this.request(`assets/${assetId}/archive`, { method: 'DELETE', structuredErrors: true });
+  }
+
+  async unarchiveAsset(assetId) {
+    assetIdSchema.parse(assetId);
+    return this.request(`assets/${assetId}/unarchive`, { method: 'POST', structuredErrors: true });
+  }
+
+  async retryExport(assetId) {
+    assetIdSchema.parse(assetId);
+    return this.request(`assets/${assetId}/retry-export`, { method: 'POST', structuredErrors: true });
+  }
+
   async download(assetId, outputDir, { allowFailedExport = false } = {}) {
     assetIdSchema.parse(assetId);
     const directory = path.resolve(outputDir);
