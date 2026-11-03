@@ -209,7 +209,7 @@ test('malformed replay asset identifiers stay out of typed errors', async t => {
 
 test('compatibility recipes retain dryRun and replay while MCP overview uses unified intent', async () => {
   const overview = await readGuide('overview');
-  assert.match(overview.text, /sole MCP tool `palatial_agent`/);
+  assert.match(overview.text, /MCP tool `palatial_agent` for asset intent/);
   assert.doesNotMatch(overview.text, /palatial_create_auto/);
   for (const topic of ['recipes']) {
     const guide = await readGuide(topic);
