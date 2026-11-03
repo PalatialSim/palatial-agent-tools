@@ -1,11 +1,11 @@
 ---
 name: palatial
-description: Execute Palatial asset intent through its single native unattended MCP tool, using text, image, CAD or video sources and existing project data to create, modify, recover, inspect or download simulation assets for Isaac Sim, MuJoCo or Newton.
+description: Execute Palatial asset intent through its native unattended MCP tool, using text, image, CAD or video sources and existing project data to create, modify, recover, inspect or download simulation assets for Isaac Sim, MuJoCo or Newton.
 ---
 
 # Palatial asset generation
 
-Use the sole MCP tool `palatial_agent`. Package 0.1.17 previews the native unified API on `https://dashboard.dev.palatial.cloud/api/v1/external/` with a Dev workspace key until owning Backend promotion. Never silently fall back to Production or legacy generation routes.
+Use the MCP tool `palatial_agent` for asset intent. Package 0.1.17 previews the native unified API on `https://dashboard.dev.palatial.cloud/api/v1/external/` with a Dev workspace key until owning Backend promotion. Never silently fall back to Production or legacy generation routes.
 
 Submit a nonblank `message` and optional `request_id`, with optional `asset_id`, `conversation_id` `attachments` and explicit local `files` paths. The native Agent understands intent and existing project data, checks scope and chooses supported routes, preferences, references and justified dimension estimates. Local files are transport: the same tool reserves an unpaid native project if needed, uploads only these files, saves their exact identities before submission and sends one intent. Uploads do not start generation. Public API execution is always unattended. Do not send execution mode, token limits, answers, selections or confirmations, and do not construct a client-side planner or click loop.
 
@@ -19,4 +19,4 @@ Responses expose `statusUrl`, actual `assetStatus`, safe native `billing` and ty
 
 Use structured `downloads` from the host rather than parsing signed links from model prose. Preserve the exact URL and fetch it before expiry; never edit its token. Simulation acceptance needs actual validation evidence in addition to successful generation.
 
-API keys belong in local configuration or environment, never tool arguments or chat. This MCP publishes no separate health, docs, guide, create, upload, status or legacy operation tools. Standalone CLI/JavaScript compatibility capabilities do not expand its tool catalog.
+API keys belong in local configuration or environment, never tool arguments or chat. Three direct lifecycle tools take only `asset_id`: `palatial_archive_asset`, `palatial_unarchive_asset` and `palatial_retry_export`. Use them only when the user asks for that exact action. Archive and unarchive need a workspace plan that includes archiving; report `PLAN_ARCHIVE_NOT_INCLUDED` or `WORKSPACE_SUSPENDED` as returned and do not retry. Retry export applies only when `export.status` is `PROCESSING_FAILED`. This MCP publishes no separate health, docs, guide, create, upload, status or legacy operation tools. Standalone CLI/JavaScript compatibility capabilities do not expand its tool catalog.

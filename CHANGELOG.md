@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Add the MCP tools `palatial_archive_asset`, `palatial_unarchive_asset` and `palatial_retry_export`, and the JavaScript methods `archiveAsset`, `unarchiveAsset` and `retryExport`. They call the public archive, unarchive and retry-export routes and return the server refusal code unchanged, including `PLAN_ARCHIVE_NOT_INCLUDED` for a plan without archiving.
+
 ## 0.1.23-dev.0
 
 - Remove the `intent` option from the JavaScript Agent client and `palatial_agent` MCP tool. The server Agent infers whether to edit an existing asset in place or create a Variant from the message and project context. A JavaScript caller that still passes `intent` has it dropped before transport.

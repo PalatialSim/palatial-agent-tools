@@ -4,7 +4,7 @@ Palatial's thin JavaScript/CLI client and MCP server. Generation, planning, prov
 
 ## One native Agent entry
 
-Package **0.1.23-dev.0** exposes exactly one MCP tool: `palatial_agent`. It is a **Dev preview**: configure `PALATIAL_API_URL=https://dashboard.dev.palatial.cloud/api/v1/external/` and a Dev workspace API key until the owning Backend is promoted.
+Package **0.1.23-dev.0** exposes the MCP tool `palatial_agent` for asset intent, plus three direct asset lifecycle tools (see below). It is a **Dev preview**: configure `PALATIAL_API_URL=https://dashboard.dev.palatial.cloud/api/v1/external/` and a Dev workspace API key until the owning Backend is promoted.
 
 The native Agent handles Palatial asset creation, configuration, modification, recovery, status and delivery. It reads the user's intent and existing project data. Unrelated tasks are refused. The public path always executes unattended: the server chooses supported routes, preferences, references and justified dimension estimates, and executes through shared owning services. No caller execution policy, token ceiling, answers, selections or confirmation messages exist.
 
@@ -47,7 +47,20 @@ const receipt = await client.startAgentWithFiles({
 
 Use the same explicit request ID and unchanged files after a lost response. The client verifies local digests and sends only a small receipt first. It repeats a full multipart transfer at most once, only after the server confirms missing bytes. Old inline receipts retain their original replay format.
 
-The JavaScript methods `startAgentTurn(input)` and `getAgentTurn(id)` use camelCase JSON (`requestId` is optional; omission is forwarded to the server for requests without local files) over `POST agent` (new asset), `POST assets/:assetId/agent` (existing asset, sent automatically when `assetId` is set) and `GET agent/:id`; method names do not introduce an alternate HTTP path. The old `agent/turns` path has no alias. Compatibility JavaScript and CLI operations remain available, but are not registered or advertised as MCP tools. The MCP server performs no startup docs/network calls or health/guide tool discovery.
+The JavaScript methods `startAgentTurn(input)` and `getAgentTurn(id)` use camelCase JSON (`requestId` is optional; omission is forwarded to the server for requests without local files) over `POST agent` (new asset), `POST assets/:assetId/agent` (existing asset, sent automatically when `assetId` is set) and `GET agent/:id`; method names do not introduce an alternate HTTP path. The old `agent/turns` path has no alias.
+
+## Archive, unarchive and retry export
+
+Three MCP tools call their public routes directly, without the Agent. Each takes only `asset_id` and completes in the request:
+
+| MCP tool | JavaScript | Route | Success |
+|---|---|---|---|
+| `palatial_archive_asset` | `archiveAsset(assetId)` | `DELETE assets/{id}/archive` | `{ success: true, status: "ARCHIVED" }` |
+| `palatial_unarchive_asset` | `unarchiveAsset(assetId)` | `POST assets/{id}/unarchive` | `{ success: true, status: "READY" }` |
+| `palatial_retry_export` | `retryExport(assetId)` | `POST assets/{id}/retry-export` | `{ success: true, export: { status: "READY" } }` |
+
+- Archive and unarchive need `asset:write` and a workspace plan that includes archiving. Otherwise they return 403 `PLAN_ARCHIVE_NOT_INCLUDED`, or `WORKSPACE_SUSPENDED` for a suspended workspace. The client returns the server `code`, `message` and `correlationId` unchanged.
+- Retry export needs `asset:export` and only applies when the asset's `export.status` is `PROCESSING_FAILED`. It does not regenerate the asset or charge tokens. Compatibility JavaScript and CLI operations remain available, but are not registered or advertised as MCP tools. The MCP server performs no startup docs/network calls or health/guide tool discovery.
 
 ## Install and configure
 

@@ -19,10 +19,12 @@ async function connect(t, clientFactory) {
   return client;
 }
 
-test('MCP advertises and registers exactly one native intent tool', async t => {
+const TOOL_NAMES = ['palatial_agent', 'palatial_archive_asset', 'palatial_unarchive_asset', 'palatial_retry_export'];
+
+test('MCP advertises the native intent tool and the direct asset lifecycle tools', async t => {
   const client = await connect(t, async () => ({}));
   const tools = (await client.listTools()).tools;
-  assert.deepEqual(tools.map(tool => tool.name), ['palatial_agent']);
+  assert.deepEqual(tools.map(tool => tool.name), TOOL_NAMES);
   assert.ok(tools[0].inputSchema.properties.request_id);
   assert.equal(tools[0].inputSchema.required?.includes('request_id') ?? false, false);
   assert.equal(tools[0].annotations.idempotentHint, false);
@@ -70,19 +72,19 @@ test('MCP preserves structured owning-service blockers without retrying or fallb
   assert.equal(calls, 1);
 });
 
-test('packaged stdio discovery exposes only the unified tool without login or startup network', async t => {
+test('packaged stdio discovery exposes the tools without login or startup network', async t => {
   const dir = await mkdtemp(path.join(tmpdir(), 'palatial-one-tool-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const client = new Client({ name: 'stdio-contract', version: '1.0' });
   await client.connect(new StdioClientTransport({ command: process.execPath, args: [fileURLToPath(new URL('../bin/palatial-agent.js', import.meta.url)), 'mcp'], env: { PATH: process.env.PATH, XDG_CONFIG_HOME: dir, PALATIAL_API_KEY: '' }, stderr: 'pipe' }));
   t.after(() => client.close());
-  assert.deepEqual((await client.listTools()).tools.map(tool => tool.name), ['palatial_agent']);
+  assert.deepEqual((await client.listTools()).tools.map(tool => tool.name), TOOL_NAMES);
   const result = await client.callTool({ name: 'palatial_agent', arguments: { turn_id: 'receipt-1' } });
   assert.equal(result.isError, true);
   assert.match(result.content[0].text, /not authenticated/);
 });
 
-test('sole MCP tool sends one multipart POST and repeats only the digest manifest after response loss', async t => {
+test('MCP intent tool sends one multipart POST and repeats only the digest manifest after response loss', async t => {
   const directory = await mkdtemp(path.join(tmpdir(), 'palatial-multipart-photo-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const filename = path.join(directory, 'bin.png');
@@ -145,4 +147,48 @@ test('message-only MCP calls omit request identity and remain new requests, whil
   assert.deepEqual(posts.slice(2), [0, 1].map(() => ({ requestId: explicit.request_id, message: args.message })));
   for (const request_id of ['', null, '../escape', 'x'.repeat(129)]) assert.equal((await client.callTool({ name: 'palatial_agent', arguments: { message: args.message, request_id } })).isError, true);
   assert.equal(posts.length, 4);
+});
+
+test('asset lifecycle tools call their public routes and return the settled result', async t => {
+  const calls = [];
+  const native = new PalatialClient({ apiKey: 'fixture-key', baseUrl: 'https://dashboard.dev.palatial.cloud/api/v1/external/', fetchImpl: async (url, init) => {
+    calls.push({ path: new URL(url).pathname, method: init.method, body: init.body });
+    const route = new URL(url).pathname.split('/').pop();
+    return Response.json(route === 'retry-export' ? { success: true, export: { status: 'READY' } } : { success: true, status: route === 'archive' ? 'ARCHIVED' : 'READY' });
+  } });
+  const client = await connect(t, async () => native);
+  const id = '68d579ff8078a0b049f7ce9f';
+  const archived = await client.callTool({ name: 'palatial_archive_asset', arguments: { asset_id: id } });
+  const restored = await client.callTool({ name: 'palatial_unarchive_asset', arguments: { asset_id: id } });
+  const exported = await client.callTool({ name: 'palatial_retry_export', arguments: { asset_id: id } });
+  assert.deepEqual(archived.structuredContent, { success: true, status: 'ARCHIVED' });
+  assert.deepEqual(restored.structuredContent, { success: true, status: 'READY' });
+  assert.deepEqual(exported.structuredContent, { success: true, export: { status: 'READY' } });
+  assert.deepEqual(calls, [
+    { path: `/api/v1/external/assets/${id}/archive`, method: 'DELETE', body: undefined },
+    { path: `/api/v1/external/assets/${id}/unarchive`, method: 'POST', body: undefined },
+    { path: `/api/v1/external/assets/${id}/retry-export`, method: 'POST', body: undefined }
+  ]);
+});
+
+test('asset lifecycle tools preserve the plan refusal code and reject bad IDs before transport', async t => {
+  let calls = 0;
+  const native = new PalatialClient({ apiKey: 'fixture-key', baseUrl: 'https://dashboard.dev.palatial.cloud/api/v1/external/', fetchImpl: async () => {
+    calls++;
+    return Response.json({ statusCode: 403, code: 'PLAN_ARCHIVE_NOT_INCLUDED', message: 'Your plan does not include archiving.', correlationId: 'corr-1' }, { status: 403 });
+  } });
+  const client = await connect(t, async () => native);
+  for (const name of ['palatial_archive_asset', 'palatial_unarchive_asset']) {
+    const result = await client.callTool({ name, arguments: { asset_id: '68d579ff8078a0b049f7ce9f' } });
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.code, 'PLAN_ARCHIVE_NOT_INCLUDED');
+    assert.equal(result.structuredContent.http_status, 403);
+    assert.equal(result.structuredContent.correlationId, 'corr-1');
+    assert.match(result.structuredContent.message, /Your plan does not include archiving/);
+  }
+  assert.equal(calls, 2);
+  for (const asset_id of ['../agent', '']) {
+    assert.equal((await client.callTool({ name: 'palatial_retry_export', arguments: { asset_id } })).isError, true);
+  }
+  assert.equal(calls, 2);
 });
