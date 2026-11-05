@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, open, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
@@ -33,7 +33,7 @@ export const legacyCreateSceneSchema = z.object({
   source_paths: z.array(z.string().min(1)).max(32).describe('Local photos, MP4/MOV/WebM videos or PDF/image floor plans; at most 32 combined sources, each at most 1 GB (1,000,000,000 bytes). Only these named files are uploaded.').optional(),
   sources: z.array(sceneSourceSchema).max(32).describe('Previously uploaded source descriptors owned by this scene, for resuming a draft. External URLs are not accepted.').optional(),
   floor_plan: z.string().min(1).max(128).describe('Exact filename of the source that serves as the floor plan.').optional(),
-  confirm_spend: z.literal(true).describe('Explicit user authorization to incur director and object charges. Obtain authorization before calling.'),
+  confirm_spend: z.literal(true).describe('Explicit user authorization to incur director and object charges. Obtain authorization before calling. Sent to the server, which accepts only true.'),
   options: sceneOptionsSchema.optional()
 }).strict().superRefine((input, ctx) => {
   const names = [...(input.source_paths || []).map(file => path.basename(file)), ...(input.sources || []).map(source => source.filename)];
@@ -55,8 +55,17 @@ export const createSceneSchema = legacyCreateSceneSchema.safeExtend({
   auto_continue: z.boolean().default(false).describe('Automatically continue checkpoints and continuation questions with the original instructions. Defaults to false.')
 });
 export const listScenesSchema = z.object({ workspace: sceneIdSchema, limit: z.number().int().min(1).max(100).optional(), before: sceneIdSchema.describe('Pagination cursor returned as next_cursor.').optional() }).strict();
-export const answerSceneSchema = z.object({ scene_id: sceneIdSchema, expected_head: sceneDigestSchema.describe('Exact input.expected_head from the latest scene read; prevents answering a stale question.'), instruction: z.string().trim().min(1).max(4000).describe('Answer or clarification for the current scene question, up to 4000 characters.') }).strict();
-export const recoverSceneSchema = z.object({ scene_id: sceneIdSchema, expected_head: sceneDigestSchema.describe('Exact input.expected_head from the current scene report, including a recovery checkpoint with no question; the server validates recoverability.') }).strict();
+const aliasConfirmSpend = z.literal(true).describe('Required when the scene has settled (stopped, delivered or on its best checkpoint), because continuing it starts new paid work.').optional();
+export const answerSceneSchema = z.object({ scene_id: sceneIdSchema, expected_head: sceneDigestSchema.describe('Exact input.expected_head from the latest scene read; prevents answering a stale question.'), instruction: z.string().trim().min(1).max(4000).describe('Answer or clarification for the current scene question, up to 4000 characters.'), confirm_spend: aliasConfirmSpend }).strict();
+export const recoverSceneSchema = z.object({ scene_id: sceneIdSchema, expected_head: sceneDigestSchema.describe('Exact input.expected_head from the current scene report, including a recovery checkpoint with no question; the server validates recoverability.'), confirm_spend: aliasConfirmSpend }).strict();
+export const sceneObjectIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/, 'Invalid scene object ID.');
+export const messageSceneSchema = z.object({
+  text: z.string().trim().min(1).max(4000).describe('Message for the scene, up to 4000 characters. Required when next_message.requires_text is true (relay, answer); optional for resume, continue and retry_start.').optional(),
+  requestId: z.string().uuid().describe('Stable UUID for this message. The same ID and body replay the stored receipt; a new UUID is a new message.').optional(),
+  confirmSpend: z.literal(true).describe('Required when next_message.requires_confirm_spend is true (continuing a settled scene, retrying a refused start). Ignored otherwise.').optional(),
+  expectedHead: sceneDigestSchema.describe('Optional next_message.expected_head; the message is refused with scene_head_moved when the scene has moved on.').optional(),
+  regenerateObjects: z.array(sceneObjectIdSchema).min(1).max(1000).describe('Failed or dropped object IDs to rebuild; only with next_message.action continue.').optional()
+}).strict();
 export const retrySceneStartSchema = z.object({ scene_id: sceneIdSchema, confirm_spend: z.literal(true).describe('Explicit spending authorization for retrying the frozen confirmed start; the server must prove no native execution occurred.') }).strict();
 export const downloadSceneSchema = z.object({ scene_id: sceneIdSchema, output_dir: z.string().min(1), version: sceneDigestSchema.describe('Optional exact download.version. Omit to download the current accepted package.').optional() }).strict();
 
@@ -197,14 +206,50 @@ export async function createScene(client, input) {
   }
   } finally { await closeSources(files); }
 }
+/**
+ * Reads a scene. The body includes `next_message`, which says what a message sent now would do
+ * (`relay`, `answer`, `resume`, `continue`, `retry_start` or `none`), whether it needs text or
+ * `confirm_spend`, and the `expected_head` to pin it to. `next_message` is null only when the
+ * server could not read the scene's state.
+ */
 export function getScene(client, sceneId) { return client.request(route(sceneId)); }
+/**
+ * Sends one message to a scene (`POST scene-generations/{id}/messages`). The server decides the
+ * effect from the scene's state: a running scene relays the text to its director, a waiting question
+ * takes it as the answer, a parked checkpoint resumes, and a settled scene with an offered
+ * continuation continues the whole scene, which needs `confirmSpend: true`. Anything else is refused
+ * with `scene_not_messageable` and a `reason`. A message never stops a scene.
+ * Omitting `requestId` generates one; it is returned on the receipt and on errors so an uncertain
+ * outcome can be replayed with the same ID and body.
+ */
+export async function messageScene(client, sceneId, input = {}) {
+  const id = sceneIdSchema.parse(sceneId);
+  const p = messageSceneSchema.parse(input);
+  const requestId = p.requestId ?? randomUUID();
+  const body = {
+    request_id: requestId,
+    ...(p.text !== undefined ? { text: p.text } : {}),
+    ...(p.confirmSpend ? { confirm_spend: true } : {}),
+    ...(p.expectedHead ? { expected_head: p.expectedHead } : {}),
+    ...(p.regenerateObjects ? { regenerate_objects: p.regenerateObjects } : {})
+  };
+  try { return await client.request(`${route(id)}/messages`, { method: 'POST', body, structuredErrors: true }); }
+  catch (error) {
+    error.request_id = requestId;
+    error.message = `${error.message} Message request_id ${requestId}: replay the same request_id and body to learn the outcome; a new request_id is a new message.`;
+    throw error;
+  }
+}
 export function listScenes(client, input) {
   const { workspace, ...query } = listScenesSchema.parse(input);
   return client.request(`workspaces/${workspace}/scene-generations${Object.keys(query).length ? `?${new URLSearchParams(Object.entries(query).map(([key, value]) => [key, String(value)]))}` : ''}`);
 }
+/** @deprecated Use messageScene; kept working as an alias of a message that answers or continues. */
 export function answerScene(client, input) { const { scene_id, ...body } = answerSceneSchema.parse(input); return client.request(`${route(scene_id)}/answer`, { method: 'POST', body }); }
 export function cancelScene(client, sceneId) { return client.request(`${route(sceneId)}/stop`, { method: 'POST', body: {} }); }
+/** @deprecated Use messageScene without text; kept working as an alias of a message that resumes or continues. */
 export function recoverScene(client, input) { const { scene_id, ...body } = recoverSceneSchema.parse(input); return client.request(`${route(scene_id)}/recover`, { method: 'POST', body }); }
+/** @deprecated Use messageScene with confirmSpend when next_message.action is retry_start. */
 export function retrySceneStart(client, input) { const { scene_id, ...body } = retrySceneStartSchema.parse(input); return client.request(`${route(scene_id)}/retry-start`, { method: 'POST', body }); }
 function publishedReceipt(receipt, extras) {
   const output = {

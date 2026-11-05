@@ -19,7 +19,8 @@ async function connect(t, clientFactory) {
   return client;
 }
 
-const TOOL_NAMES = ['palatial_agent', 'palatial_archive_asset', 'palatial_unarchive_asset', 'palatial_retry_export'];
+const TOOL_NAMES = ['palatial_agent', 'palatial_archive_asset', 'palatial_unarchive_asset', 'palatial_retry_export',
+  'palatial_create_scene', 'palatial_get_scene', 'palatial_message_scene', 'palatial_stop_scene', 'palatial_download_scene'];
 
 test('MCP advertises the native intent tool and the direct asset lifecycle tools', async t => {
   const client = await connect(t, async () => ({}));
@@ -33,6 +34,35 @@ test('MCP advertises the native intent tool and the direct asset lifecycle tools
   assert.equal((await client.callTool({ name: 'palatial_create_asset', arguments: {} })).isError, true);
   assert.equal((await client.callTool({ name: 'palatial_doctor', arguments: {} })).isError, true);
   assert.match(client.getInstructions(), /always executes unattended/);
+  const message = tools.find(tool => tool.name === 'palatial_message_scene');
+  assert.match(message.description, /relayed to its director/);
+  assert.match(message.description, /Settled scene.*requires confirm_spend=true/);
+});
+
+test('scene tools reach the scene routes, and a paid continuation without confirm_spend is refused with next_message', async t => {
+  const sceneId = 'abcdef0123456789abcdef01';
+  const requestId = '6f1c1f9e-1d0b-4c39-9a0e-0d2b7b1b6c11';
+  const nextMessage = { action: 'continue', requires_confirm_spend: true, requires_text: false, expected_head: null };
+  const calls = [];
+  const native = new PalatialClient({ apiKey: 'fixture-key', baseUrl: 'https://dashboard.dev.palatial.cloud/api/v1/external/', fetchImpl: async (url, init) => {
+    calls.push({ path: new URL(url).pathname, method: init.method, body: init.body ? JSON.parse(init.body) : undefined });
+    if (String(url).endsWith('/messages')) return Response.json({ statusCode: 409, code: 'confirm_spend_required', message: 'Continuing this scene starts new paid work.', next_message: nextMessage }, { status: 409 });
+    return Response.json({ scene_id: sceneId, next_message: nextMessage });
+  } });
+  const client = await connect(t, async () => native);
+  assert.deepEqual((await client.callTool({ name: 'palatial_get_scene', arguments: { scene_id: sceneId } })).structuredContent.next_message, nextMessage);
+  const refused = await client.callTool({ name: 'palatial_message_scene', arguments: { scene_id: sceneId, request_id: requestId, text: 'Make the shelves oak.' } });
+  assert.equal(refused.isError, true);
+  assert.equal(refused.structuredContent.code, 'confirm_spend_required');
+  assert.deepEqual(refused.structuredContent.next_message, nextMessage);
+  assert.equal(refused.structuredContent.request_id, requestId);
+  await client.callTool({ name: 'palatial_stop_scene', arguments: { scene_id: sceneId } });
+  const route = `/api/v1/external/scene-generations/${sceneId}`;
+  assert.deepEqual(calls, [
+    { path: route, method: 'GET', body: undefined },
+    { path: `${route}/messages`, method: 'POST', body: { request_id: requestId, text: 'Make the shelves oak.' } },
+    { path: `${route}/stop`, method: 'POST', body: {} }
+  ]);
 });
 
 test('single MCP tool submits native intent then polls the same id without planning or mutation', async t => {

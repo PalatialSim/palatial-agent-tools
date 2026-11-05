@@ -5,7 +5,7 @@ import { mkdir, open, readFile, stat, unlink, writeFile } from 'node:fs/promises
 import path from 'node:path';
 import { z } from 'zod';
 import { createRoute, modeFields, validateMode } from './create-modes.js';
-import { createScene, getScene, listScenes, answerScene, cancelScene, recoverScene, retrySceneStart, downloadScene } from './scenes.js';
+import { createScene, getScene, messageScene, listScenes, answerScene, cancelScene, recoverScene, retrySceneStart, downloadScene } from './scenes.js';
 import { createAuto, automaticCreateInput } from './auto-create.js';
 import { progressUpload } from './upload-progress.js';
 import { uploadAgentSource, submitAgentWithFiles, agentTurnRoute } from './agent-sources.js';
@@ -448,7 +448,7 @@ export class PalatialApiError extends Error {
   }
 
   toJSON() {
-    const fields = ['http_status', 'code', 'retryable', 'correlationId', 'reason', 'hint', 'remedy', 'assetId', 'asset_id', 'request_id', 'receipt_file', 'billingMode', 'tokens', 'billing', 'warnings', 'billing_guidance'];
+    const fields = ['http_status', 'code', 'retryable', 'correlationId', 'reason', 'hint', 'remedy', 'assetId', 'asset_id', 'request_id', 'receipt_file', 'billingMode', 'tokens', 'billing', 'warnings', 'billing_guidance', 'next_message'];
     return { message: this.message, ...Object.fromEntries(fields.filter(key => this[key] !== undefined).map(key => [key, this[key]])) };
   }
 }
@@ -533,7 +533,9 @@ export class PalatialClient {
             ...(typeof payload.correlationId === 'string' && /^[A-Za-z0-9._:-]{1,192}$/.test(payload.correlationId) ? { correlationId: payload.correlationId } : {}),
             ...(typeof payload.hint === 'string' ? { hint: safeMessage(new Error(payload.hint), this.apiKey).slice(0, 2000) } : {}),
             ...(typeof payload.remedy === 'string' ? { remedy: safeMessage(new Error(payload.remedy), this.apiKey).slice(0, 2000) } : {}),
-            ...(typeof payload.assetId === 'string' && assetIdSchema.safeParse(payload.assetId).success ? { assetId: payload.assetId, asset_id: payload.assetId } : {})
+            ...(typeof payload.assetId === 'string' && assetIdSchema.safeParse(payload.assetId).success ? { assetId: payload.assetId, asset_id: payload.assetId } : {}),
+            ...(typeof payload.reason === 'string' && /^[a-z0-9_]{1,64}$/.test(payload.reason) ? { reason: payload.reason } : {}),
+            ...(payload.next_message && typeof payload.next_message === 'object' && !Array.isArray(payload.next_message) ? { next_message: safeBillingValue(payload.next_message, this.apiKey) } : {})
           });
         }
         const error = new Error(`${reason} (HTTP ${response.status}).${detail}${method !== 'GET' && response.status >= 500 ? ' Submission outcome is uncertain; inspect your workspace before retrying.' : ''}`);
@@ -547,11 +549,17 @@ export class PalatialClient {
 
   createScene(input) { return createScene(this, input); }
   createAuto(input) { return createAuto(this, input); }
+  /** Reads a scene, including `next_message` (what a message sent now would do). */
   getScene(sceneId) { return getScene(this, sceneId); }
+  /** Sends `{ text, requestId?, confirmSpend?, expectedHead?, regenerateObjects? }` to a scene; see messageScene in scenes.js. */
+  messageScene(sceneId, input) { return messageScene(this, sceneId, input); }
   listScenes(input) { return listScenes(this, input); }
+  /** @deprecated Use messageScene. */
   answerScene(input) { return answerScene(this, input); }
   cancelScene(sceneId) { return cancelScene(this, sceneId); }
+  /** @deprecated Use messageScene. */
   recoverScene(input) { return recoverScene(this, input); }
+  /** @deprecated Use messageScene with confirmSpend. */
   retrySceneStart(input) { return retrySceneStart(this, input); }
   downloadScene(input) { return downloadScene(this, input); }
 

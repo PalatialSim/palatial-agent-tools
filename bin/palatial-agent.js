@@ -33,6 +33,15 @@ palatial-agent status --asset-id ID       Check an existing asset
 palatial-agent download --asset-id ID --output-dir ./assets  Export READY ZIP (uses credits)
 palatial-agent download --asset-id ID --output-dir ./assets --allow-failed-export  Export a failed asset after confirmation
 palatial-agent cancel --asset-id ID       Cancel an existing asset
+palatial-agent scene-create --request scene.json  Start a scene (paid; the request needs confirm_spend: true)
+palatial-agent scene-get --scene-id ID    Read a scene, including next_message
+palatial-agent scene-message --scene-id ID --text "..." [--request-id UUID] [--confirm-spend]
+                                          [--expected-head sha256:...] [--regenerate-object ID ...]
+                                          Message a scene: relayed while running, answers a
+                                          waiting question; continuing a settled scene is new
+                                          paid work and needs --confirm-spend
+palatial-agent scene-stop --scene-id ID   Stop a scene (free; completed work stays charged)
+palatial-agent scene-download --scene-id ID --output-dir ./scenes [--scene-version sha256:...]
 
 All command results are JSON, except guide, which prints Markdown. API keys
 are read from PALATIAL_API_KEY or the local credentials file; never include keys in chat, command arguments, or git.
@@ -67,10 +76,31 @@ function readSecret() {
   });
 }
 
+async function sceneCommand(client, command, values) {
+  if (command === 'scene-create') {
+    if (!values.request) throw new Error('Provide --request pointing to a JSON file.');
+    return client.createScene(JSON.parse(await readFile(values.request, 'utf8')));
+  }
+  const sceneId = values['scene-id'];
+  if (!sceneId) throw new Error('Provide --scene-id.');
+  if (command === 'scene-get') return client.getScene(sceneId);
+  if (command === 'scene-stop') return client.cancelScene(sceneId);
+  if (command === 'scene-message') {
+    return client.messageScene(sceneId, {
+      text: values.text, requestId: values['request-id'], confirmSpend: values['confirm-spend'] === true ? true : undefined,
+      expectedHead: values['expected-head'], regenerateObjects: values['regenerate-object']
+    });
+  }
+  if (!values['output-dir']) throw new Error('Provide --output-dir.');
+  return client.downloadScene({ scene_id: sceneId, output_dir: values['output-dir'], ...(values['scene-version'] ? { version: values['scene-version'] } : {}) });
+}
+
 async function main() {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: {
     client: { type: 'string' }, 'dry-run': { type: 'boolean' }, request: { type: 'string' },
-    'asset-id': { type: 'string' }, 'output-dir': { type: 'string' }, 'allow-failed-export': { type: 'boolean' }, apply: { type: 'boolean' }, topic: { type: 'string' }, help: { type: 'boolean', short: 'h' }, version: { type: 'boolean' }
+    'asset-id': { type: 'string' }, 'scene-id': { type: 'string' }, text: { type: 'string' }, 'request-id': { type: 'string' },
+    'confirm-spend': { type: 'boolean' }, 'expected-head': { type: 'string' }, 'regenerate-object': { type: 'string', multiple: true }, 'scene-version': { type: 'string' },
+    'output-dir': { type: 'string' }, 'allow-failed-export': { type: 'boolean' }, apply: { type: 'boolean' }, topic: { type: 'string' }, help: { type: 'boolean', short: 'h' }, version: { type: 'boolean' }
   } });
   const command = positionals[0];
   if (values.version) { console.log(VERSION); return; }
@@ -109,8 +139,10 @@ async function main() {
     await deleteApiKey();
     return { saved_key_deleted: true, message: 'Also unset PALATIAL_API_KEY if configured. Deleting the local copy does not revoke the key in Palatial.' };
   }
-  if (!['doctor', 'create', 'reprocess', 'status', 'download', 'cancel'].includes(command)) throw new Error('Unknown command. Run palatial-agent --help.');
+  const sceneCommands = ['scene-create', 'scene-get', 'scene-message', 'scene-stop', 'scene-download'];
+  if (![...sceneCommands, 'doctor', 'create', 'reprocess', 'status', 'download', 'cancel'].includes(command)) throw new Error('Unknown command. Run palatial-agent --help.');
   const client = new PalatialClient({ apiKey: await getApiKey(), baseUrl: process.env.PALATIAL_API_URL || DEFAULT_API_URL });
+  if (sceneCommands.includes(command)) return sceneCommand(client, command, values);
   if (command === 'doctor') return { ...(await client.doctor()), version: VERSION, update: await checkForUpdate(), docs: await checkDocs() };
   if (command === 'create' || command === 'reprocess') {
     if (!values.request) throw new Error('Provide --request pointing to a JSON file.');

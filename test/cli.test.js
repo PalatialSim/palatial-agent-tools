@@ -27,3 +27,26 @@ test('CLI repair request reaches the shared API client once with exact feedback 
   assert.deepEqual(JSON.parse(await readFile(observedPath, 'utf8')), {
     url: 'https://api.example.test/api/v1/external/assets/asset-keyboard/reprocess', method: 'POST', body });
 });
+
+test('CLI scene-message sends one message with the confirm-spend flag to the messages route', async t => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'palatial-cli-scene-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const observedPath = path.join(dir, 'observed.json');
+  const mockPath = path.join(dir, 'fetch.mjs');
+  await writeFile(mockPath, `import { writeFile } from 'node:fs/promises';
+    globalThis.fetch = async (url, init) => {
+      await writeFile(process.env.TEST_OBSERVATION, JSON.stringify({ url: String(url), method: init.method, body: JSON.parse(init.body) }));
+      return new Response(JSON.stringify({ message: { action: 'continued' } }), { headers: { 'content-type': 'application/json' } });
+    };`);
+  const sceneId = 'abcdef0123456789abcdef01';
+  const requestId = '6f1c1f9e-1d0b-4c39-9a0e-0d2b7b1b6c11';
+  const result = execFileSync(process.execPath, ['--import', pathToFileURL(mockPath).href,
+    fileURLToPath(new URL('../bin/palatial-agent.js', import.meta.url)), 'scene-message', '--scene-id', sceneId,
+    '--text', 'Add a rug.', '--request-id', requestId, '--confirm-spend', '--regenerate-object', 'chair-2'],
+    { encoding: 'utf8', env: { PATH: process.env.PATH, PALATIAL_API_KEY: 'fixture-key',
+      PALATIAL_API_URL: 'https://api.example.test/api/v1/external/', TEST_OBSERVATION: observedPath } });
+  assert.equal(JSON.parse(result).message.action, 'continued');
+  assert.deepEqual(JSON.parse(await readFile(observedPath, 'utf8')), {
+    url: `https://api.example.test/api/v1/external/scene-generations/${sceneId}/messages`, method: 'POST',
+    body: { request_id: requestId, text: 'Add a rug.', confirm_spend: true, regenerate_objects: ['chair-2'] } });
+});
