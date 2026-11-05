@@ -37,9 +37,12 @@ palatial-agent scene-create --request scene.json  Start a scene (paid; the reque
 palatial-agent scene-get --scene-id ID    Read a scene, including next_message
 palatial-agent scene-message --scene-id ID --text "..." [--request-id UUID] [--confirm-spend]
                                           [--expected-head sha256:...] [--regenerate-object ID ...]
-                                          Message a scene: relayed while running, answers a
-                                          waiting question; continuing a settled scene is new
-                                          paid work and needs --confirm-spend
+                                          Message a scene (see next_message from scene-get):
+                                          relayed while running, answers a waiting question,
+                                          resumes a parked checkpoint; continuing a settled
+                                          scene, retrying a refused start and
+                                          --regenerate-object are new paid work and need
+                                          --confirm-spend
 palatial-agent scene-stop --scene-id ID   Stop a scene (free; completed work stays charged)
 palatial-agent scene-download --scene-id ID --output-dir ./scenes [--scene-version sha256:...]
 

@@ -57,40 +57,73 @@ Read `next_message` from the scene before sending one:
 }
 ```
 
+The server decides from the scene's state, never from the words, in this order:
+
 | `action` | When | `confirm_spend` | What the message does | Result `message.action` |
 |---|---|---|---|---|
-| `relay` | the scene is running and no Stop was asked | no | text is passed to the scene director; the message itself is free | `relayed` or `queued` |
-| `answer` | the scene waits on its question | no | text is the answer, within the original authorization | `answered` |
-| `resume` | the scene is parked at a checkpoint that offers a plain recover | no | continues the run; text, when given, is kept as guidance | `resumed` |
-| `continue` | the scene ended (delivered, best checkpoint, stopped, held in review) and a continuation is offered | **yes** | continues the whole scene as new paid work; text is its instruction or guidance | `continued` |
-| `retry_start` | the start was refused before any run and is retryable | **yes** | retries the original start; text is recorded only | `start_retried` |
-| `none` | nothing above applies | - | refused with 409 `scene_not_messageable` and a `reason` | - |
+| `retry_start` | the start was refused before any run and can be retried | **yes** | retries the original start; text is recorded, not applied | `start_retried` |
+| `answer` | the scene waits on its question | no | text (required) is the answer, within the original authorization | `answered` |
+| `resume` | the scene is parked at a checkpoint that takes no answer | no | the run continues; text, when given, is passed to its director | `resumed` |
+| `relay` | the scene is running, or between director sessions, and no Stop was asked | no | text (required) is passed to the director; the message itself is free | `relayed`, or `queued` until the director can take it |
+| `continue` | the scene ended (delivered, best checkpoint, stopped, held in review) and can be continued | **yes** | continues the whole scene as new paid work; text is its instruction or is passed to the continued director | `continued` |
+| `none` | nothing above applies | - | 409 `scene_not_messageable` with `reason` (403 `insufficient_tokens` when the balance is the reason) | - |
+
+After the action is decided the server checks, in order: `expected_head`
+(409 `scene_head_moved`, with the current `expected_head`), required text
+(400 `scene_message_text_required`), `regenerate_objects`
+(409 `scene_object_regeneration_unavailable`) and spend consent
+(409 `confirm_spend_required`, with `next_message`). Each refusal does nothing.
 
 - `confirm_spend: true` is the user's authorization for new paid work. Ask
-  before setting it; never set it on the user's behalf. Without it a paid
-  message returns 409 `confirm_spend_required` with `next_message` and does
-  nothing. Continuing reuses built objects; new planning and object builds
-  are billed at actual cost, and the workspace needs a positive balance
-  (403 `insufficient_tokens` otherwise).
-- A change request on a delivered scene continues the whole scene.
-- `text` is 1-4000 characters and required for `relay` and `answer`
-  (400 `scene_message_text_required`).
+  before setting it; never set it on the user's behalf. Continuing reuses
+  built objects; new planning settles at actual cost when the run ends, new
+  object builds charge as their steps complete, there is no up-front quote,
+  and the workspace needs a positive balance.
+- `price_basis` is `none` (relay), `within_original_authorization` (answer,
+  resume) or `new_work_actual_cost` (continue, retry_start). A relay that
+  wakes a waiting director bills that director turn under the run's original
+  limits.
+- A change request on a delivered scene continues the whole scene; the
+  Dashboard's priced object edits are not part of the public API.
+- `text` is 1-4000 characters.
 - `expected_head` is optional; pass `next_message.expected_head` to refuse
-  the message (409 `scene_head_moved`) if the scene moved on. A relay has no head.
-- `regenerate_objects` lists failed or dropped object IDs from
-  `next_message.regenerable_objects`; it is accepted only with `continue`.
+  the message if the scene moved on. A relay has no head.
+- `regenerate_objects` lists IDs from `next_message.regenerable_objects`
+  (failed or withdrawn objects). It applies only to `continue`, so it always
+  needs `confirm_spend: true`; the client refuses it without consent.
+- The receipt is `{ scene_id, message, scene }`. `message` has `request_id`,
+  `action`, `expected_head`, `instruction_applied`, `guidance_status`
+  (`relayed`, `stored`, `not_running`, `unsupported`, `limit`, `stopped` or
+  `unavailable` for text passed to the director, else null),
+  `regenerate_objects`, `price_basis`, `replayed` and `at`. Each message also
+  appears in the Dashboard scene conversation.
+- `next_message.reason` for `none` is one of `not_started`, `stopping`,
+  `automatic_continuation`, `spending_limit`, `scene_edit_running`,
+  `already_running`, `recovery_unavailable`, `status_unavailable` or
+  `insufficient_tokens`.
 - Every message has a UUID `request_id`. The client generates one when it is
   omitted and returns it on the receipt and on errors. The same ID and body
-  replay the stored receipt; the same ID with a different body is 409
-  `request_id_reused`. After 503 `scene_message_unconfirmed` or a lost
-  response, replay the same ID and body; a new ID is a new message.
+  return the stored receipt (`replayed: true`); the same ID with a different
+  body is 409 `request_id_reused`. A refusal records nothing, so a corrected
+  request may reuse the ID. After 503 `scene_message_unconfirmed` or a lost
+  response, send the same ID and body again; it completes as first decided.
+  A new ID is a new message.
 - A running scene can refuse a relay with 409 `scene_guidance_unsupported`,
-  `scene_guidance_limit` or `scene_guidance_stopped`.
+  `scene_guidance_limit` or `scene_guidance_stopped`; nothing is kept.
+
+### Deprecated routes
+
+| Route | Same as | Consent |
+|---|---|---|
+| `answer` (`answerScene`) | `answer`, or `continue` with text | `confirm_spend: true` when it continues a scene that ended |
+| `recover` (`recoverScene`) | `resume`, or `continue` without text | same as answer |
+| `objects/:objectId/regenerate` | `continue` with `regenerate_objects: [objectId]` | always `confirm_spend: true` |
+| `continue` | `messages` with `confirm_spend: true` | always; 409 `scene_not_continuable` while running |
+| `retry-start` (`retrySceneStart`) | `retry_start` | always |
 
 MCP has no separate answer, recover or retry tools. The JavaScript methods
 `answerScene`, `recoverScene` and `retrySceneStart` are deprecated aliases of
-`messageScene` and keep working; at a settled scene the server requires
-`confirm_spend: true` on them too. `listScenes` remains for compatibility.
+`messageScene` and keep working. `listScenes` remains for compatibility.
 
 ## Example
 

@@ -448,7 +448,7 @@ export class PalatialApiError extends Error {
   }
 
   toJSON() {
-    const fields = ['http_status', 'code', 'retryable', 'correlationId', 'reason', 'hint', 'remedy', 'assetId', 'asset_id', 'request_id', 'receipt_file', 'billingMode', 'tokens', 'billing', 'warnings', 'billing_guidance', 'next_message'];
+    const fields = ['http_status', 'code', 'retryable', 'correlationId', 'reason', 'hint', 'remedy', 'assetId', 'asset_id', 'request_id', 'receipt_file', 'billingMode', 'tokens', 'billing', 'warnings', 'billing_guidance', 'next_message', 'expected_head'];
     return { message: this.message, ...Object.fromEntries(fields.filter(key => this[key] !== undefined).map(key => [key, this[key]])) };
   }
 }
@@ -535,6 +535,7 @@ export class PalatialClient {
             ...(typeof payload.remedy === 'string' ? { remedy: safeMessage(new Error(payload.remedy), this.apiKey).slice(0, 2000) } : {}),
             ...(typeof payload.assetId === 'string' && assetIdSchema.safeParse(payload.assetId).success ? { assetId: payload.assetId, asset_id: payload.assetId } : {}),
             ...(typeof payload.reason === 'string' && /^[a-z0-9_]{1,64}$/.test(payload.reason) ? { reason: payload.reason } : {}),
+            ...(typeof payload.expected_head === 'string' && /^sha256:[a-f0-9]{64}$/.test(payload.expected_head) ? { expected_head: payload.expected_head } : {}),
             ...(payload.next_message && typeof payload.next_message === 'object' && !Array.isArray(payload.next_message) ? { next_message: safeBillingValue(payload.next_message, this.apiKey) } : {})
           });
         }

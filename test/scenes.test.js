@@ -195,6 +195,8 @@ test('messageScene posts one message with its request identity to the messages r
     body: { request_id: requestId, text: 'Make the shelves oak.', confirm_spend: true, expected_head: version, regenerate_objects: ['chair-2'] } });
   assert.deepEqual(Object.keys(calls[1].body), ['request_id', 'text']);
   assert.match(calls[1].body.request_id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  await assert.rejects(client.messageScene(sceneId, { regenerateObjects: ['chair-2'] }), /confirmSpend/);
+  assert.equal(calls.length, 2);
 });
 
 test('one-shot URL start forwards autoContinue and never calls legacy endpoints', async () => {

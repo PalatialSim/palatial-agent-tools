@@ -64,8 +64,8 @@ export const messageSceneSchema = z.object({
   requestId: z.string().uuid().describe('Stable UUID for this message. The same ID and body replay the stored receipt; a new UUID is a new message.').optional(),
   confirmSpend: z.literal(true).describe('Required when next_message.requires_confirm_spend is true (continuing a settled scene, retrying a refused start). Ignored otherwise.').optional(),
   expectedHead: sceneDigestSchema.describe('Optional next_message.expected_head; the message is refused with scene_head_moved when the scene has moved on.').optional(),
-  regenerateObjects: z.array(sceneObjectIdSchema).min(1).max(1000).describe('Failed or dropped object IDs to rebuild; only with next_message.action continue.').optional()
-}).strict();
+  regenerateObjects: z.array(sceneObjectIdSchema).min(1).max(1000).describe('Failed or dropped object IDs from next_message.regenerable_objects to rebuild; only with next_message.action continue, so it always needs confirmSpend.').optional()
+}).strict().refine(input => !input.regenerateObjects || input.confirmSpend === true, { path: ['confirmSpend'], message: 'Rebuilding objects is new paid work: regenerateObjects needs confirmSpend: true.' });
 export const retrySceneStartSchema = z.object({ scene_id: sceneIdSchema, confirm_spend: z.literal(true).describe('Explicit spending authorization for retrying the frozen confirmed start; the server must prove no native execution occurred.') }).strict();
 export const downloadSceneSchema = z.object({ scene_id: sceneIdSchema, output_dir: z.string().min(1), version: sceneDigestSchema.describe('Optional exact download.version. Omit to download the current accepted package.').optional() }).strict();
 
@@ -214,13 +214,23 @@ export async function createScene(client, input) {
  */
 export function getScene(client, sceneId) { return client.request(route(sceneId)); }
 /**
- * Sends one message to a scene (`POST scene-generations/{id}/messages`). The server decides the
- * effect from the scene's state: a running scene relays the text to its director, a waiting question
- * takes it as the answer, a parked checkpoint resumes, and a settled scene with an offered
- * continuation continues the whole scene, which needs `confirmSpend: true`. Anything else is refused
- * with `scene_not_messageable` and a `reason`. A message never stops a scene.
- * Omitting `requestId` generates one; it is returned on the receipt and on errors so an uncertain
- * outcome can be replayed with the same ID and body.
+ * Sends one message to a scene (`POST scene-generations/{id}/messages`). The server decides the effect from
+ * the scene's state, in this order, and shows it beforehand as `next_message.action`:
+ * - `retry_start`: a start refused before any run is retried; needs `confirmSpend`; result `start_retried`.
+ * - `answer`: the scene waits on its question; `text` is the answer; result `answered`.
+ * - `resume`: the scene is parked at a checkpoint that takes no answer; `text` goes to its director; result `resumed`.
+ * - `relay`: the scene is running; `text` goes to its director; result `relayed`, or `queued` until it can take it.
+ * - `continue`: the scene ended (delivered, best checkpoint, stopped, held in review) and can be continued; the whole
+ *   scene continues as new paid work and needs `confirmSpend`; `regenerateObjects` only applies here; result `continued`.
+ * - `none`: refused with 409 `scene_not_messageable` and a `reason` (403 `insufficient_tokens` for a missing balance).
+ * The server then checks `expected_head` (409 `scene_head_moved`, with the current `expected_head`), required `text`
+ * (400 `scene_message_text_required`), `regenerate_objects` (409 `scene_object_regeneration_unavailable`) and spend
+ * consent (409 `confirm_spend_required`, with `next_message`). A message never stops a scene.
+ * The receipt is `{ scene_id, message, scene }`; `message` has `request_id`, `action`, `expected_head`,
+ * `instruction_applied`, `guidance_status`, `regenerate_objects`, `price_basis`, `replayed` and `at`.
+ * Omitting `requestId` generates one; it is returned on the receipt and on errors. The same ID and body replay the
+ * receipt; a refusal records nothing, so a corrected request may reuse the ID. After 503 `scene_message_unconfirmed`,
+ * send the same ID and body again.
  */
 export async function messageScene(client, sceneId, input = {}) {
   const id = sceneIdSchema.parse(sceneId);
