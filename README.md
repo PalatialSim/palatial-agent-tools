@@ -4,7 +4,7 @@ Palatial's thin JavaScript/CLI client and MCP server. Generation, planning, prov
 
 ## One native Agent entry
 
-Package **0.1.23-dev.0** exposes the MCP tool `palatial_agent` for asset intent, plus three direct asset lifecycle tools (see below). It is a **Dev preview**: configure `PALATIAL_API_URL=https://dashboard.dev.palatial.cloud/api/v1/external/` and a Dev workspace API key until the owning Backend is promoted.
+Package **0.1.24-dev.0** exposes the MCP tool `palatial_agent` for asset intent, plus three direct asset lifecycle tools and five scene generation tools (see below). It is a **Dev preview**: configure `PALATIAL_API_URL=https://dashboard.dev.palatial.cloud/api/v1/external/` and a Dev workspace API key until the owning Backend is promoted.
 
 The native Agent handles Palatial asset creation, configuration, modification, recovery, status and delivery. It reads the user's intent and existing project data. Unrelated tasks are refused. The public path always executes unattended: the server chooses supported routes, preferences, references and justified dimension estimates, and executes through shared owning services. No caller execution policy, token ceiling, answers, selections or confirmation messages exist.
 
@@ -61,6 +61,25 @@ Three MCP tools call their public routes directly, without the Agent. Each takes
 
 - Archive and unarchive need `asset:write` and a workspace plan that includes archiving. Otherwise they return 403 `PLAN_ARCHIVE_NOT_INCLUDED`, or `WORKSPACE_SUSPENDED` for a suspended workspace. The client returns the server `code`, `message` and `correlationId` unchanged.
 - Retry export needs `asset:export` and only applies when the asset's `export.status` is `PROCESSING_FAILED`. It does not regenerate the asset or charge tokens. Compatibility JavaScript and CLI operations remain available, but are not registered or advertised as MCP tools. The MCP server performs no startup docs/network calls or health/guide tool discovery.
+
+## Scene generation
+
+Five MCP tools, JavaScript methods and CLI commands cover scene generation (Dev preview). Paths are relative to the external API origin.
+
+| MCP tool | JavaScript | CLI | Route |
+|---|---|---|---|
+| `palatial_create_scene` | `createScene(input)` | `scene-create --request scene.json` | `POST workspaces/{workspaceId}/scene-generations/start` |
+| `palatial_get_scene` | `getScene(sceneId)` | `scene-get --scene-id ID` | `GET scene-generations/{id}` |
+| `palatial_message_scene` | `messageScene(sceneId, { text, requestId?, confirmSpend?, expectedHead?, regenerateObjects? })` | `scene-message --scene-id ID --text ...` | `POST scene-generations/{id}/messages` |
+| `palatial_stop_scene` | `cancelScene(sceneId)` | `scene-stop --scene-id ID` | `POST scene-generations/{id}/stop` |
+| `palatial_download_scene` | `downloadScene(input)` | `scene-download --scene-id ID --output-dir DIR` | `GET scene-generations/{id}/download` |
+
+- Starting a scene is paid work; the request carries `confirm_spend: true` once the user has authorized it.
+- `next_message` in the scene read says what a message sent now would do, decided in this order: `retry_start`, `answer`, `resume`, `relay`, `continue`, else `none` (409 `scene_not_messageable` with `reason`). A message to a running scene is relayed to its director; a waiting question takes it as the answer; a parked checkpoint resumes. Continuing a settled scene (delivered, best checkpoint, stopped, held in review) is new paid work and needs `confirm_spend: true`, as do retrying a refused start and `regenerate_objects`; a change request on a delivered scene continues the whole scene. Without it the server returns 409 `confirm_spend_required` with `next_message` and does nothing.
+- Each message has a UUID `request_id` (generated when omitted, returned on the receipt and on errors). Replay the same ID and body after an uncertain outcome such as 503 `scene_message_unconfirmed`.
+- `answerScene`, `recoverScene` and `retrySceneStart` are deprecated aliases of `messageScene` and keep working; `answerScene` and `recoverScene` need `confirm_spend: true` when they continue a scene that ended.
+
+See `skills/palatial/references/scenes.md` (`palatial-agent guide --topic scenes`) for the full workflow.
 
 ## Install and configure
 

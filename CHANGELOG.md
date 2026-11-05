@@ -1,7 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.1.24-dev.0
 
+- Add the MCP scene tools `palatial_create_scene`, `palatial_get_scene`, `palatial_message_scene`, `palatial_stop_scene` and `palatial_download_scene`, and matching CLI commands `scene-create`, `scene-get`, `scene-message`, `scene-stop` and `scene-download`.
+- Add `messageScene(sceneId, { text, requestId?, confirmSpend?, expectedHead?, regenerateObjects? })` for `POST scene-generations/{id}/messages`. The server picks `retry_start`, `answer`, `resume`, `relay` or `continue` from the scene state: a running scene relays the text to its director, a waiting question takes it as the answer, and continuing a settled scene or retrying a refused start needs `confirmSpend: true`. `regenerateObjects` is refused before transport without `confirmSpend`. Refusals keep the server `code`, `reason`, `next_message`, `expected_head` and the message `request_id`.
+- Document `next_message` on `getScene`. Deprecate `answerScene`, `recoverScene` and `retrySceneStart` in favor of `messageScene`; they keep working, and `answerScene`/`recoverScene` accept `confirm_spend: true` for a settled scene.
+- `createScene` keeps sending `confirm_spend: true` to `/start`, which now accepts it.
 - Add the MCP tools `palatial_archive_asset`, `palatial_unarchive_asset` and `palatial_retry_export`, and the JavaScript methods `archiveAsset`, `unarchiveAsset` and `retryExport`. They call the public archive, unarchive and retry-export routes and return the server refusal code unchanged, including `PLAN_ARCHIVE_NOT_INCLUDED` for a plan without archiving.
 
 ## 0.1.23-dev.0

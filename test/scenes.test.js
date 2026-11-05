@@ -180,8 +180,22 @@ test('cached archive cannot claim another version even when its receipt matches 
 test('deprecated recovery client methods remain callable without advertising recovery tools', async () => {
   const calls = [];
   const client = api(async (url, options) => { calls.push({ path: url.pathname, body: JSON.parse(options.body) }); return response({ scene_id: sceneId, status: 'running' }); });
-  await client.recoverScene({ scene_id: sceneId, expected_head: version });
+  await client.recoverScene({ scene_id: sceneId, expected_head: version, confirm_spend: true });
   await client.retrySceneStart({ scene_id: sceneId, confirm_spend: true });
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].body.confirm_spend, true);
+});
+
+test('messageScene posts one message with its request identity to the messages route', async () => {
+  const calls = [];
+  const client = api(async (url, options) => { calls.push({ path: url.pathname, method: options.method, body: JSON.parse(options.body) }); return response({ scene_id: sceneId, message: { action: 'continued' } }); });
+  await client.messageScene(sceneId, { text: ' Make the shelves oak. ', requestId, confirmSpend: true, expectedHead: version, regenerateObjects: ['chair-2'] });
+  await client.messageScene(sceneId, { text: 'Add a rug.' });
+  assert.deepEqual(calls[0], { path: `/api/v1/external/scene-generations/${sceneId}/messages`, method: 'POST',
+    body: { request_id: requestId, text: 'Make the shelves oak.', confirm_spend: true, expected_head: version, regenerate_objects: ['chair-2'] } });
+  assert.deepEqual(Object.keys(calls[1].body), ['request_id', 'text']);
+  assert.match(calls[1].body.request_id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  await assert.rejects(client.messageScene(sceneId, { regenerateObjects: ['chair-2'] }), /confirmSpend/);
   assert.equal(calls.length, 2);
 });
 

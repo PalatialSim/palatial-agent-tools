@@ -43,7 +43,7 @@ try {
   try {
     assert.equal(client.getServerVersion().version, VERSION);
     const tools = (await client.listTools()).tools;
-    assert.deepEqual(tools.map(tool => tool.name), ['palatial_agent', 'palatial_archive_asset', 'palatial_unarchive_asset', 'palatial_retry_export']);
+    assert.deepEqual(tools.map(tool => tool.name), ['palatial_agent', 'palatial_archive_asset', 'palatial_unarchive_asset', 'palatial_retry_export', 'palatial_create_scene', 'palatial_get_scene', 'palatial_message_scene', 'palatial_stop_scene', 'palatial_download_scene']);
     assert.match(tools[0].description, /300 MiB.*314572800 bytes.*Mad Max/);
     assert.match(tools[0].inputSchema.properties.files.description, /300 MiB.*100 MiB/);
     assert.ok(tools[0].inputSchema.properties.request_id);

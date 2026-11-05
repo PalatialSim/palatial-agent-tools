@@ -1,37 +1,129 @@
 # Scene generation
 
 Scene generation reconstructs a complete scene from photos, videos, floor
-plans and instructions. The public API, MCP and Dashboard use the same scene
-service, object orders, billing, question and cancellation contracts. The MCP
-requires no Dashboard Agent conversation or confirmation card. Scene generation
-is currently enabled on Dev; configure `PALATIAL_API_URL` to the authorized Dev
-external API origin before starting the MCP server.
+plans and instructions. The public API, MCP, CLI and Dashboard use the same
+scene service, object orders, billing, question and cancellation contracts.
+Scene generation is currently enabled on Dev; configure `PALATIAL_API_URL` to
+the authorized Dev external API origin before starting the MCP server.
 
 ## Workflow
 
-The primary scene tools match the four API operations:
+| Step | MCP tool | CLI | JavaScript |
+|---|---|---|---|
+| Start | `palatial_create_scene` | `scene-create --request scene.json` | `createScene(input)` |
+| Read | `palatial_get_scene` | `scene-get --scene-id ID` | `getScene(sceneId)` |
+| Message | `palatial_message_scene` | `scene-message --scene-id ID --text ...` | `messageScene(sceneId, { text, requestId?, confirmSpend?, expectedHead?, regenerateObjects? })` |
+| Stop | `palatial_stop_scene` | `scene-stop --scene-id ID` | `cancelScene(sceneId)` |
+| Download | `palatial_download_scene` | `scene-download --scene-id ID --output-dir DIR` | `downloadScene(input)` |
 
-1. `palatial_create_scene` creates and starts a scene with one API request. Supply
-   a stable UUID `request_id`, authorized `workspace`, instructions and
+1. **Start** creates and starts a scene with one API request. Supply a stable
+   UUID `request_id`, authorized `workspace`, instructions and
    `confirm_spend: true` after obtaining authorization for director and object
    charges. Use `source_paths` for named local files or `sources` containing
    `{filename, media_type, url}` for photos, videos or floor plans on public HTTPS hostnames. No credentials, fragments, IP addresses, or loopback, link-local, or metadata hosts.
    Set `auto_continue: true` to continue checkpoints and continuation questions
    automatically using the original instructions. The default is false.
-2. `palatial_get_scene` returns status, progress, object inventory, cumulative
-   cost, pending questions, comparison images and available package links.
-   Unknown or unsettled cost stays unknown. Poll this same scene ID.
-3. `palatial_cancel_scene` stops the director and object builds idempotently.
-   Inspect partial failures; completed work remains charged.
-4. `palatial_download_scene` downloads the accepted scene package to `output_dir`.
-   An optional `version` pins an accepted package; otherwise the current accepted
-   version is selected. It verifies the archive digest and saves a receipt.
+2. **Read** returns status, progress, object inventory, cumulative cost, the
+   pending question, comparison images, available package links and
+   `next_message`. Unknown or unsettled cost stays unknown. Poll this same
+   scene ID; reading never changes or charges a scene.
+3. **Message** sends one message; the server decides what it does from the
+   scene's state (see below).
+4. **Stop** stops the director and object builds idempotently. It is free;
+   completed work remains charged. Inspect `cancellation` for partial failures.
+   A message never stops a scene.
+5. **Download** saves the accepted scene package to `output_dir`. An optional
+   `version` pins an accepted package; otherwise the current accepted version
+   is selected. It verifies the archive digest and saves a receipt.
 
-`palatial_answer_scene` is optional for callers using `auto_continue: false`.
-Answer the exact current `input.expected_head`; a stale answer conflicts.
-Fault recovery and start retries belong to the service. Do not create a replacement
-scene or use a new UUID after uncertainty. List/recover/retry client methods and cached deprecated MCP calls remain
-for compatibility, but are no longer advertised in MCP discovery.
+Do not create a replacement scene or use a new UUID after uncertainty.
+
+## Messages
+
+Read `next_message` from the scene before sending one:
+
+```json
+"next_message": {
+  "action": "continue",
+  "requires_confirm_spend": true,
+  "accepts_text": true,
+  "requires_text": false,
+  "accepts_regenerate_objects": true,
+  "regenerable_objects": ["chair-2"],
+  "expected_head": "sha256:...",
+  "question": null,
+  "reason": null,
+  "price_basis": "new_work_actual_cost"
+}
+```
+
+The server decides from the scene's state, never from the words, in this order:
+
+| `action` | When | `confirm_spend` | What the message does | Result `message.action` |
+|---|---|---|---|---|
+| `retry_start` | the start was refused before any run and can be retried | **yes** | retries the original start; text is recorded, not applied | `start_retried` |
+| `answer` | the scene waits on its question | no | text (required) is the answer, within the original authorization | `answered` |
+| `resume` | the scene is parked at a checkpoint that takes no answer | no | the run continues; text, when given, is passed to its director | `resumed` |
+| `relay` | the scene is running, or between director sessions, and no Stop was asked | no | text (required) is passed to the director; the message itself is free | `relayed`, or `queued` until the director can take it |
+| `continue` | the scene ended (delivered, best checkpoint, stopped, held in review) and can be continued | **yes** | continues the whole scene as new paid work; text is its instruction or is passed to the continued director | `continued` |
+| `none` | nothing above applies | - | 409 `scene_not_messageable` with `reason` (403 `insufficient_tokens` when the balance is the reason) | - |
+
+After the action is decided the server checks, in order: `expected_head`
+(409 `scene_head_moved`, with the current `expected_head`), required text
+(400 `scene_message_text_required`), `regenerate_objects`
+(409 `scene_object_regeneration_unavailable`) and spend consent
+(409 `confirm_spend_required`, with `next_message`). Each refusal does nothing.
+
+- `confirm_spend: true` is the user's authorization for new paid work. Ask
+  before setting it; never set it on the user's behalf. Continuing reuses
+  built objects; new planning settles at actual cost when the run ends, new
+  object builds charge as their steps complete, there is no up-front quote,
+  and the workspace needs a positive balance.
+- `price_basis` is `none` (relay), `within_original_authorization` (answer,
+  resume) or `new_work_actual_cost` (continue, retry_start). A relay that
+  wakes a waiting director bills that director turn under the run's original
+  limits.
+- A change request on a delivered scene continues the whole scene; the
+  Dashboard's priced object edits are not part of the public API.
+- `text` is 1-4000 characters.
+- `expected_head` is optional; pass `next_message.expected_head` to refuse
+  the message if the scene moved on. A relay has no head.
+- `regenerate_objects` lists IDs from `next_message.regenerable_objects`
+  (failed or withdrawn objects). It applies only to `continue`, so it always
+  needs `confirm_spend: true`; the client refuses it without consent.
+- The receipt is `{ scene_id, message, scene }`. `message` has `request_id`,
+  `action`, `expected_head`, `instruction_applied`, `guidance_status`
+  (`relayed`, `stored`, `not_running`, `unsupported`, `limit`, `stopped` or
+  `unavailable` for text passed to the director, else null),
+  `regenerate_objects`, `price_basis`, `replayed` and `at`. Each message also
+  appears in the Dashboard scene conversation.
+- `next_message.reason` for `none` is one of `not_started`, `stopping`,
+  `automatic_continuation`, `spending_limit`, `scene_edit_running`,
+  `already_running`, `recovery_unavailable`, `status_unavailable` or
+  `insufficient_tokens`.
+- Every message has a UUID `request_id`. The client generates one when it is
+  omitted and returns it on the receipt and on errors. The same ID and body
+  return the stored receipt (`replayed: true`); the same ID with a different
+  body is 409 `request_id_reused`. A refusal records nothing, so a corrected
+  request may reuse the ID. After 503 `scene_message_unconfirmed` or a lost
+  response, send the same ID and body again; it completes as first decided.
+  A new ID is a new message.
+- A running scene can refuse a relay with 409 `scene_guidance_unsupported`,
+  `scene_guidance_limit` or `scene_guidance_stopped`; nothing is kept.
+
+### Deprecated routes
+
+| Route | Same as | Consent |
+|---|---|---|
+| `answer` (`answerScene`) | `answer`, or `continue` with text | `confirm_spend: true` when it continues a scene that ended |
+| `recover` (`recoverScene`) | `resume`, or `continue` without text | same as answer |
+| `objects/:objectId/regenerate` | `continue` with `regenerate_objects: [objectId]` | always `confirm_spend: true` |
+| `continue` | `messages` with `confirm_spend: true` | always; 409 `scene_not_continuable` while running |
+| `retry-start` (`retrySceneStart`) | `retry_start` | always |
+
+MCP has no separate answer, recover or retry tools. The JavaScript methods
+`answerScene`, `recoverScene` and `retrySceneStart` are deprecated aliases of
+`messageScene` and keep working. `listScenes` remains for compatibility.
 
 ## Example
 
@@ -88,7 +180,7 @@ and Parametric object builds and is not a mock-mode request.
 
 Local sources support PNG, JPEG, WebP, PDF, MP4, MOV and WebM. Select at most
 32 combined local and URL sources, each at most 1 GB (1,000,000,000 bytes).
-Description and answer instructions accept up to 4000 characters. Filenames
+Description and message text accept up to 4000 characters. Filenames
 must be distinct, 1–128 ASCII characters, start with a letter or digit, and
 contain only letters, digits, periods, underscores or hyphens. A floor plan
 names an input filename exactly. The provider validates media content.
@@ -107,7 +199,9 @@ accepted delivery packages, preserve existing files and verify ETag, Content-Len
 and SHA-256. A downloaded package does not prove simulator acceptance.
 
 The public API uses `POST workspaces/:workspaceId/scene-generations/start`,
-`GET scene-generations/:sceneId`, `POST scene-generations/:sceneId/stop` and
-`GET scene-generations/:sceneId/download`. API JSON spells the MCP option
-`auto_continue` as `autoContinue`. Optional manual answers use `POST .../answer`.
-All endpoints share the Dashboard's Nest services and use `x-api-key` authentication.
+`GET scene-generations/:sceneId`, `POST scene-generations/:sceneId/messages`,
+`POST scene-generations/:sceneId/stop` and `GET scene-generations/:sceneId/download`.
+API JSON spells the MCP option `auto_continue` as `autoContinue`. The older
+`answer`, `recover`, `continue`, `objects/:objectId/regenerate` and
+`retry-start` routes are deprecated aliases of `messages`. All endpoints share
+the Dashboard's Nest services and use `x-api-key` authentication.
