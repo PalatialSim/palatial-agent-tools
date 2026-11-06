@@ -518,7 +518,9 @@ export class PalatialClient {
               .filter(key => Number.isFinite(record.tokens?.[key]) && (key === 'balance' || record.tokens[key] >= 0))
               .map(key => [key, record.tokens[key]]));
             throw new PalatialApiError(`Insufficient credits (HTTP ${response.status}). ${guidance.message}`, {
-              http_status: response.status, code: record.code, reason: guidance.reason,
+              // Routes with structured errors keep the server's own refusal reason; billing_guidance.reason still names the credit kind.
+              http_status: response.status, code: record.code,
+              reason: structuredErrors && typeof record.reason === 'string' && /^[a-z0-9_]{1,64}$/.test(record.reason) ? record.reason : guidance.reason,
               ...(typeof record.billingMode === 'string' ? { billingMode: safeBillingValue(record.billingMode, this.apiKey) } : {}),
               ...(Object.keys(tokens).length ? { tokens } : {}),
               ...metadata, billing_guidance: guidance
@@ -554,6 +556,7 @@ export class PalatialClient {
   getScene(sceneId) { return getScene(this, sceneId); }
   /** Sends `{ text, requestId?, confirmSpend?, expectedHead?, regenerateObjects? }` to a scene; see messageScene in scenes.js. */
   messageScene(sceneId, input) { return messageScene(this, sceneId, input); }
+  /** @deprecated Lists through the legacy listing route; keep the scene_id returned by createScene instead. */
   listScenes(input) { return listScenes(this, input); }
   /** @deprecated Use messageScene. */
   answerScene(input) { return answerScene(this, input); }

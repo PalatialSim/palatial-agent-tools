@@ -3,7 +3,7 @@ import { parseArgs } from 'node:util';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { realpathSync } from 'node:fs';
-import { PalatialClient, DEFAULT_API_URL } from '../src/client.js';
+import { PalatialClient, PalatialApiError, DEFAULT_API_URL } from '../src/client.js';
 import { getApiKey, saveApiKey, deleteApiKey } from '../src/auth.js';
 import { serveStdio } from '../src/mcp.js';
 import { VERSION } from '../src/version.js';
@@ -164,6 +164,8 @@ try {
   const result = await main();
   if (result !== undefined) console.log(JSON.stringify(result, null, 2));
 } catch (error) {
-  console.error(JSON.stringify({ error: error instanceof Error ? error.message : 'Command failed.' }));
+  // A server refusal keeps its code and fields (such as next_message and request_id) next to the message.
+  const { message, ...details } = error instanceof PalatialApiError ? error.toJSON() : {};
+  console.error(JSON.stringify({ error: error instanceof Error ? error.message : 'Command failed.', ...details }));
   process.exitCode = 1;
 }
