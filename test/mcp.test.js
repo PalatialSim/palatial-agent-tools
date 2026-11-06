@@ -37,6 +37,7 @@ test('MCP advertises the native intent tool and the direct asset lifecycle tools
   const message = tools.find(tool => tool.name === 'palatial_message_scene');
   assert.match(message.description, /relayed to its director/);
   assert.match(message.description, /continue: the scene ended.*requires confirm_spend=true/);
+  assert.equal(message.annotations.idempotentHint, false);
 });
 
 test('scene tools reach the scene routes, and a paid continuation without confirm_spend is refused with next_message', async t => {

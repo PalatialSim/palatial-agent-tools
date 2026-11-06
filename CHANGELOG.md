@@ -6,6 +6,12 @@
 - Add `messageScene(sceneId, { text, requestId?, confirmSpend?, expectedHead?, regenerateObjects? })` for `POST scene-generations/{id}/messages`. The server picks `retry_start`, `answer`, `resume`, `relay` or `continue` from the scene state: a running scene relays the text to its director, a waiting question takes it as the answer, and continuing a settled scene or retrying a refused start needs `confirmSpend: true`. `regenerateObjects` is refused before transport without `confirmSpend`. Refusals keep the server `code`, `reason`, `next_message`, `expected_head` and the message `request_id`.
 - Document `next_message` on `getScene`. Deprecate `answerScene`, `recoverScene` and `retrySceneStart` in favor of `messageScene`; they keep working, and `answerScene`/`recoverScene` accept `confirm_spend: true` for a settled scene.
 - `createScene` keeps sending `confirm_spend: true` to `/start`, which now accepts it.
+- A refused scene message (HTTP 4xx) says that nothing was recorded and that the same `request_id` may carry a corrected message; only an unknown outcome (5xx or a lost response) asks for a replay of the same `request_id` and body. `request_id_reused` asks for a new `request_id`. A 403 `insufficient_tokens` refusal no longer claims the scene resumes after a top-up: nothing was sent, so send the message again.
+- Document that `text` is required to continue a scene whose ending takes an answer (`next_message.requires_text`, as on most delivered scenes), that `retry_start` does not apply `text`, and that `expected_head` must be omitted when `next_message.expected_head` is null (relay, retry_start).
+- `palatial_message_scene` is no longer marked idempotent: a call without `request_id` is a new message.
+- CLI errors from a server refusal include its `code`, `reason`, `next_message`, `expected_head` and `request_id` next to the message.
+- Mark `listScenes` deprecated; it reads the legacy listing route.
+- Tags with a pre-release suffix (such as `v0.1.24-dev.0`) publish as GitHub pre-releases, so a Dev preview never becomes the latest release that `palatial-agent update` offers.
 - Add the MCP tools `palatial_archive_asset`, `palatial_unarchive_asset` and `palatial_retry_export`, and the JavaScript methods `archiveAsset`, `unarchiveAsset` and `retryExport`. They call the public archive, unarchive and retry-export routes and return the server refusal code unchanged, including `PLAN_ARCHIVE_NOT_INCLUDED` for a plan without archiving.
 
 ## 0.1.23-dev.0

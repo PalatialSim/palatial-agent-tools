@@ -62,4 +62,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PACKAGE: ${{ steps.package.outputs.package }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: gh release create "$RELEASE_TAG" "$PACKAGE" "$PACKAGE.sha256" --title "$RELEASE_TAG" --notes-file CHANGELOG.md
+        # A version with a pre-release suffix (such as 0.1.24-dev.0) is a Dev preview: it is published as a
+        # pre-release so it never becomes the latest release that stable installs update to.
+        run: |
+          prerelease=()
+          case "$RELEASE_TAG" in *-*) prerelease=(--prerelease) ;; esac
+          gh release create "$RELEASE_TAG" "$PACKAGE" "$PACKAGE.sha256" --title "$RELEASE_TAG" --notes-file CHANGELOG.md "${prerelease[@]}"

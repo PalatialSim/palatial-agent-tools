@@ -47,7 +47,7 @@ Read `next_message` from the scene before sending one:
   "action": "continue",
   "requires_confirm_spend": true,
   "accepts_text": true,
-  "requires_text": false,
+  "requires_text": true,
   "accepts_regenerate_objects": true,
   "regenerable_objects": ["chair-2"],
   "expected_head": "sha256:...",
@@ -61,12 +61,12 @@ The server decides from the scene's state, never from the words, in this order:
 
 | `action` | When | `confirm_spend` | What the message does | Result `message.action` |
 |---|---|---|---|---|
-| `retry_start` | the start was refused before any run and can be retried | **yes** | retries the original start; text is recorded, not applied | `start_retried` |
+| `retry_start` | the start was refused before any run and can be retried | **yes** | retries the original start; text is not applied | `start_retried` |
 | `answer` | the scene waits on its question | no | text (required) is the answer, within the original authorization | `answered` |
 | `resume` | the scene is parked at a checkpoint that takes no answer | no | the run continues; text, when given, is passed to its director | `resumed` |
-| `relay` | the scene is running, or between director sessions, and no Stop was asked | no | text (required) is passed to the director; the message itself is free | `relayed`, or `queued` until the director can take it |
-| `continue` | the scene ended (delivered, best checkpoint, stopped, held in review) and can be continued | **yes** | continues the whole scene as new paid work; text is its instruction or is passed to the continued director | `continued` |
-| `none` | nothing above applies | - | 409 `scene_not_messageable` with `reason` (403 `insufficient_tokens` when the balance is the reason) | - |
+| `relay` | the scene is running, or between director sessions, and no Stop was asked | no | text (required) is passed to the director; the message itself is free | `relayed`, or `queued` until the director can take it (`guidance_status: not_running`: the run ended first; the text is kept and passed on only if the scene continues) |
+| `continue` | the scene ended (delivered, best checkpoint, stopped, held in review) and can be continued | **yes** | continues the whole scene as new paid work; where the ending takes an answer (`requires_text: true`, as for most delivered scenes) text is required and is its instruction, otherwise text is optional and is passed to the continued director | `continued` |
+| `none` | nothing above applies | - | 409 `scene_not_messageable` with `reason` (403 `insufficient_tokens` when the balance is the reason; nothing is kept, so top up and send the message again) | - |
 
 After the action is decided the server checks, in order: `expected_head`
 (409 `scene_head_moved`, with the current `expected_head`), required text
@@ -87,7 +87,9 @@ After the action is decided the server checks, in order: `expected_head`
   Dashboard's priced object edits are not part of the public API.
 - `text` is 1-4000 characters.
 - `expected_head` is optional; pass `next_message.expected_head` to refuse
-  the message if the scene moved on. A relay has no head.
+  the message if the scene moved on. A relay and a start retry have no head
+  (`next_message.expected_head` is null); omit it then, because any value is
+  refused with `scene_head_moved`.
 - `regenerate_objects` lists IDs from `next_message.regenerable_objects`
   (failed or withdrawn objects). It applies only to `continue`, so it always
   needs `confirm_spend: true`; the client refuses it without consent.

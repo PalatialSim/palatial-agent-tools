@@ -554,6 +554,7 @@ export class PalatialClient {
   getScene(sceneId) { return getScene(this, sceneId); }
   /** Sends `{ text, requestId?, confirmSpend?, expectedHead?, regenerateObjects? }` to a scene; see messageScene in scenes.js. */
   messageScene(sceneId, input) { return messageScene(this, sceneId, input); }
+  /** @deprecated Lists through the legacy listing route; keep the scene_id returned by createScene instead. */
   listScenes(input) { return listScenes(this, input); }
   /** @deprecated Use messageScene. */
   answerScene(input) { return answerScene(this, input); }

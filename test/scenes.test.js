@@ -199,6 +199,19 @@ test('messageScene posts one message with its request identity to the messages r
   assert.equal(calls.length, 2);
 });
 
+test('messageScene tells a refused message, which starts nothing and never resumes, from an unknown outcome', async () => {
+  const refusal = api(async () => Response.json({ statusCode: 403, code: 'insufficient_tokens', reason: 'insufficient_credits', message: 'Add tokens to continue the scene.' }, { status: 403 }));
+  await assert.rejects(refusal.messageScene(sceneId, { text: 'Add a rug.', requestId, confirmSpend: true }), error => {
+    assert.equal(error.request_id, requestId);
+    assert.match(error.billing_guidance.message, /Nothing was sent to the scene/);
+    assert.doesNotMatch(error.message, /resumes automatically/);
+    assert.match(error.message, /nothing was recorded/);
+    return true;
+  });
+  const unconfirmed = api(async () => Response.json({ statusCode: 503, code: 'scene_message_unconfirmed', message: 'The message outcome could not be confirmed.' }, { status: 503 }));
+  await assert.rejects(unconfirmed.messageScene(sceneId, { text: 'Add a rug.', requestId }), /outcome is unknown; send the same request_id and body again/);
+});
+
 test('one-shot URL start forwards autoContinue and never calls legacy endpoints', async () => {
   const calls = [];
   const client = api(async (url, options) => { calls.push({ path: url.pathname, body: JSON.parse(options.body) }); return response({ scene_id: sceneId, status: 'running' }); });
