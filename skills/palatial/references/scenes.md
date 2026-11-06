@@ -61,18 +61,22 @@ The server decides from the scene's state, never from the words, in this order:
 
 | `action` | When | `confirm_spend` | What the message does | Result `message.action` |
 |---|---|---|---|---|
-| `retry_start` | the start was refused before any run and can be retried | **yes** | retries the original start; text is not applied | `start_retried` |
+| `retry_start` | the start was refused before any run and can be retried | **yes** | retries the original start; takes no text (`accepts_text: false`) | `start_retried` |
 | `answer` | the scene waits on its question | no | text (required) is the answer, within the original authorization | `answered` |
 | `resume` | the scene is parked at a checkpoint that takes no answer | no | the run continues; text, when given, is passed to its director | `resumed` |
 | `relay` | the scene is running, or between director sessions, and no Stop was asked | no | text (required) is passed to the director; the message itself is free | `relayed`, or `queued` until the director can take it (`guidance_status: not_running`: the run ended first; the text is kept and passed on only if the scene continues) |
 | `continue` | the scene ended (delivered, best checkpoint, stopped, held in review) and can be continued | **yes** | continues the whole scene as new paid work; where the ending takes an answer (`requires_text: true`, as for most delivered scenes) text is required and is its instruction, otherwise text is optional and is passed to the continued director | `continued` |
-| `none` | nothing above applies | - | 409 `scene_not_messageable` with `reason` (403 `insufficient_tokens` when the balance is the reason; nothing is kept, so top up and send the message again) | - |
+| `none` | nothing above applies | - | 409 `scene_not_messageable` with `reason` (403 `insufficient_tokens` with `reason: scene_message_insufficient_tokens` when the balance is the reason; nothing is recorded or started, so top up and send the message again) | - |
 
-After the action is decided the server checks, in order: `expected_head`
-(409 `scene_head_moved`, with the current `expected_head`), required text
-(400 `scene_message_text_required`), `regenerate_objects`
+After the action is decided the server checks, in order: an `expected_head`
+where the action takes none (409 `scene_head_not_applicable`), a stale
+`expected_head` (409 `scene_head_moved`, with the current `expected_head`),
+required text (400 `scene_message_text_required`), text the action does not
+take (400 `scene_message_text_not_accepted`), `regenerate_objects`
 (409 `scene_object_regeneration_unavailable`) and spend consent
-(409 `confirm_spend_required`, with `next_message`). Each refusal does nothing.
+(409 `confirm_spend_required`). Each of these refusals, and
+`scene_not_messageable`, carries the current `next_message`. Each refusal does
+nothing.
 
 - `confirm_spend: true` is the user's authorization for new paid work. Ask
   before setting it; never set it on the user's behalf. Continuing reuses
@@ -89,7 +93,7 @@ After the action is decided the server checks, in order: `expected_head`
 - `expected_head` is optional; pass `next_message.expected_head` to refuse
   the message if the scene moved on. A relay and a start retry have no head
   (`next_message.expected_head` is null); omit it then, because any value is
-  refused with `scene_head_moved`.
+  refused with `scene_head_not_applicable`.
 - `regenerate_objects` lists IDs from `next_message.regenerable_objects`
   (failed or withdrawn objects). It applies only to `continue`, so it always
   needs `confirm_spend: true`; the client refuses it without consent.

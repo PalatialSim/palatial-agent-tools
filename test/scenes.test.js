@@ -200,9 +200,10 @@ test('messageScene posts one message with its request identity to the messages r
 });
 
 test('messageScene tells a refused message, which starts nothing and never resumes, from an unknown outcome', async () => {
-  const refusal = api(async () => Response.json({ statusCode: 403, code: 'insufficient_tokens', reason: 'insufficient_credits', message: 'Add tokens to continue the scene.' }, { status: 403 }));
+  const refusal = api(async () => Response.json({ statusCode: 403, code: 'insufficient_tokens', reason: 'scene_message_insufficient_tokens', message: 'There are not enough tokens for this message. Nothing was recorded or started: add tokens, then send the message again.' }, { status: 403 }));
   await assert.rejects(refusal.messageScene(sceneId, { text: 'Add a rug.', requestId, confirmSpend: true }), error => {
     assert.equal(error.request_id, requestId);
+    assert.equal(error.reason, 'scene_message_insufficient_tokens');
     assert.match(error.billing_guidance.message, /Nothing was sent to the scene/);
     assert.doesNotMatch(error.message, /resumes automatically/);
     assert.match(error.message, /nothing was recorded/);
