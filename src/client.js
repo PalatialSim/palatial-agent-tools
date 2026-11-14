@@ -134,7 +134,7 @@ const flatCreateSchema = z.object({
   collision_quality: z.enum(['low', 'medium', 'high', 'x_high', 'sdf']).describe('Image, text, and CAD: collision quality; sdf means signed-distance-field collision.').optional(),
   shape_model: z.enum(['auto', 'diffusion', 'parametric']).describe('Image and text only: auto lets Palatial select a supported generation route; diffusion is faster, cheaper, and better for organic shapes and accepts one image or named multiview inputs; parametric is controllable, better for articulation, and accepts up to 50 photos at Low effort; Mad Max uses the server-owned combined input budget, including its generated specification. Prefer mode for new requests.').optional(),
   effort: z.enum(['low', 'mad_max']).describe('Text/image Parametric mode or legacy shape_model=parametric: low is the default; mad_max researches and authors the model. CAD has no effort.').optional(),
-  product_research: z.enum(['on', 'specs_only', 'off']).describe('Mad Max or any video build: on (default) researches the product and web photos; specs_only researches specifications without web photos; off skips web lookup. specs_only/off require uploaded photos or a video.').optional(),
+  product_research: z.enum(['on', 'specs_only', 'off']).describe('Mad Max or any video build: on (default) researches the product and web photos; specs_only researches specifications without web photos; off skips web lookup. specs_only/off require uploaded photos or a video. With mode=parametric and effort=low, on or specs_only research the real product first (for example to find its real size) and then build on the Low pipeline with your parameters; off or omission keeps the direct Low build without research.').optional(),
   texture_model: z.literal('auto').describe('Image, text, and CAD: auto selects the supported texture model.').optional(),
   decimation: z.boolean().describe('Diffusion defaults to strict 100,000 faces; false disables reduction. CAD defaults to disabled. Parametric Low uses face_budget in parameters.').optional(),
   optimize_textures: z.boolean().describe('Image, text, and CAD: downscale oversized maps without upscaling smaller maps.').optional(),
@@ -251,8 +251,10 @@ export function validateCreate(input) {
   // A narrowed mode builds only from the uploaded images, so it needs the one
   // route that researches and a request that carries images. Anywhere else the
   // API would accept it and do nothing, which an agent could not notice.
-  if (p.product_research && p.product_research !== 'on') {
-    if (effort !== 'mad_max' && !p.video_path) throw new Error('product_research applies to effort=mad_max only or a video; other routes do not research.');
+  // With mode=parametric, Low researches on request; off there is the direct Low build.
+  const lowResearchOffered = p.mode === 'parametric' && effort === 'low' && !p.video_path;
+  if (p.product_research && p.product_research !== 'on' && !(lowResearchOffered && p.product_research === 'off')) {
+    if (effort !== 'mad_max' && !p.video_path && !lowResearchOffered) throw new Error('product_research applies to effort=mad_max, mode=parametric with effort=low, or a video; other routes do not research.');
     if (!photos && !p.video_path) throw new Error(`product_research=${p.product_research} builds only from uploaded images or video, so it needs source=image with photos or a video.`);
   }
   if (p.source !== 'cad' && p.meters_per_unit !== undefined) throw new Error('meters_per_unit is accepted only for direct-mesh CAD input.');

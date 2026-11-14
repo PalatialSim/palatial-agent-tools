@@ -4,7 +4,7 @@ Palatial's thin JavaScript/CLI client and MCP server. Generation, planning, prov
 
 ## One native Agent entry
 
-Package **0.1.24-dev.0** exposes the MCP tool `palatial_agent` for asset intent, plus three direct asset lifecycle tools and five scene generation tools (see below). It is a **Dev preview**: configure `PALATIAL_API_URL=https://dashboard.dev.palatial.cloud/api/v1/external/` and a Dev workspace API key until the owning Backend is promoted.
+Package **0.1.25-dev.0** exposes the MCP tool `palatial_agent` for asset intent, plus three direct asset lifecycle tools and five scene generation tools (see below). It is a **Dev preview**: configure `PALATIAL_API_URL=https://dashboard.dev.palatial.cloud/api/v1/external/` and a Dev workspace API key until the owning Backend is promoted.
 
 The native Agent handles Palatial asset creation, configuration, modification, recovery, status and delivery. It reads the user's intent and existing project data. Unrelated tasks are refused. The public path always executes unattended: the server chooses supported routes, preferences, references and justified dimension estimates, and executes through shared owning services. No caller execution policy, token ceiling, answers, selections or confirmation messages exist.
 

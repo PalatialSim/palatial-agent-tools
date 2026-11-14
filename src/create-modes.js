@@ -16,7 +16,7 @@ export function modeFields(flat) {
       structure: z.enum(['single_object', 'static_parts', 'articulated_parts']).describe('Diffusion only: one solid object, separate rigid parts (default), or parts with joints.').optional(),
       articulation: z.boolean().describe('Parametric Low only: create joints; defaults to false.').optional(),
       face_budget: z.number().int().min(2000).max(200000).describe('Parametric Low only: authored face budget, 2,000-200,000; defaults to 100,000.').optional()
-    }).strict().describe('Route-specific build settings. Diffusion accepts structure, mesh, texture, collision and physics settings. Parametric Low accepts articulation, face_budget, collision_quality, run_simulation, optimize_textures, replace_glass and a rigid newton_solver. Mad Max and every video request require an empty object or omission.').optional()
+    }).strict().describe('Route-specific build settings. Diffusion accepts structure, mesh, texture, collision and physics settings. Parametric Low accepts articulation, face_budget, collision_quality, run_simulation, optimize_textures, replace_glass and a rigid newton_solver; with product_research on or specs_only it keeps them as stated settings except face_budget. Mad Max and every video request require an empty object or omission.').optional()
   };
 }
 
@@ -53,10 +53,15 @@ export function validateMode(p, ctx) {
   if (conflict.length) refuse('CREATE_MODE_FIELD_CONFLICT', `With mode, move or remove top-level build settings: ${conflict.join(', ')}.`);
   if ((p.mode === 'diffusion' && p.effort) || (p.mode === 'mad_max' && p.effort && p.effort !== 'mad_max')) refuse('CREATE_EFFORT_INVALID', 'effort applies only to parametric; mode=mad_max accepts only effort=mad_max.', ['effort']);
   const { model, effort } = createRoute(p);
-  const researches = Boolean(p.video_path) || model === 'parametric' && effort === 'mad_max';
-  if (p.product_research !== undefined && !researches) refuse('CREATE_PRODUCT_RESEARCH_UNSUPPORTED', 'product_research requires Mad Max or a video.', ['product_research']);
+  // Parametric Low researches only when asked (on or specs_only); off keeps the direct Low build.
+  const researches = Boolean(p.video_path) || model === 'parametric';
+  if (p.product_research !== undefined && !researches) refuse('CREATE_PRODUCT_RESEARCH_UNSUPPORTED', 'product_research requires mode=parametric or a video.', ['product_research']);
+  const researchedLow = !p.video_path && model === 'parametric' && effort === 'low' && ['on', 'specs_only'].includes(p.product_research);
   const allowed = p.video_path || model === 'parametric' && effort === 'mad_max' ? [] : model === 'diffusion' ? ['structure', ...DIFFUSION_FIELDS] : ['articulation', 'face_budget', ...LOW_FIELDS];
   const unsupported = Object.keys(p.parameters || {}).filter(field => !allowed.includes(field));
   if (unsupported.length) refuse('CREATE_PARAMETERS_INVALID', `${unsupported.join(', ')} is unsupported for this route. ${allowed.length ? `Supported: ${allowed.join(', ')}.` : 'Mad Max and video builds take no build parameters.'}`, ['parameters']);
+  // A researched Low build is submitted from the Agent's Configuration, which has no face budget.
+  if (researchedLow && p.parameters?.face_budget !== undefined) refuse('CREATE_PARAMETERS_INVALID', 'face_budget is not supported with product_research on Parametric Low; remove it or remove product_research.', ['parameters', 'face_budget']);
+  if (researchedLow && p.parameters?.collision_quality === 'x_high') refuse('CREATE_PARAMETERS_INVALID', 'collision_quality=x_high is not supported with product_research on Parametric Low.', ['parameters', 'collision_quality']);
   if (model === 'parametric' && p.parameters?.newton_solver === 'vbd') refuse('CREATE_PARAMETERS_INVALID', 'Parametric Low is rigid and accepts newton_solver=mujoco or style3D.', ['parameters', 'newton_solver']);
 }
