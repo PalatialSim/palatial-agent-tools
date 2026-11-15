@@ -2,7 +2,7 @@
 
 ## 0.1.25-dev.0
 
-- `palatial_create_asset` and `create()` accept `product_research` with `mode: parametric` at Low effort. `on` or `specs_only` research the real product first (for example to find the real size of an object whose dimensions are unknown) and then build on the Low pipeline, keeping the Low `parameters` as the caller's settings; `face_budget` and `collision_quality: x_high` are refused with research because the researched build cannot keep them. `off` or omission keeps the direct Low build without research. Diffusion still refuses `product_research` without a video.
+- `create()` and the CLI `create` command accept `product_research` with `mode: parametric` at Low effort. `on` or `specs_only` research the real product first (for example to find the real size of an object whose dimensions are unknown) and then build on the Low pipeline, keeping the Low `parameters` as the caller's settings; `face_budget` and `collision_quality: x_high` are refused with research because the researched build cannot keep them, research takes one engine, and `specs_only` needs uploaded photos. `off` or omission keeps the direct Low build without research. `shape_model: parametric` without `mode` refuses `product_research` at Low, since that shape does not research. Diffusion still refuses `product_research` without a video.
 
 ## 0.1.24-dev.0
 

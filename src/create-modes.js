@@ -16,7 +16,7 @@ export function modeFields(flat) {
       structure: z.enum(['single_object', 'static_parts', 'articulated_parts']).describe('Diffusion only: one solid object, separate rigid parts (default), or parts with joints.').optional(),
       articulation: z.boolean().describe('Parametric Low only: create joints; defaults to false.').optional(),
       face_budget: z.number().int().min(2000).max(200000).describe('Parametric Low only: authored face budget, 2,000-200,000; defaults to 100,000.').optional()
-    }).strict().describe('Route-specific build settings. Diffusion accepts structure, mesh, texture, collision and physics settings. Parametric Low accepts articulation, face_budget, collision_quality, run_simulation, optimize_textures, replace_glass and a rigid newton_solver; with product_research on or specs_only it keeps them as stated settings except face_budget. Mad Max and every video request require an empty object or omission.').optional()
+    }).strict().describe('Route-specific build settings. Diffusion accepts structure, mesh, texture, collision and physics settings. Parametric Low accepts articulation, face_budget, collision_quality, run_simulation, optimize_textures, replace_glass and a rigid newton_solver; with product_research on or specs_only it keeps them as stated settings except face_budget and collision_quality=x_high. Mad Max and every video request require an empty object or omission.').optional()
   };
 }
 

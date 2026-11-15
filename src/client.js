@@ -134,7 +134,7 @@ const flatCreateSchema = z.object({
   collision_quality: z.enum(['low', 'medium', 'high', 'x_high', 'sdf']).describe('Image, text, and CAD: collision quality; sdf means signed-distance-field collision.').optional(),
   shape_model: z.enum(['auto', 'diffusion', 'parametric']).describe('Image and text only: auto lets Palatial select a supported generation route; diffusion is faster, cheaper, and better for organic shapes and accepts one image or named multiview inputs; parametric is controllable, better for articulation, and accepts up to 50 photos at Low effort; Mad Max uses the server-owned combined input budget, including its generated specification. Prefer mode for new requests.').optional(),
   effort: z.enum(['low', 'mad_max']).describe('Text/image Parametric mode or legacy shape_model=parametric: low is the default; mad_max researches and authors the model. CAD has no effort.').optional(),
-  product_research: z.enum(['on', 'specs_only', 'off']).describe('Mad Max or any video build: on (default) researches the product and web photos; specs_only researches specifications without web photos; off skips web lookup. specs_only/off require uploaded photos or a video. With mode=parametric and effort=low, on or specs_only research the real product first (for example to find its real size) and then build on the Low pipeline with your parameters; off or omission keeps the direct Low build without research.').optional(),
+  product_research: z.enum(['on', 'specs_only', 'off']).describe('Mad Max or any video build: on (default) researches the product and web photos; specs_only researches specifications without web photos; off skips web lookup. specs_only/off require uploaded photos or a video. With mode=parametric and effort=low it is opt-in: on or specs_only research the real product first (for example to find its real size; specs_only needs uploaded photos, and one engine), then build on the Low pipeline with your parameters except face_budget and collision_quality=x_high; off or omission keeps the direct Low build without research and needs no photos. shape_model=parametric without mode does not research at Low.').optional(),
   texture_model: z.literal('auto').describe('Image, text, and CAD: auto selects the supported texture model.').optional(),
   decimation: z.boolean().describe('Diffusion defaults to strict 100,000 faces; false disables reduction. CAD defaults to disabled. Parametric Low uses face_budget in parameters.').optional(),
   optimize_textures: z.boolean().describe('Image, text, and CAD: downscale oversized maps without upscaling smaller maps.').optional(),
@@ -163,7 +163,7 @@ const mcpNewtonSolver = z.enum(['mujoco', 'style3D']).describe('Rigid-body Newto
 const mcpParameters = modeCreateSchema.shape.parameters.unwrap()
   .omit({ body_type: true, replace_glass: true, auto_scale: true })
   .extend({ collision_quality: mcpCollisionQuality, newton_solver: mcpNewtonSolver })
-  .describe('Route-specific settings for rigid assets. Diffusion: structure, mesh, decimation, texture, collision, validation and repair. Parametric Low: articulation, face_budget, collision_quality, run_simulation, optimize_textures and newton_solver. Mad Max and video: omit or use {}.').optional();
+  .describe('Route-specific settings for rigid assets. Diffusion: structure, mesh, decimation, texture, collision, validation and repair. Parametric Low: articulation, face_budget, collision_quality, run_simulation, optimize_textures and newton_solver; with product_research on or specs_only, all but face_budget. Mad Max and video: omit or use {}.').optional();
 export const mcpCreateSchema = modeCreateSchema.omit({ shape_model: true, texture_model: true, body_type: true, replace_glass: true, auto_scale: true })
   .extend({ parameters: mcpParameters, collision_quality: mcpCollisionQuality, newton_solver: mcpNewtonSolver }).superRefine((p, ctx) => {
   validateMode(p, ctx);
@@ -214,6 +214,9 @@ export function validateCreate(input) {
   if (p.video_path && p.source !== 'image') throw new Error('video_path is accepted only for image input.');
   if (p.reference_mesh_path && (p.source === 'cad' || model !== 'parametric' || effort !== 'mad_max')) throw new Error('reference_mesh_path is accepted only for text/image Mad Max.');
   if (effort === 'mad_max' && (p.engine || ['isaac_sim']).length !== 1) throw new Error('Mad Max accepts exactly one target engine.');
+  // A researched Low build starts on the same research path as Mad Max, which takes one engine.
+  const researchedLow = p.mode === 'parametric' && effort === 'low' && !p.video_path && ['on', 'specs_only'].includes(p.product_research);
+  if (researchedLow && (p.engine || ['isaac_sim']).length !== 1) throw new Error('Parametric Low with product_research accepts exactly one target engine.');
   if (p.source !== 'cad' && p.apply_textures !== undefined) throw new Error('apply_textures is accepted only for CAD input.');
   // The reuse flags decide what NOT to rebuild from a mesh the user supplied,
   // so they mean nothing where there is no supplied mesh.
@@ -239,7 +242,8 @@ export function validateCreate(input) {
   if (p.source === 'image' && model !== 'parametric' && !p.video_path && views.length && views.length < 2) throw new Error('Multiview requires at least two views of the same object.');
   if (p.source === 'image' && p.image_paths && model !== 'parametric' && !p.video_path) throw new Error('image_paths is supported only with Parametric or a video.');
   const photos = Number(Boolean(p.image_path)) + (p.image_paths?.length || 0) + views.length;
-  const photoLimit = effort === 'mad_max' ? p.reference_mesh_path ? 7 : 8 : 50;
+  // Research reads at most 15 photos (the build plane's 16 inputs less the generated specification).
+  const photoLimit = effort === 'mad_max' ? p.reference_mesh_path ? 7 : 8 : researchedLow ? 15 : 50;
   if (p.source === 'image' && photos > photoLimit) throw new Error(`This route accepts at most ${photoLimit} photos${p.reference_mesh_path ? ' with a reference mesh' : ''}.`);
   if (p.source !== 'image' && p.reconstruct !== undefined) throw new Error('reconstruct is accepted only for image input.');
   if (p.reconstruct !== undefined && effort === 'mad_max') throw new Error('The legacy reconstruct option is not accepted with mad_max effort.');
@@ -251,8 +255,10 @@ export function validateCreate(input) {
   // A narrowed mode builds only from the uploaded images, so it needs the one
   // route that researches and a request that carries images. Anywhere else the
   // API would accept it and do nothing, which an agent could not notice.
-  // With mode=parametric, Low researches on request; off there is the direct Low build.
+  // With mode=parametric, Low researches on request; off there is the direct Low build. The flat
+  // shape (shape_model=parametric without mode) never researches at Low, so the API ignores it there.
   const lowResearchOffered = p.mode === 'parametric' && effort === 'low' && !p.video_path;
+  if (p.product_research && !p.mode && model === 'parametric' && effort === 'low' && !p.video_path) throw new Error('product_research on Parametric Low needs mode=parametric; shape_model=parametric at Low effort does not research.');
   if (p.product_research && p.product_research !== 'on' && !(lowResearchOffered && p.product_research === 'off')) {
     if (effort !== 'mad_max' && !p.video_path && !lowResearchOffered) throw new Error('product_research applies to effort=mad_max, mode=parametric with effort=low, or a video; other routes do not research.');
     if (!photos && !p.video_path) throw new Error(`product_research=${p.product_research} builds only from uploaded images or video, so it needs source=image with photos or a video.`);

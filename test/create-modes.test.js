@@ -71,6 +71,21 @@ test('Parametric Low sends product_research with its parameters, and refuses a f
   assert.equal(calls.length, before);
 });
 
+test('researched Parametric Low refuses what research cannot take before any request', async t => {
+  const { dir, calls, client } = await fixture(t);
+  const image = path.join(dir, 'front.png');
+  await writeFile(image, 'image fixture');
+  const before = calls.length;
+  for (const [request, message] of [
+    [{ ...base, mode: 'parametric', product_research: 'on', parameters: { collision_quality: 'x_high' } }, /collision_quality=x_high/],
+    [{ ...base, mode: 'parametric', product_research: 'specs_only' }, /needs source=image with photos/],
+    [{ ...base, mode: 'parametric', product_research: 'on', engine: ['isaac_sim', 'mujoco'] }, /exactly one target engine/],
+    [{ ...base, source: 'image', mode: 'parametric', image_paths: Array(16).fill(image), product_research: 'on' }, /at most 15 photos/],
+    [{ ...base, source: 'image', shape_model: 'parametric', image_path: image, product_research: 'on' }, /needs mode=parametric/]
+  ]) await assert.rejects(client.create(request), message);
+  assert.equal(calls.length, before);
+});
+
 test('multipart parameters preserve JSON types and use the documented file fields', async t => {
   const { dir, calls, client } = await fixture(t);
   const image = path.join(dir, 'front.webp');

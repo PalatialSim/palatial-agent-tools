@@ -340,7 +340,7 @@ test('product_research reaches an image Mad Max create and is refused where it w
   }
   for (const [request, message] of [
     [{ ...basic, shape_model: 'parametric', effort: 'mad_max', product_research: 'specs_only' }, /needs source=image/],
-    [{ ...basic, source: 'image', image_path: image, shape_model: 'parametric', effort: 'low', product_research: 'off' }, /other routes do not research/],
+    [{ ...basic, source: 'image', image_path: image, shape_model: 'parametric', effort: 'low', product_research: 'off' }, /needs mode=parametric/],
     [{ ...basic, source: 'image', image_path: image, product_research: 'off' }, /other routes do not research/]
   ]) {
     await assert.rejects(client.create(request), message);
