@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.26-dev.0
+
+- Mad Max image requests take as many photos as the server's 16-input build: 15, less one for a reference mesh and one for a video (14 with a mesh, 13 with a mesh and a video). The client refused more than 8 (7 with a mesh) before.
+
 ## 0.1.25-dev.0
 
 - `create()` and the CLI `create` command accept `product_research` with `mode: parametric` at Low effort. `on` or `specs_only` research the real product first (for example to find the real size of an object whose dimensions are unknown) and then build on the Low pipeline, keeping the Low `parameters` as the caller's settings; `face_budget` and `collision_quality: x_high` are refused with research because the researched build cannot keep them, research takes one engine, and `specs_only` needs uploaded photos. `off` or omission keeps the direct Low build without research. `shape_model: parametric` without `mode` refuses `product_research` at Low, since that shape does not research. Diffusion still refuses `product_research` without a video.

@@ -242,9 +242,11 @@ export function validateCreate(input) {
   if (p.source === 'image' && model !== 'parametric' && !p.video_path && views.length && views.length < 2) throw new Error('Multiview requires at least two views of the same object.');
   if (p.source === 'image' && p.image_paths && model !== 'parametric' && !p.video_path) throw new Error('image_paths is supported only with Parametric or a video.');
   const photos = Number(Boolean(p.image_path)) + (p.image_paths?.length || 0) + views.length;
-  // Research reads at most 15 photos (the build plane's 16 inputs less the generated specification).
-  const photoLimit = effort === 'mad_max' ? p.reference_mesh_path ? 7 : 8 : researchedLow ? 15 : 50;
-  if (p.source === 'image' && photos > photoLimit) throw new Error(`This route accepts at most ${photoLimit} photos${p.reference_mesh_path ? ' with a reference mesh' : ''}.`);
+  // One researched build takes 16 inputs: the generated specification fills one, and a Mad Max
+  // reference mesh and video one each; photos take the rest. Research reads at most as many.
+  const researchedPhotos = 15 - (effort === 'mad_max' ? Number(Boolean(p.reference_mesh_path)) + Number(Boolean(p.video_path)) : 0);
+  const photoLimit = effort === 'mad_max' || researchedLow ? researchedPhotos : 50;
+  if (p.source === 'image' && photos > photoLimit) throw new Error(`This route accepts at most ${photoLimit} photos${[p.reference_mesh_path && 'a reference mesh', effort === 'mad_max' && p.video_path && 'a video'].filter(Boolean).join(' and ').replace(/^(?=.)/, ' with ')}.`);
   if (p.source !== 'image' && p.reconstruct !== undefined) throw new Error('reconstruct is accepted only for image input.');
   if (p.reconstruct !== undefined && effort === 'mad_max') throw new Error('The legacy reconstruct option is not accepted with mad_max effort.');
   if (p.source === 'image' && ['auto', 'diffusion'].includes(p.shape_model) && views.length > 4) throw new Error('auto and diffusion accept a single image or up to four named views.');

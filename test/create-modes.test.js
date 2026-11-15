@@ -151,10 +151,11 @@ test('Mad Max accepts a scanned GLB on text and image requests and counts it in 
   await client.create({ ...base, mode: 'mad_max', reference_mesh_path: mesh });
   assert.match(calls[0].url, /texttosim$/);
   assert.equal(calls[0].body.get('reference_mesh').name, 'scan.glb');
-  await client.create({ ...base, source: 'image', mode: 'mad_max', reference_mesh_path: mesh, image_paths: Array(7).fill(image) });
-  assert.equal(calls[1].body.getAll('file').length, 7);
-  await assert.rejects(client.create({ ...base, source: 'image', mode: 'mad_max', reference_mesh_path: mesh, image_paths: Array(8).fill(image) }), /at most 7/);
-  await assert.rejects(client.create({ ...base, source: 'image', mode: 'mad_max', image_paths: Array(9).fill(image) }), /at most 8/);
+  await client.create({ ...base, source: 'image', mode: 'mad_max', reference_mesh_path: mesh, image_paths: Array(14).fill(image) });
+  assert.equal(calls[1].body.getAll('file').length, 14);
+  await assert.rejects(client.create({ ...base, source: 'image', mode: 'mad_max', reference_mesh_path: mesh, image_paths: Array(15).fill(image) }), /at most 14 photos with a reference mesh/);
+  await assert.rejects(client.create({ ...base, source: 'image', mode: 'mad_max', image_paths: Array(16).fill(image) }), /at most 15 photos\./);
+  await assert.rejects(client.create({ ...base, source: 'image', mode: 'mad_max', reference_mesh_path: mesh, video_path: image, image_paths: Array(14).fill(image) }), /at most 13 photos with a reference mesh and a video/);
   await assert.rejects(client.create({ ...base, mode: 'parametric', reference_mesh_path: mesh }), /only for text\/image Mad Max/);
   assert.equal(calls.length, 2);
 });
