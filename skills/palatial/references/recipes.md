@@ -318,6 +318,29 @@ refuses to overwrite anything already there.
 }
 ```
 
+## Parametric Low sized by Product Research
+
+When you know which product it is but not its real size, ask Low to research
+its specifications first. It builds to the dimensions research finds and keeps
+your Low `parameters` (except `face_budget` and `collision_quality: x_high`).
+Research takes one engine and reads at most 15 photos, and `specs_only` needs
+at least one. Send `mode: parametric`; the legacy `shape_model` does not
+research at Low.
+
+```json
+{
+  "source": "image",
+  "name": "Office chair",
+  "description": "A mesh-back office chair with a five-star base. Exact model unknown; its real size is not known.",
+  "mode": "parametric",
+  "effort": "low",
+  "engine": ["isaac_sim"],
+  "image_path": "./references/chair.jpg",
+  "product_research": "specs_only",
+  "parameters": { "articulation": true, "collision_quality": "high" }
+}
+```
+
 ## Product video
 
 ```json

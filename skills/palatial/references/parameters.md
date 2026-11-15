@@ -129,7 +129,7 @@ structure: articulated_parts or Parametric Low articulation: true.
 | Field | Values | Default | Sources | Notes |
 | --- | --- | --- | --- | --- |
 | `effort` | `low`, `mad_max` | `low` when parametric | `text`, `image` | Requires `mode: parametric`. `low` runs Parametric Low. `mad_max` focuses on research and reconstruction at the highest quality and generally takes multiple hours. See the skill's generation-mode guidance for selection criteria. **Rejected for CAD.** |
-| `product_research` | `on`, `specs_only`, `off` | `on` | `text`, `image` | How much research Mad Max or any video build does. Narrowed modes require photos or video. `on` researches the real product on the web, its pages and its product photos. `specs_only` reads the web for identity and specifications but uses no web images, so the model is built only from your images. `off` looks nothing up. Use `specs_only` or `off` when your own photos show the exact unit and web photos of similar products could mislead the build. |
+| `product_research` | `on`, `specs_only`, `off` | `on` for Mad Max and video builds; none (the direct build) for Parametric Low | `text`, `image` | How much research Mad Max or any video build does. There, narrowed modes require photos or video. With `mode: parametric` at Low effort it is opt-in: `on` or `specs_only` research the real product first, for example to find the real size of an object whose dimensions you do not know, then build on the Low pipeline with your `parameters` (not `face_budget` or `collision_quality: x_high`), with one engine; `specs_only` needs uploaded photos and research reads at most 15. `off` or omission is the direct Low build and needs no photos. `shape_model: parametric` without `mode` does not research at Low. `on` researches the real product on the web, its pages and its product photos. `specs_only` reads the web for identity and specifications but uses no web images, so the model is built only from your images. `off` looks nothing up. Use `specs_only` or `off` when your own photos show the exact unit and web photos of similar products could mislead the build. |
 | `apply_textures` | boolean | `true` with a CAD reference image, `false` without one | `cad` | Generate textures from the reference image. `true` requires `image_path`. When it is off, there is no texture generation. |
 
 ## Texture output
@@ -241,7 +241,7 @@ The client checks these before spending anything and names the refused rule.
   `image_paths`, `views`, `reconstruct`, `mesh_quality`, `shape_model`, and `effort`. Source-frame fields
   then follow the file-format rules above.
 - `effort` requires Parametric mode on text or image requests.
-- `product_research: specs_only` or `off` requires Mad Max or a video, with uploaded photos or video.
+- `product_research: specs_only` or `off` requires Mad Max, `mode: parametric` at Low effort, or a video, with uploaded photos or video (`off` on Low is the direct build and needs none).
 - The MCP accepts no shape_model or texture_model. Select mode and effort.
 - The legacy `reconstruct` field is ignored by the current Queue. The client
   rejects it with `effort: mad_max`; omit it on all new requests.

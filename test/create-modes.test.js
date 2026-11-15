@@ -57,6 +57,35 @@ test('route-inappropriate or mistyped parameters are refused before a remote wri
   assert.equal(createSchema.safeParse({ ...base, mode: 'parametric', parameters: { mesh_quality: 'high' } }).success, false, 'MCP schema must reject unsupported settings even with a mock API client.');
 });
 
+test('Parametric Low sends product_research with its parameters, and refuses a face budget it cannot keep', async t => {
+  const { dir, calls, client } = await fixture(t);
+  const image = path.join(dir, 'front.png');
+  await writeFile(image, 'image fixture');
+  await client.create({ ...base, source: 'image', mode: 'parametric', image_path: image, product_research: 'specs_only', parameters: { articulation: true } });
+  assert.equal(calls.at(-1).body.get('product_research'), 'specs_only');
+  assert.deepEqual(JSON.parse(calls.at(-1).body.get('parameters')), { articulation: true });
+  await client.create({ ...base, mode: 'parametric', product_research: 'off', parameters: { face_budget: 50000 } });
+  assert.equal(JSON.parse(calls.at(-1).body).product_research, 'off');
+  const before = calls.length;
+  await assert.rejects(client.create({ ...base, mode: 'parametric', product_research: 'on', parameters: { face_budget: 50000 } }), /face_budget/);
+  assert.equal(calls.length, before);
+});
+
+test('researched Parametric Low refuses what research cannot take before any request', async t => {
+  const { dir, calls, client } = await fixture(t);
+  const image = path.join(dir, 'front.png');
+  await writeFile(image, 'image fixture');
+  const before = calls.length;
+  for (const [request, message] of [
+    [{ ...base, mode: 'parametric', product_research: 'on', parameters: { collision_quality: 'x_high' } }, /collision_quality=x_high/],
+    [{ ...base, mode: 'parametric', product_research: 'specs_only' }, /needs source=image with photos/],
+    [{ ...base, mode: 'parametric', product_research: 'on', engine: ['isaac_sim', 'mujoco'] }, /exactly one target engine/],
+    [{ ...base, source: 'image', mode: 'parametric', image_paths: Array(16).fill(image), product_research: 'on' }, /at most 15 photos/],
+    [{ ...base, source: 'image', shape_model: 'parametric', image_path: image, product_research: 'on' }, /needs mode=parametric/]
+  ]) await assert.rejects(client.create(request), message);
+  assert.equal(calls.length, before);
+});
+
 test('multipart parameters preserve JSON types and use the documented file fields', async t => {
   const { dir, calls, client } = await fixture(t);
   const image = path.join(dir, 'front.webp');
