@@ -45,6 +45,15 @@ retry safe.
 Report the failure reason, the failed stage, the dashboard link, and the
 support path. Ask before doing anything that spends more.
 
+## The job is in review
+
+`REVIEW` means the attempt did not finish cleanly and Palatial staff are
+reviewing it. The asset is held, not lost: the same asset becomes `READY` or
+`PROCESSING_FAILED` once reviewed, usually within about two hours. The status
+result carries `review_guidance`. Keep the asset ID and poll at a relaxed
+interval. Do not create a replacement or reprocess on your own; that starts a
+separate paid build. Cancel is accepted if the user no longer wants the asset.
+
 ## The job was canceled or paused
 
 Canceling stops the work. It does not imply a refund and it does not delete

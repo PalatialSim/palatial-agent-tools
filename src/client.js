@@ -696,6 +696,10 @@ export class PalatialClient {
       }
     }
     if (status === 'READY') result.ready_means = 'Generation is complete. Inspect details.media for mesh, texture and export availability; READY does not promise every representation. Inspect validation evidence and test in your target simulator.';
+    if (status === 'REVIEW') result.review_guidance = {
+      message: 'This attempt did not finish cleanly and Palatial staff are reviewing it. It is held, not lost: the same asset becomes READY or PROCESSING_FAILED once reviewed, usually within about two hours.',
+      next_steps: ['Keep this asset ID and poll it at a relaxed interval.', 'Do not create a replacement or reprocess automatically; that starts a separate paid build.', 'Cancel is accepted if the user no longer wants this asset.']
+    };
     if (status === 'PROCESSING_FAILED') result.failure_guidance = {
       message: 'Processing failed. Preserve this asset ID and inspect the dashboard or available validation evidence.',
       failed_stage: record.processingSummary?.failedStageKey || record.failedStageKey || record.failed_stage || record.stage || null,

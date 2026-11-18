@@ -289,6 +289,15 @@ test('failure guidance prefers the queue processing summary stage key', async t 
   assert.equal(result.failure_guidance.failed_stage, 'texture');
 });
 
+test('a held REVIEW asset tells the caller to wait on the same asset instead of rebuilding', async t => {
+  const { client } = await fixture(t, async () => json({ status: 'REVIEW' }));
+  const result = await client.getAsset('asset-review');
+  assert.equal(result.status, 'REVIEW');
+  assert.match(result.review_guidance.message, /held, not lost/);
+  assert.ok(result.review_guidance.next_steps.some(step => /Do not create a replacement/.test(step)));
+  assert.equal(result.failure_guidance, undefined);
+});
+
 test('a continuation credit conflict keeps the reported code and balance without retrying', async t => {
   let calls = 0;
   const { client } = await fixture(t, async () => {

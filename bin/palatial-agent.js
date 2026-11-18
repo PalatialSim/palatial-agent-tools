@@ -30,7 +30,7 @@ palatial-agent guide --topic parameters   Print one topic: ${GUIDE_TOPICS.map(it
 palatial-agent create --request asset.json   Submit a generation request (uses credits)
 palatial-agent reprocess --asset-id ID --request repair.json  Repair with feedback (uses tokens)
 palatial-agent status --asset-id ID       Check an existing asset
-palatial-agent download --asset-id ID --output-dir ./assets  Export READY ZIP (uses credits)
+palatial-agent download --asset-id ID --output-dir ./assets  Export READY ZIP (no charge; needs a positive balance for a first export)
 palatial-agent download --asset-id ID --output-dir ./assets --allow-failed-export  Export a failed asset after confirmation
 palatial-agent cancel --asset-id ID       Cancel an existing asset
 palatial-agent scene-create --request scene.json  Start a scene (paid; the request needs confirm_spend: true)
