@@ -220,7 +220,7 @@ CAD source-frame rules come from the file format:
   canonical, so `units` is rejected.
 - USD, USDA, USDC, and USDZ use authored stage metadata, so both fields are
   rejected.
-- JT and SLDPRT are not supported by this public client.
+- JT and SLDPRT files are not supported yet. Convert to STEP, or to OBJ, GLB, STL, PLY or FBX.
 
 **Both are rejected for `source: image`.** A photo carries no units, so state
 the dimensions and orientation in `description` instead.
