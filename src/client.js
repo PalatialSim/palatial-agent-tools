@@ -119,7 +119,7 @@ const flatCreateSchema = z.object({
   video_path: z.string().min(1).describe('Image only: one MP4/MOV product video, at most 300 MiB and 60 seconds. May accompany photos on any route; parameters must be empty. The server validates duration and video bytes.').optional(),
   reference_mesh_path: z.string().min(1).describe('Text/image Mad Max only: optional scanned GLB, uploaded as reference_mesh. Counts as one input in the server-owned build budget, beside photos, video and the generated specification.').optional(),
   views: z.object({ front: z.string().describe('Image multiview: front PNG/JPEG/WebP path.').optional(), left: z.string().describe('Image multiview: left PNG/JPEG/WebP path.').optional(), back: z.string().describe('Image multiview: back PNG/JPEG/WebP path.').optional(), right: z.string().describe('Image multiview: right PNG/JPEG/WebP path.').optional() }).strict().describe('Image only: named views of one object; provide at least two.').optional(),
-  reconstruct: z.boolean().describe('Legacy image option accepted by the API but currently ignored by the Queue. It does not generate views from one image or change how supplied views are processed.').optional(),
+  reconstruct: z.boolean().describe('Legacy image option accepted by the API for compatibility. It does not generate views from one image or change how supplied views are processed.').optional(),
   mesh_path: z.string().describe('CAD only: path to the mesh file.').optional(),
   datasheet_path: z.string().describe('CAD only: optional PDF datasheet.').optional(),
   create_articulation: z.boolean().describe('All sources: create joints for moving parts such as doors or wheels.').optional(),
@@ -725,7 +725,7 @@ export class PalatialClient {
       if (job.id !== id || job.assetId !== assetId) throw new Error('Generation job does not match this asset.');
       const keys = ['id', 'assetId', 'assetStatus', 'status', 'automation', 'progress', 'error', 'message', 'question', 'completion', 'recoveries', 'billing'];
       return { ...safeBillingValue(Object.fromEntries(keys.filter(key => job[key] !== undefined).map(key => [key, job[key]])), this.apiKey),
-        guidance: job.status === 'failed' ? 'The native research/build job failed; the asset status may still be INIT. Preserve both IDs and report its error. Do not create a replacement or retry automatically.' : 'Research/build status is separate from the asset and Queue status. A question or automation.blocked needs attention; inspect this same job in the dashboard.' };
+        guidance: job.status === 'failed' ? 'The native research/build job failed; the asset status may still be INIT. Preserve both IDs and report its error. Do not create a replacement or retry automatically.' : 'This status tracks the research/build job. Check asset status for simulation progress. A question or automation.blocked needs attention; inspect this same job in the dashboard.' };
     } catch (error) {
       return { id, status: 'unavailable', message: safeMessage(error, this.apiKey), guidance: 'Native generation status could not be verified; the asset status remains authoritative for its own pipeline. Inspect the same asset in the dashboard.' };
     }
