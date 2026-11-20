@@ -82,12 +82,13 @@ test('workspace enumeration establishes connectivity but does not assert create 
 
 test('status polling preserves processing and export phases without inferring completion', async t => {
   const record = { status: 'PROCESSING_IMPORT', progress: 84,
-    processingSummary: { runId: 'run-1', currentStageKey: 'export', runStatus: 'running' },
+    processingSummary: { runId: 'run-1', executionId: 'exec-2', executor: 'hosted', currentStageKey: 'export', runStatus: 'running' },
     export: { status: 'PROCESSING' } };
   const { client } = await fixture(t, async () => json(record));
   const result = await client.getAsset('asset-1');
   assert.equal(result.status, 'PROCESSING_IMPORT');
   assert.deepEqual(result.details, record);
+  assert.doesNotMatch(JSON.stringify(result), /"[^"]*queue[^"]*"\s*:/i);
 });
 
 test('READY retains per-media availability without promising all downloads', async t => {
