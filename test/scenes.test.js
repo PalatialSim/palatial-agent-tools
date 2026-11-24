@@ -114,8 +114,8 @@ test('versioned scene download caches verified receipts and preserves existing o
   assert.equal(await readFile(first.file, 'utf8'), 'modified');
 });
 
-test('invalid and oversized scene downloads clean reserved output without following redirects', async t => {
-  for (const [payload, options] of [['not a zip', {}], [Buffer.from('504b030400', 'hex'), { maxDownloadBytes: 4 }]]) {
+test('invalid scene downloads clean reserved output without following redirects', async t => {
+  for (const [payload, options] of [['not a zip', {}]]) {
     const directory = await temporary(t);
     const payloadVersion = `sha256:${hash(Buffer.from(payload))}`;
     const client = api(async () => new Response(payload, { headers: { etag: `"${payloadVersion}"`, 'content-length': String(payload.length) } }), options);
@@ -126,6 +126,29 @@ test('invalid and oversized scene downloads clean reserved output without follow
   const client = api(async () => { calls++; return new Response(null, { status: 302, headers: { location: 'https://untrusted.example/?secret=value' } }); });
   await assert.rejects(client.downloadScene({ scene_id: sceneId, version, output_dir: directory }), /did not return an archive/);
   assert.equal(calls, 1);
+});
+
+test('scene download is independent of asset limits and verifies the declared stream length', async t => {
+  const directory = await temporary(t);
+  const client = api(async (url, options) => {
+    if (String(url).includes('/download')) {
+      assert.ok(options.signal instanceof AbortSignal);
+      return new Response(zip, { headers: { etag: `"${version}"`, 'content-length': String(zip.length) } });
+    }
+    assert.ok(options.signal);
+    return response({ download: { version } });
+  }, { maxDownloadBytes: 4 });
+  const args = { scene_id: sceneId, version, output_dir: directory };
+  assert.equal((await client.downloadScene(args)).cached, false);
+  assert.equal((await client.downloadScene(args)).cached, true);
+  const largeDir = await temporary(t);
+  const declaredLarge = api(async () => new Response(zip, { headers: { etag: `"${version}"`, 'content-length': String(3 * 1024 ** 3) } }));
+  await assert.rejects(declaredLarge.downloadScene({ ...args, output_dir: largeDir }), /byte count/);
+  assert.deepEqual(await readdir(largeDir), []);
+  const excessiveDir = await temporary(t);
+  const excessive = api(async () => new Response(zip, { headers: { etag: `"${version}"`, 'content-length': '4' } }));
+  await assert.rejects(excessive.downloadScene({ ...args, output_dir: excessiveDir }), /exceeds Content-Length/);
+  assert.deepEqual(await readdir(excessiveDir), []);
 });
 
 test('scene inputs follow shared Backend instruction, selection and upload bounds', async t => {

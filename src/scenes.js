@@ -323,9 +323,9 @@ export async function downloadScene(client, input) {
     catch (error) { if (error.code !== 'ENOENT') throw error; }
     if (info) {
       if (info.isSymbolicLink() || !info.isFile()) throw new Error('Scene archive must be a regular file before it can be reused.');
-      if (!Number.isSafeInteger(receipt.bytes) || receipt.bytes < 1 || receipt.bytes > client.maxDownloadBytes || info.size > client.maxDownloadBytes) throw new Error('Scene archive exceeds the client download limit.');
+      if (!Number.isSafeInteger(receipt.bytes) || receipt.bytes < 1 || !Number.isSafeInteger(info.size)) throw new Error('Scene archive size is invalid.');
       if (info.size === receipt.bytes) {
-        const archived = await digestRegularFile(destination, client.maxDownloadBytes);
+        const archived = await digestRegularFile(destination, receipt.bytes);
         if (archived.sha256 === receipt.sha256 && (!requestedVersion || await confirmedVersion(client, scene_id) === version)) {
           return publishedReceipt({ scene_id, version, file: destination, sha256: archived.sha256, bytes: archived.size, downloaded_at: receipt.downloaded_at, api_origin: client.base.origin }, { receipt_file: receiptPath, cached: true });
         }
@@ -338,22 +338,31 @@ export async function downloadScene(client, input) {
   await assertResolvedDirectory(directory);
   const file = await open(destination, 'wx', 0o600);
   let complete = false;
+  const controller = new AbortController();
+  let idleTimer;
+  const armIdle = () => {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => controller.abort(new Error('Scene download timed out without progress.')), 60000);
+    idleTimer.unref?.();
+  };
   try {
-    const response = await client.request(`${route(scene_id)}/download?version=${encodeURIComponent(version)}`, { raw: true });
+    // A progressing archive may take longer than the JSON request deadline.
+    armIdle();
+    const response = await client.request(`${route(scene_id)}/download?version=${encodeURIComponent(version)}`, { raw: true, timeoutMs: null, signal: controller.signal });
     // The API streams the accepted archive; it never requires credentialed redirects.
     if (!response.ok || !response.body || /json|text\/html/i.test(response.headers.get('content-type') || '')) throw new Error('Scene download did not return an archive.');
     if (response.headers.get('etag') !== `"${version}"`) throw new Error('Scene archive ETag does not match the requested delivery version.');
     const lengthHeader = response.headers.get('content-length');
     const expectedBytes = Number(lengthHeader);
     if (!lengthHeader || !/^[1-9][0-9]*$/.test(lengthHeader) || !Number.isSafeInteger(expectedBytes)) throw new Error('Scene archive Content-Length is missing or invalid.');
-    if (expectedBytes > client.maxDownloadBytes) throw new Error('Scene archive exceeds the client download limit.');
     const hash = createHash('sha256');
     let bytes = 0;
     let signature = Buffer.alloc(0);
     for await (const chunk of response.body) {
+      armIdle();
       bytes += chunk.byteLength;
-      if (bytes > client.maxDownloadBytes) throw new Error('Scene archive exceeds the client download limit.');
-      if (signature.length < 4) signature = Buffer.concat([signature, Buffer.from(chunk)]).subarray(0, 4);
+      if (bytes > expectedBytes) throw new Error('Scene archive byte count exceeds Content-Length.');
+      if (signature.length < 4) signature = Buffer.concat([signature, Buffer.from(chunk.subarray(0, 4 - signature.length))]);
       hash.update(chunk);
       await file.writeFile(chunk);
     }
@@ -366,5 +375,5 @@ export async function downloadScene(client, input) {
     await writeFile(receiptPath, JSON.stringify(receipt, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
     complete = true;
     return publishedReceipt(receipt, { receipt_file: receiptPath, cached: false });
-  } finally { await file.close(); if (!complete) await unlink(destination).catch(() => {}); }
+  } finally { clearTimeout(idleTimer); await file.close(); if (!complete) await unlink(destination).catch(() => {}); }
 }
