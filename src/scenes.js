@@ -342,6 +342,7 @@ export async function downloadScene(client, input) {
   await assertResolvedDirectory(directory);
   const file = await open(destination, 'wx', 0o600);
   let complete = false;
+  let response;
   const controller = new AbortController();
   let idleTimer;
   const armIdle = () => {
@@ -352,7 +353,7 @@ export async function downloadScene(client, input) {
   try {
     // A progressing archive may take longer than the JSON request deadline.
     armIdle();
-    const response = await client.request(`${route(scene_id)}/${checkpoint ? 'checkpoint-download' : 'download'}?version=${encodeURIComponent(version)}`, { raw: true, timeoutMs: null, signal: controller.signal });
+    response = await client.request(`${route(scene_id)}/${checkpoint ? 'checkpoint-download' : 'download'}?version=${encodeURIComponent(version)}`, { raw: true, timeoutMs: null, signal: controller.signal });
     // The API streams the accepted archive; it never requires credentialed redirects.
     if (!response.ok || !response.body || /json|text\/html/i.test(response.headers.get('content-type') || '')) throw new Error('Scene download did not return an archive.');
     if (response.headers.get('etag') !== `"${version}"`) throw new Error('Scene archive ETag does not match the requested delivery version.');
@@ -379,5 +380,15 @@ export async function downloadScene(client, input) {
     await writeFile(receiptPath, JSON.stringify(receipt, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
     complete = true;
     return publishedReceipt(receipt, { receipt_file: receiptPath, cached: false, ...(checkpoint ? { package_kind: 'checkpoint' } : {}) });
-  } finally { clearTimeout(idleTimer); await file.close(); if (!complete) await unlink(destination).catch(() => {}); }
+  } finally {
+    clearTimeout(idleTimer);
+    if (!complete) {
+      controller.abort();
+      // Header failures leave a response that was never iterated. Cancel it as
+      // well as aborting fetch; an already-locked/closed stream may reject.
+      try { await response?.body?.cancel(); } catch { /* already locked or closed */ }
+    }
+    try { await file.close(); }
+    finally { if (!complete) await unlink(destination).catch(() => {}); }
+  }
 }

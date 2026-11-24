@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createServer as httpServer } from 'node:http';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, open, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -210,6 +210,47 @@ test('scene download rejects ETag, Content-Length and package digest mismatches 
     await assert.rejects(client.downloadScene({ scene_id: sceneId, version, output_dir: directory }), expected);
     assert.deepEqual(await readdir(directory), []);
   }
+});
+
+test('scene download aborts and cancels the response on invalid headers or stream failure', async t => {
+  const valid = { 'content-type': 'application/zip', etag: `"${version}"`, 'content-length': String(zip.length) };
+  for (const headers of [
+    { ...valid, 'content-type': 'application/json' },
+    { ...valid, etag: '"wrong"' },
+    { ...valid, 'content-length': 'invalid' },
+    { ...valid, 'content-length': '1' }, // stream exceeds its declared size while writing
+  ]) {
+    const directory = await temporary(t);
+    let signal, cancelled = false;
+    const client = api(async (_url, options) => {
+      signal = options.signal;
+      return new Response(new ReadableStream({ start(controller) { controller.enqueue(zip); }, cancel() { cancelled = true; } }), { headers });
+    });
+    await assert.rejects(client.downloadScene({ scene_id: sceneId, version, output_dir: directory }));
+    assert.equal(signal.aborted, true);
+    assert.equal(cancelled, true);
+    assert.deepEqual(await readdir(directory), []);
+  }
+});
+
+test('scene download cancels the response and deletes its partial file on write failure', async t => {
+  const directory = await temporary(t), probePath = path.join(directory, 'probe');
+  const probe = await open(probePath, 'w');
+  const prototype = Object.getPrototypeOf(probe), write = prototype.writeFile;
+  await probe.close(); await rm(probePath);
+  let signal, cancelled = false;
+  const client = api(async (_url, options) => {
+    signal = options.signal;
+    return new Response(new ReadableStream({ start(controller) { controller.enqueue(zip); }, cancel() { cancelled = true; } }),
+      { headers: { etag: `"${version}"`, 'content-length': String(zip.length) } });
+  });
+  try {
+    prototype.writeFile = async () => { throw new Error('disk full'); };
+    await assert.rejects(client.downloadScene({ scene_id: sceneId, version, output_dir: directory }), /disk full/);
+  } finally { prototype.writeFile = write; }
+  assert.equal(signal.aborted, true);
+  assert.equal(cancelled, true);
+  assert.deepEqual(await readdir(directory), []);
 });
 
 test('cached archive cannot claim another version even when its receipt matches the modified file', async t => {
