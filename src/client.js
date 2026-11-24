@@ -477,8 +477,27 @@ async function sha256File(filename) {
   return hash.digest('hex');
 }
 
+/** Replays of one request the server answered `503 RUN_RETRY_STARTING`, and the longest Retry-After honored. */
+export const RUN_RETRY_STARTING_REPLAYS = 3;
+const RUN_RETRY_STARTING_MAX_WAIT_MS = 30_000;
+
+/**
+ * The wait before replaying a request the server answered 503 RUN_RETRY_STARTING (its request is still
+ * starting; the same request, resent unchanged, is answered once it has), or null for any other answer.
+ */
+async function runRetryStartingWait(response) {
+  if (response.status !== 503) return null;
+  let payload;
+  try { payload = await response.clone().json(); } catch { return null; }
+  const code = payload?.code ?? payload?.error?.code;
+  if (code !== 'RUN_RETRY_STARTING') return null;
+  const header = response.headers.get('retry-after');
+  const seconds = header === null ? 1 : /^\d+$/.test(header.trim()) ? Number(header.trim()) : (Date.parse(header) - Date.now()) / 1000;
+  return Math.min(Math.max(Number.isFinite(seconds) ? seconds : 1, 0) * 1000, RUN_RETRY_STARTING_MAX_WAIT_MS);
+}
+
 export class PalatialClient {
-  constructor({ apiKey, baseUrl = DEFAULT_API_URL, fetchImpl = fetch, allowHttpForTests = false, timeoutMs = 30000, autoTimeoutMs = 180000, maxDownloadBytes = 2 * 1024 ** 3, receiptDir = process.env.PALATIAL_STATE_DIR || path.join(homedir(), '.local', 'state', 'palatial-agent') } = {}) {
+  constructor({ apiKey, baseUrl = DEFAULT_API_URL, fetchImpl = fetch, allowHttpForTests = false, timeoutMs = 30000, autoTimeoutMs = 180000, maxDownloadBytes = 2 * 1024 ** 3, receiptDir = process.env.PALATIAL_STATE_DIR || path.join(homedir(), '.local', 'state', 'palatial-agent'), sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
     if (!apiKey?.trim()) throw new Error('Missing Palatial API key.');
     this.apiKey = apiKey.trim();
     this.base = new URL(baseUrl.endsWith('/') ? baseUrl : baseUrl + '/');
@@ -489,6 +508,7 @@ export class PalatialClient {
     this.autoTimeoutMs = autoTimeoutMs;
     this.maxDownloadBytes = maxDownloadBytes;
     this.receiptDir = receiptDir;
+    this.sleep = sleep;
   }
 
   async request(route, { method = 'GET', body, binaryBody, uploadBody, raw = false, idempotencyKey, timeoutMs = this.timeoutMs, structuredErrors = false } = {}) {
@@ -502,11 +522,18 @@ export class PalatialClient {
     let response;
     const transfer = uploadBody ? progressUpload(uploadBody.body, uploadBody) : undefined;
     try {
-      try {
-        response = await this.fetch(url, { method, headers, body: transfer ? transfer.body : binaryBody !== undefined ? binaryBody : body instanceof FormData ? body : body ? JSON.stringify(body) : undefined, redirect: raw ? 'manual' : 'error', signal: transfer?.signal || AbortSignal.timeout(timeoutMs), ...(transfer ? { duplex: 'half' } : {}) });
-      } catch (error) {
-        const uncertain = method !== 'GET' ? ' The server may have accepted the request. Check your workspace before submitting again; this client does not retry mutations.' : '';
-        throw new Error(safeMessage(error, this.apiKey) + uncertain);
+      // A request still starting on the server (503 RUN_RETRY_STARTING) is resent unchanged: the same
+      // body, request id and Idempotency-Key, after its Retry-After. A streamed upload cannot be resent.
+      for (let replay = 0; ; replay++) {
+        try {
+          response = await this.fetch(url, { method, headers, body: transfer ? transfer.body : binaryBody !== undefined ? binaryBody : body instanceof FormData ? body : body ? JSON.stringify(body) : undefined, redirect: raw ? 'manual' : 'error', signal: transfer?.signal || AbortSignal.timeout(timeoutMs), ...(transfer ? { duplex: 'half' } : {}) });
+        } catch (error) {
+          const uncertain = method !== 'GET' ? ' The server may have accepted the request. Check your workspace before submitting again; this client does not retry mutations.' : '';
+          throw new Error(safeMessage(error, this.apiKey) + uncertain);
+        }
+        const wait = transfer || replay >= RUN_RETRY_STARTING_REPLAYS ? null : await runRetryStartingWait(response);
+        if (wait === null) break;
+        await this.sleep(wait);
       }
       if (raw && response.status >= 300 && response.status < 400) return response;
       if (!response.ok) {
