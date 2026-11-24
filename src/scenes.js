@@ -67,7 +67,7 @@ export const messageSceneSchema = z.object({
   regenerateObjects: z.array(sceneObjectIdSchema).min(1).max(1000).describe('Failed or dropped object IDs from next_message.regenerable_objects to rebuild; only with next_message.action continue, so it always needs confirmSpend.').optional()
 }).strict().refine(input => !input.regenerateObjects || input.confirmSpend === true, { path: ['confirmSpend'], message: 'Rebuilding objects is new paid work: regenerateObjects needs confirmSpend: true.' });
 export const retrySceneStartSchema = z.object({ scene_id: sceneIdSchema, confirm_spend: z.literal(true).describe('Explicit spending authorization for retrying the frozen confirmed start; the server must prove no native execution occurred.') }).strict();
-export const downloadSceneSchema = z.object({ scene_id: sceneIdSchema, output_dir: z.string().min(1), version: sceneDigestSchema.describe('Optional exact download.version. Omit to download the current accepted package.').optional() }).strict();
+export const downloadSceneSchema = z.object({ scene_id: sceneIdSchema, output_dir: z.string().min(1), version: sceneDigestSchema.describe('Optional exact version. Checkpoint mode requires the current checkpoint_download.version.').optional(), checkpoint: z.boolean().describe('Download the current viewing/editing checkpoint instead of the accepted simulator export.').optional() }).strict();
 
 const sourceTypes = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm' };
 const inlineLimit = 32 * 1024 ** 2;
@@ -303,15 +303,19 @@ async function assertMissing(filename) {
   catch (error) { if (error.code === 'ENOENT') return; throw error; }
   throw new Error('Output already exists. Choose a new output directory.');
 }
-async function confirmedVersion(client, sceneId) {
-  const parsed = sceneDigestSchema.safeParse((await getScene(client, sceneId))?.download?.version);
+async function confirmedVersion(client, sceneId, checkpoint = false) {
+  const report = await getScene(client, sceneId);
+  const parsed = sceneDigestSchema.safeParse((checkpoint ? report?.checkpoint_download : report?.download)?.version);
   return parsed.success ? parsed.data : null;
 }
 export async function downloadScene(client, input) {
-  const { scene_id, output_dir, version: requestedVersion } = downloadSceneSchema.parse(input);
+  const { scene_id, output_dir, version: requestedVersion, checkpoint = false } = downloadSceneSchema.parse(input);
   const directory = await resolveOutputDirectory(output_dir);
-  const version = requestedVersion || sceneDigestSchema.parse((await getScene(client, scene_id)).download?.version);
-  const stem = `${scene_id}-scene-${version.slice(7, 19)}`;
+  const reported = checkpoint ? await confirmedVersion(client, scene_id, true) : null;
+  if (checkpoint && !reported) throw new Error('No checkpoint download is currently available for this scene.');
+  if (checkpoint && requestedVersion && requestedVersion !== reported) throw new Error('The scene checkpoint version changed. Refresh and try again.');
+  const version = checkpoint ? reported : requestedVersion || sceneDigestSchema.parse((await getScene(client, scene_id)).download?.version);
+  const stem = `${scene_id}-${checkpoint ? 'checkpoint' : 'scene'}-${version.slice(7, 19)}`;
   const destination = path.join(directory, `${stem}.zip`);
   const receiptPath = path.join(directory, `${stem}-receipt.json`);
   const loaded = await loadReceipt(receiptPath);
@@ -326,8 +330,8 @@ export async function downloadScene(client, input) {
       if (!Number.isSafeInteger(receipt.bytes) || receipt.bytes < 1 || !Number.isSafeInteger(info.size)) throw new Error('Scene archive size is invalid.');
       if (info.size === receipt.bytes) {
         const archived = await digestRegularFile(destination, receipt.bytes);
-        if (archived.sha256 === receipt.sha256 && (!requestedVersion || await confirmedVersion(client, scene_id) === version)) {
-          return publishedReceipt({ scene_id, version, file: destination, sha256: archived.sha256, bytes: archived.size, downloaded_at: receipt.downloaded_at, api_origin: client.base.origin }, { receipt_file: receiptPath, cached: true });
+        if (archived.sha256 === receipt.sha256 && (checkpoint || !requestedVersion || await confirmedVersion(client, scene_id) === version)) {
+          return publishedReceipt({ scene_id, version, file: destination, sha256: archived.sha256, bytes: archived.size, downloaded_at: receipt.downloaded_at, api_origin: client.base.origin }, { receipt_file: receiptPath, cached: true, ...(checkpoint ? { package_kind: 'checkpoint' } : {}) });
         }
       }
     }
@@ -348,7 +352,7 @@ export async function downloadScene(client, input) {
   try {
     // A progressing archive may take longer than the JSON request deadline.
     armIdle();
-    const response = await client.request(`${route(scene_id)}/download?version=${encodeURIComponent(version)}`, { raw: true, timeoutMs: null, signal: controller.signal });
+    const response = await client.request(`${route(scene_id)}/${checkpoint ? 'checkpoint-download' : 'download'}?version=${encodeURIComponent(version)}`, { raw: true, timeoutMs: null, signal: controller.signal });
     // The API streams the accepted archive; it never requires credentialed redirects.
     if (!response.ok || !response.body || /json|text\/html/i.test(response.headers.get('content-type') || '')) throw new Error('Scene download did not return an archive.');
     if (response.headers.get('etag') !== `"${version}"`) throw new Error('Scene archive ETag does not match the requested delivery version.');
@@ -374,6 +378,6 @@ export async function downloadScene(client, input) {
     const receipt = { scene_id, version, file: destination, sha256, bytes, downloaded_at: new Date().toISOString(), api_origin: client.base.origin, validation: 'not_inspected', simulator_acceptance: 'not_tested' };
     await writeFile(receiptPath, JSON.stringify(receipt, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
     complete = true;
-    return publishedReceipt(receipt, { receipt_file: receiptPath, cached: false });
+    return publishedReceipt(receipt, { receipt_file: receiptPath, cached: false, ...(checkpoint ? { package_kind: 'checkpoint' } : {}) });
   } finally { clearTimeout(idleTimer); await file.close(); if (!complete) await unlink(destination).catch(() => {}); }
 }

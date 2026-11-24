@@ -14,7 +14,9 @@ the authorized Dev external API origin before starting the MCP server.
 | Read | `palatial_get_scene` | `scene-get --scene-id ID` | `getScene(sceneId)` |
 | Message | `palatial_message_scene` | `scene-message --scene-id ID --text ...` | `messageScene(sceneId, { text, requestId?, confirmSpend?, expectedHead?, regenerateObjects? })` |
 | Stop | `palatial_stop_scene` | `scene-stop --scene-id ID` | `cancelScene(sceneId)` |
-| Download | `palatial_download_scene` | `scene-download --scene-id ID --output-dir DIR` | `downloadScene(input)` |
+| Download | `palatial_download_scene` | `scene-download --scene-id ID --output-dir DIR [--checkpoint]` | `downloadScene(input)` |
+
+Downloads default to the accepted simulator export. Set `checkpoint: true` in the SDK or MCP input, or pass `--checkpoint` in the CLI, for the current `checkpoint_download.version`. The client verifies the current report and streams the fixed same-origin checkpoint route. A checkpoint is a viewing/editing delivery with simulator readiness unverified.
 
 1. **Start** creates and starts a scene with one API request. Supply a stable
    UUID `request_id`, authorized `workspace`, instructions and

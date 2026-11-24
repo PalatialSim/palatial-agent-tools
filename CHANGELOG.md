@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add explicit checkpoint download mode to the scene CLI, SDK and MCP tool. It selects the current workspace-authorized `checkpoint_download.version` and keeps the default accepted-export behavior.
 - Stream scene ZIP downloads and cached verification without the asset client's 2 GiB limit. Retain a progress-based idle timeout and verify the exact declared length and SHA-256 before publication; asset download and upload limits are unchanged.
 
 ## 0.1.26-dev.0

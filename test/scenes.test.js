@@ -151,6 +151,31 @@ test('scene download is independent of asset limits and verifies the declared st
   assert.deepEqual(await readdir(excessiveDir), []);
 });
 
+test('checkpoint download uses only the current scene report version and fixed same-origin route', async t => {
+  const directory = await temporary(t), seen = [];
+  const client = api(async url => {
+    seen.push(new URL(url));
+    if (url.pathname.endsWith('/checkpoint-download')) return new Response(zip, { headers: { etag: `"${version}"`, 'content-length': String(zip.length) } });
+    return response({ checkpoint_download: { version, size: zip.length, url: 'https://untrusted.example/steal', simulator_readiness: 'unverified' } });
+  });
+  const args = { scene_id: sceneId, output_dir: directory, checkpoint: true };
+  const result = await client.downloadScene(args);
+  assert.equal(result.version, version); assert.equal(result.package_kind, 'checkpoint');
+  assert.equal(seen.length, 2);
+  assert.equal(seen[1].origin, 'https://dev.example');
+  assert.equal(seen[1].pathname, `/api/v1/external/scene-generations/${sceneId}/checkpoint-download`);
+  assert.equal(seen[1].searchParams.get('version'), version);
+  assert.equal((await client.downloadScene(args)).cached, true);
+  assert.equal(seen.length, 3); // cache reuse still verifies the workspace-scoped current report
+  const stale = await temporary(t);
+  await assert.rejects(client.downloadScene({ ...args, output_dir: stale, version: `sha256:${'a'.repeat(64)}` }), /version changed/);
+  assert.deepEqual(await readdir(stale), []);
+  const other = await temporary(t);
+  const forbidden = api(async () => new Response(JSON.stringify({ error: 'not found' }), { status: 404, headers: { 'content-type': 'application/json' } }));
+  await assert.rejects(forbidden.downloadScene({ ...args, output_dir: other }));
+  assert.deepEqual(await readdir(other), []);
+});
+
 test('scene inputs follow shared Backend instruction, selection and upload bounds', async t => {
   assert.equal(createSceneSchema.safeParse({ ...input, description: 'a'.repeat(4000) }).success, true);
   assert.equal(createSceneSchema.safeParse({ ...input, description: 'a'.repeat(4001) }).success, false);

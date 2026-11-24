@@ -79,7 +79,7 @@ export function createServer({ clientFactory } = {}) {
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true }
   }, ({ scene_id }) => run(async () => (await client()).cancelScene(scene_id)));
   server.registerTool('palatial_download_scene', {
-    description: 'Download the accepted scene ZIP to output_dir (GET scene-generations/{id}/download), optionally pinned to an exact download.version. Free. Verifies ETag, Content-Length and SHA-256, preserves existing files and writes a receipt. A download does not prove simulator acceptance.',
+    description: 'Download the accepted scene ZIP, or set checkpoint=true for the current viewing/editing checkpoint. The checkpoint must match checkpoint_download.version and is not a verified simulator export. Free. Verifies ETag, Content-Length and SHA-256, preserves existing files and writes a receipt.',
     inputSchema: downloadSceneSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   }, input => run(async () => (await client()).downloadScene(input)));

@@ -5,6 +5,31 @@ import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
+
+test('CLI checkpoint mode reads the scene report and downloads the named checkpoint', async t => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'palatial-cli-checkpoint-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const observedPath = path.join(dir, 'observed.txt'), mockPath = path.join(dir, 'fetch.mjs');
+  const zip = Buffer.from('504b0304000102', 'hex'), version = `sha256:${createHash('sha256').update(zip).digest('hex')}`;
+  const sceneId = 'abcdef0123456789abcdef01';
+  await writeFile(mockPath, `import { appendFile } from 'node:fs/promises';
+    globalThis.fetch = async url => {
+      await appendFile(process.env.TEST_OBSERVATION, String(url) + '\\n');
+      if (url.pathname.endsWith('/checkpoint-download')) return new Response(Buffer.from(${JSON.stringify(zip.toString('hex'))}, 'hex'), { headers: { etag: ${JSON.stringify(`"${version}"`)}, 'content-length': '${zip.length}' } });
+      return new Response(JSON.stringify({ checkpoint_download: { version: ${JSON.stringify(version)} } }), { headers: { 'content-type': 'application/json' } });
+    };`);
+  const result = execFileSync(process.execPath, ['--import', pathToFileURL(mockPath).href,
+    fileURLToPath(new URL('../bin/palatial-agent.js', import.meta.url)), 'scene-download', '--scene-id', sceneId,
+    '--output-dir', path.join(dir, 'output'), '--checkpoint'],
+    { encoding: 'utf8', env: { PATH: process.env.PATH, PALATIAL_API_KEY: 'fixture-key',
+      PALATIAL_API_URL: 'https://api.example.test/api/v1/external/', TEST_OBSERVATION: observedPath } });
+  assert.equal(JSON.parse(result).package_kind, 'checkpoint');
+  const urls = (await readFile(observedPath, 'utf8')).trim().split('\n').map(value => new URL(value));
+  assert.equal(urls.length, 2);
+  assert.equal(urls[1].pathname, `/api/v1/external/scene-generations/${sceneId}/checkpoint-download`);
+  assert.equal(urls[1].searchParams.get('version'), version);
+});
 
 test('CLI repair request reaches the shared API client once with exact feedback and lineage', async t => {
   const dir = await mkdtemp(path.join(tmpdir(), 'palatial-cli-feedback-'));

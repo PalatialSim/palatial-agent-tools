@@ -72,11 +72,12 @@ Five MCP tools, JavaScript methods and CLI commands cover scene generation (Dev 
 | `palatial_get_scene` | `getScene(sceneId)` | `scene-get --scene-id ID` | `GET scene-generations/{id}` |
 | `palatial_message_scene` | `messageScene(sceneId, { text, requestId?, confirmSpend?, expectedHead?, regenerateObjects? })` | `scene-message --scene-id ID --text ...` | `POST scene-generations/{id}/messages` |
 | `palatial_stop_scene` | `cancelScene(sceneId)` | `scene-stop --scene-id ID` | `POST scene-generations/{id}/stop` |
-| `palatial_download_scene` | `downloadScene(input)` | `scene-download --scene-id ID --output-dir DIR` | `GET scene-generations/{id}/download` |
+| `palatial_download_scene` | `downloadScene(input)` | `scene-download --scene-id ID --output-dir DIR [--checkpoint]` | `GET scene-generations/{id}/download` or `/checkpoint-download` |
 
 - Starting a scene is paid work; the request carries `confirm_spend: true` once the user has authorized it.
 - `next_message` in the scene read says what a message sent now would do, decided in this order: `retry_start`, `answer`, `resume`, `relay`, `continue`, else `none` (409 `scene_not_messageable` with `reason`). A message to a running scene is relayed to its director; a waiting question takes it as the answer; a parked checkpoint resumes. Continuing a settled scene (delivered, best checkpoint, stopped, held in review) is new paid work and needs `confirm_spend: true`, as do retrying a refused start and `regenerate_objects`; a change request on a delivered scene continues the whole scene. Without it the server returns 409 `confirm_spend_required` with `next_message` and does nothing.
 - Each message has a UUID `request_id` (generated when omitted, returned on the receipt and on errors). Replay the same ID and body after an uncertain outcome such as 503 `scene_message_unconfirmed`.
+- Scene downloads default to the accepted simulator export. Set `checkpoint: true` in the SDK or MCP input, or pass `--checkpoint` in the CLI, to download the current `checkpoint_download.version` for viewing and editing. A checkpoint does not establish simulator readiness. If a version is supplied it must match the current checkpoint; the client reads the workspace-authorized scene report and uses the fixed same-origin route.
 - `answerScene`, `recoverScene` and `retrySceneStart` are deprecated aliases of `messageScene` and keep working; `answerScene` and `recoverScene` need `confirm_spend: true` when they continue a scene that ended.
 
 See `skills/palatial/references/scenes.md` (`palatial-agent guide --topic scenes`) for the full workflow.

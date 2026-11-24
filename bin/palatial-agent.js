@@ -44,7 +44,7 @@ palatial-agent scene-message --scene-id ID --text "..." [--request-id UUID] [--c
                                           --regenerate-object are new paid work and need
                                           --confirm-spend
 palatial-agent scene-stop --scene-id ID   Stop a scene (free; completed work stays charged)
-palatial-agent scene-download --scene-id ID --output-dir ./scenes [--scene-version sha256:...]
+palatial-agent scene-download --scene-id ID --output-dir ./scenes [--scene-version sha256:...] [--checkpoint]
 
 All command results are JSON, except guide, which prints Markdown. API keys
 are read from PALATIAL_API_KEY or the local credentials file; never include keys in chat, command arguments, or git.
@@ -95,7 +95,7 @@ async function sceneCommand(client, command, values) {
     });
   }
   if (!values['output-dir']) throw new Error('Provide --output-dir.');
-  return client.downloadScene({ scene_id: sceneId, output_dir: values['output-dir'], ...(values['scene-version'] ? { version: values['scene-version'] } : {}) });
+  return client.downloadScene({ scene_id: sceneId, output_dir: values['output-dir'], ...(values['scene-version'] ? { version: values['scene-version'] } : {}), ...(values.checkpoint ? { checkpoint: true } : {}) });
 }
 
 async function main() {
@@ -103,7 +103,7 @@ async function main() {
     client: { type: 'string' }, 'dry-run': { type: 'boolean' }, request: { type: 'string' },
     'asset-id': { type: 'string' }, 'scene-id': { type: 'string' }, text: { type: 'string' }, 'request-id': { type: 'string' },
     'confirm-spend': { type: 'boolean' }, 'expected-head': { type: 'string' }, 'regenerate-object': { type: 'string', multiple: true }, 'scene-version': { type: 'string' },
-    'output-dir': { type: 'string' }, 'allow-failed-export': { type: 'boolean' }, apply: { type: 'boolean' }, topic: { type: 'string' }, help: { type: 'boolean', short: 'h' }, version: { type: 'boolean' }
+    'output-dir': { type: 'string' }, checkpoint: { type: 'boolean' }, 'allow-failed-export': { type: 'boolean' }, apply: { type: 'boolean' }, topic: { type: 'string' }, help: { type: 'boolean', short: 'h' }, version: { type: 'boolean' }
   } });
   const command = positionals[0];
   if (values.version) { console.log(VERSION); return; }
