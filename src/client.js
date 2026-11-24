@@ -522,8 +522,11 @@ export class PalatialClient {
     let response;
     const transfer = uploadBody ? progressUpload(uploadBody.body, uploadBody) : undefined;
     try {
-      // A request still starting on the server (503 RUN_RETRY_STARTING) is resent unchanged: the same
-      // body, request id and Idempotency-Key, after its Retry-After. A streamed upload cannot be resent.
+      // A request still starting on the server (503 RUN_RETRY_STARTING) is resent unchanged after its
+      // Retry-After, only when it names itself (an Idempotency-Key, or a request id in its JSON body):
+      // without one a resend is new work. Multipart and streamed bodies cannot be resent byte for byte.
+      const replayable = !transfer && binaryBody === undefined && !(body instanceof FormData) && (idempotencyKey !== undefined ||
+        (body && typeof body === 'object' && ['requestId', 'request_id'].some(key => typeof body[key] === 'string' && body[key])));
       for (let replay = 0; ; replay++) {
         try {
           response = await this.fetch(url, { method, headers, body: transfer ? transfer.body : binaryBody !== undefined ? binaryBody : body instanceof FormData ? body : body ? JSON.stringify(body) : undefined, redirect: raw ? 'manual' : 'error', signal: transfer?.signal || AbortSignal.timeout(timeoutMs), ...(transfer ? { duplex: 'half' } : {}) });
@@ -531,7 +534,7 @@ export class PalatialClient {
           const uncertain = method !== 'GET' ? ' The server may have accepted the request. Check your workspace before submitting again; this client does not retry mutations.' : '';
           throw new Error(safeMessage(error, this.apiKey) + uncertain);
         }
-        const wait = transfer || replay >= RUN_RETRY_STARTING_REPLAYS ? null : await runRetryStartingWait(response);
+        const wait = !replayable || replay >= RUN_RETRY_STARTING_REPLAYS ? null : await runRetryStartingWait(response);
         if (wait === null) break;
         await this.sleep(wait);
       }
