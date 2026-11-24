@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createServer as httpServer } from 'node:http';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, open, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -114,8 +114,8 @@ test('versioned scene download caches verified receipts and preserves existing o
   assert.equal(await readFile(first.file, 'utf8'), 'modified');
 });
 
-test('invalid and oversized scene downloads clean reserved output without following redirects', async t => {
-  for (const [payload, options] of [['not a zip', {}], [Buffer.from('504b030400', 'hex'), { maxDownloadBytes: 4 }]]) {
+test('invalid scene downloads clean reserved output without following redirects', async t => {
+  for (const [payload, options] of [['not a zip', {}]]) {
     const directory = await temporary(t);
     const payloadVersion = `sha256:${hash(Buffer.from(payload))}`;
     const client = api(async () => new Response(payload, { headers: { etag: `"${payloadVersion}"`, 'content-length': String(payload.length) } }), options);
@@ -126,6 +126,54 @@ test('invalid and oversized scene downloads clean reserved output without follow
   const client = api(async () => { calls++; return new Response(null, { status: 302, headers: { location: 'https://untrusted.example/?secret=value' } }); });
   await assert.rejects(client.downloadScene({ scene_id: sceneId, version, output_dir: directory }), /did not return an archive/);
   assert.equal(calls, 1);
+});
+
+test('scene download is independent of asset limits and verifies the declared stream length', async t => {
+  const directory = await temporary(t);
+  const client = api(async (url, options) => {
+    if (String(url).includes('/download')) {
+      assert.ok(options.signal instanceof AbortSignal);
+      return new Response(zip, { headers: { etag: `"${version}"`, 'content-length': String(zip.length) } });
+    }
+    assert.ok(options.signal);
+    return response({ download: { version } });
+  }, { maxDownloadBytes: 4 });
+  const args = { scene_id: sceneId, version, output_dir: directory };
+  assert.equal((await client.downloadScene(args)).cached, false);
+  assert.equal((await client.downloadScene(args)).cached, true);
+  const largeDir = await temporary(t);
+  const declaredLarge = api(async () => new Response(zip, { headers: { etag: `"${version}"`, 'content-length': String(3 * 1024 ** 3) } }));
+  await assert.rejects(declaredLarge.downloadScene({ ...args, output_dir: largeDir }), /byte count/);
+  assert.deepEqual(await readdir(largeDir), []);
+  const excessiveDir = await temporary(t);
+  const excessive = api(async () => new Response(zip, { headers: { etag: `"${version}"`, 'content-length': '4' } }));
+  await assert.rejects(excessive.downloadScene({ ...args, output_dir: excessiveDir }), /exceeds Content-Length/);
+  assert.deepEqual(await readdir(excessiveDir), []);
+});
+
+test('checkpoint download uses only the current scene report version and fixed same-origin route', async t => {
+  const directory = await temporary(t), seen = [];
+  const client = api(async url => {
+    seen.push(new URL(url));
+    if (url.pathname.endsWith('/checkpoint-download')) return new Response(zip, { headers: { etag: `"${version}"`, 'content-length': String(zip.length) } });
+    return response({ checkpoint_download: { version, size: zip.length, url: 'https://untrusted.example/steal', simulator_readiness: 'unverified' } });
+  });
+  const args = { scene_id: sceneId, output_dir: directory, checkpoint: true };
+  const result = await client.downloadScene(args);
+  assert.equal(result.version, version); assert.equal(result.package_kind, 'checkpoint');
+  assert.equal(seen.length, 2);
+  assert.equal(seen[1].origin, 'https://dev.example');
+  assert.equal(seen[1].pathname, `/api/v1/external/scene-generations/${sceneId}/checkpoint-download`);
+  assert.equal(seen[1].searchParams.get('version'), version);
+  assert.equal((await client.downloadScene(args)).cached, true);
+  assert.equal(seen.length, 3); // cache reuse still verifies the workspace-scoped current report
+  const stale = await temporary(t);
+  await assert.rejects(client.downloadScene({ ...args, output_dir: stale, version: `sha256:${'a'.repeat(64)}` }), /version changed/);
+  assert.deepEqual(await readdir(stale), []);
+  const other = await temporary(t);
+  const forbidden = api(async () => new Response(JSON.stringify({ error: 'not found' }), { status: 404, headers: { 'content-type': 'application/json' } }));
+  await assert.rejects(forbidden.downloadScene({ ...args, output_dir: other }));
+  assert.deepEqual(await readdir(other), []);
 });
 
 test('scene inputs follow shared Backend instruction, selection and upload bounds', async t => {
@@ -162,6 +210,47 @@ test('scene download rejects ETag, Content-Length and package digest mismatches 
     await assert.rejects(client.downloadScene({ scene_id: sceneId, version, output_dir: directory }), expected);
     assert.deepEqual(await readdir(directory), []);
   }
+});
+
+test('scene download aborts and cancels the response on invalid headers or stream failure', async t => {
+  const valid = { 'content-type': 'application/zip', etag: `"${version}"`, 'content-length': String(zip.length) };
+  for (const headers of [
+    { ...valid, 'content-type': 'application/json' },
+    { ...valid, etag: '"wrong"' },
+    { ...valid, 'content-length': 'invalid' },
+    { ...valid, 'content-length': '1' }, // stream exceeds its declared size while writing
+  ]) {
+    const directory = await temporary(t);
+    let signal, cancelled = false;
+    const client = api(async (_url, options) => {
+      signal = options.signal;
+      return new Response(new ReadableStream({ start(controller) { controller.enqueue(zip); }, cancel() { cancelled = true; } }), { headers });
+    });
+    await assert.rejects(client.downloadScene({ scene_id: sceneId, version, output_dir: directory }));
+    assert.equal(signal.aborted, true);
+    assert.equal(cancelled, true);
+    assert.deepEqual(await readdir(directory), []);
+  }
+});
+
+test('scene download cancels the response and deletes its partial file on write failure', async t => {
+  const directory = await temporary(t), probePath = path.join(directory, 'probe');
+  const probe = await open(probePath, 'w');
+  const prototype = Object.getPrototypeOf(probe), write = prototype.writeFile;
+  await probe.close(); await rm(probePath);
+  let signal, cancelled = false;
+  const client = api(async (_url, options) => {
+    signal = options.signal;
+    return new Response(new ReadableStream({ start(controller) { controller.enqueue(zip); }, cancel() { cancelled = true; } }),
+      { headers: { etag: `"${version}"`, 'content-length': String(zip.length) } });
+  });
+  try {
+    prototype.writeFile = async () => { throw new Error('disk full'); };
+    await assert.rejects(client.downloadScene({ scene_id: sceneId, version, output_dir: directory }), /disk full/);
+  } finally { prototype.writeFile = write; }
+  assert.equal(signal.aborted, true);
+  assert.equal(cancelled, true);
+  assert.deepEqual(await readdir(directory), []);
 });
 
 test('cached archive cannot claim another version even when its receipt matches the modified file', async t => {

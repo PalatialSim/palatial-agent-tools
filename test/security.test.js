@@ -184,7 +184,7 @@ test('cached archives are hashed only after a regular-file and size check', asyn
   await handle.close();
   await writeFile(path.join(hugeDir, `${stem}-receipt.json`), JSON.stringify({ scene_id: sceneId, version, api_origin: 'https://dev.example', file: hugeFile, sha256: version.slice(7), bytes: 2 * 1024 * 1024 }));
   const limited = api(async () => { throw new Error('should not download'); }, { maxDownloadBytes: 1024 });
-  await assert.rejects(limited.downloadScene({ scene_id: sceneId, version, output_dir: hugeDir }), /download limit/);
+  await assert.rejects(limited.downloadScene({ scene_id: sceneId, version, output_dir: hugeDir }), /already exists/);
   const linkDir = path.join(dir, 'link');
   await mkdir(linkDir);
   const real = path.join(dir, 'real.zip');

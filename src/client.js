@@ -511,7 +511,7 @@ export class PalatialClient {
     this.sleep = sleep;
   }
 
-  async request(route, { method = 'GET', body, binaryBody, uploadBody, raw = false, idempotencyKey, timeoutMs = this.timeoutMs, structuredErrors = false } = {}) {
+  async request(route, { method = 'GET', body, binaryBody, uploadBody, raw = false, idempotencyKey, timeoutMs = this.timeoutMs, signal, structuredErrors = false } = {}) {
     const url = new URL(route, this.base);
     if (url.origin !== this.base.origin || !url.pathname.startsWith(this.base.pathname)) throw new Error('Request is outside the configured API.');
     const headers = { 'x-api-key': this.apiKey, Accept: 'application/json' };
@@ -529,7 +529,7 @@ export class PalatialClient {
         (body && typeof body === 'object' && ['requestId', 'request_id'].some(key => typeof body[key] === 'string' && body[key])));
       for (let replay = 0; ; replay++) {
         try {
-          response = await this.fetch(url, { method, headers, body: transfer ? transfer.body : binaryBody !== undefined ? binaryBody : body instanceof FormData ? body : body ? JSON.stringify(body) : undefined, redirect: raw ? 'manual' : 'error', signal: transfer?.signal || AbortSignal.timeout(timeoutMs), ...(transfer ? { duplex: 'half' } : {}) });
+          response = await this.fetch(url, { method, headers, body: transfer ? transfer.body : binaryBody !== undefined ? binaryBody : body instanceof FormData ? body : body ? JSON.stringify(body) : undefined, redirect: raw ? 'manual' : 'error', signal: transfer?.signal || signal || (timeoutMs === null ? undefined : AbortSignal.timeout(timeoutMs)), ...(transfer ? { duplex: 'half' } : {}) });
         } catch (error) {
           const uncertain = method !== 'GET' ? ' The server may have accepted the request. Check your workspace before submitting again; this client does not retry mutations.' : '';
           throw new Error(safeMessage(error, this.apiKey) + uncertain);
