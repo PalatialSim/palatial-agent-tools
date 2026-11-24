@@ -868,3 +868,45 @@ test('creation preserves long descriptions and relays server length refusals onc
   });
   await assert.rejects(rejected.client.create({ ...basic, description }), /Description is too long/);
 });
+
+test('a request still starting (503 RUN_RETRY_STARTING) is replayed unchanged after its Retry-After, at most three times', async t => {
+  const calls = [], waits = [];
+  const starting = (retryAfter) => new Response(JSON.stringify({ statusCode: 503, code: 'RUN_RETRY_STARTING', retryable: true, message: 'Still starting.' }),
+    { status: 503, headers: { 'Content-Type': 'application/json', ...(retryAfter === undefined ? {} : { 'Retry-After': retryAfter }) } });
+  const answers = [starting('2'), starting('120'), json({ turnId: 'turn-1', status: 'running' })];
+  const { client } = await fixture(t, async (url, init) => { calls.push({ url: String(url), init }); return answers.shift(); },
+    { sleep: async ms => { waits.push(ms); } });
+  const result = await client.request('variants/batch', { method: 'POST', body: { message: 'Build it' }, idempotencyKey: 'request-1', structuredErrors: true });
+  assert.equal(result.turnId, 'turn-1');
+  assert.equal(calls.length, 3);
+  // Retry-After is honored, capped at 30 seconds.
+  assert.deepEqual(waits, [2000, 30_000]);
+  for (const call of calls) {
+    assert.equal(call.init.headers['Idempotency-Key'], 'request-1');
+    assert.equal(call.init.body, JSON.stringify({ message: 'Build it' }));
+  }
+});
+
+test('a request that keeps starting surfaces the refusal after three replays, and other 503s are never replayed', async t => {
+  const calls = [];
+  const starting = () => new Response(JSON.stringify({ code: 'RUN_RETRY_STARTING', retryable: true }), { status: 503, headers: { 'Content-Type': 'application/json' } });
+  const { client } = await fixture(t, async (url, init) => { calls.push(init); return starting(); }, { sleep: async () => {} });
+  await assert.rejects(client.request('agent', { method: 'POST', body: { requestId: 'r-1', message: 'Build it' }, structuredErrors: true }),
+    error => error.code === 'RUN_RETRY_STARTING' && error.retryable === true);
+  assert.equal(calls.length, 4);
+  const other = [];
+  const { client: plain } = await fixture(t, async (url, init) => { other.push(init); return new Response('unavailable', { status: 503 }); }, { sleep: async () => {} });
+  await assert.rejects(plain.request('agent', { method: 'POST', body: { message: 'Build it' } }), /HTTP 503/);
+  assert.equal(other.length, 1);
+});
+
+test('a request without its own identity, or with a multipart body, is never replayed on RUN_RETRY_STARTING', async t => {
+  const calls = [];
+  const starting = () => new Response(JSON.stringify({ code: 'RUN_RETRY_STARTING', retryable: true }), { status: 503, headers: { 'Content-Type': 'application/json' } });
+  const { client } = await fixture(t, async (url, init) => { calls.push(init); return starting(); }, { sleep: async () => {} });
+  // Without a request id each call is new work: resending it could start a second paid job.
+  await assert.rejects(client.request('agent', { method: 'POST', body: { message: 'Build it' }, structuredErrors: true }), error => error.code === 'RUN_RETRY_STARTING');
+  const form = new FormData(); form.append('requestId', 'r-1');
+  await assert.rejects(client.request('assets/create', { method: 'POST', body: form, idempotencyKey: 'r-1', structuredErrors: true }), error => error.code === 'RUN_RETRY_STARTING');
+  assert.equal(calls.length, 2);
+});
