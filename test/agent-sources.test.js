@@ -207,6 +207,34 @@ test('an omitted-ID file call stops after its first ambiguous send and returns t
   assert.equal(multipartRequest(f.intents[0].bytes).requestId, id);
 });
 
+test('an omitted-ID file call answered 503 can be retried with its returned request_id; changed inputs are still refused', async t => {
+  const f = await intentFixture(t);
+  const request = f.client.request;
+  let unavailable = true;
+  f.client.request = async (route, options) => {
+    const result = await request(route, options);
+    if (options.uploadBody && unavailable) { unavailable = false; throw Object.assign(new Error('unavailable'), { http_status: 503 }); }
+    return result;
+  };
+  let id;
+  await assert.rejects(submitAgentWithFiles(f.client, { message: 'Build it.', files: [f.filename] }), error => {
+    id = error.request_id;
+    return error.code === 'AGENT_TURN_OUTCOME_UNKNOWN';
+  });
+  assert.equal(multipartRequest(f.intents[0].bytes).requestId, id);
+  // The retry as instructed: schema order puts request_id first, unlike the generated first call.
+  await assert.rejects(submitAgentWithFiles(f.client, { requestId: id, message: 'Build it differently.', files: [f.filename] }), /different intent or source bytes/);
+  const recovered = await submitAgentWithFiles(f.client, { requestId: id, message: 'Build it.', files: [f.filename] });
+  assert.equal(recovered.request_id, id);
+  assert.equal(recovered.replayed, true);
+  assert.equal(f.intents.length, 2);
+  assert.equal(f.intents[1].requestId, id);
+  assert.equal(f.intents[1].bytes, undefined);
+  await writeFile(f.filename, Buffer.alloc(f.bytes.length, 9));
+  await assert.rejects(submitAgentWithFiles(f.client, { requestId: id, message: 'Build it.', files: [f.filename] }), /different intent or source bytes/);
+  assert.equal(f.intents.length, 2);
+});
+
 test('definitive native conflict never retransmits files', async t => {
   const f = await intentFixture(t);
   let count = 0;
