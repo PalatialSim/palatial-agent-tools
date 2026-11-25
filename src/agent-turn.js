@@ -67,6 +67,12 @@ function recoveryWindow(client, budget) {
   return Math.min(budget.hostDeadline - clock(client), AGENT_TURN_PHASE_MS - turnElapsed(client, budget));
 }
 
+/** The window caps a send only while it still holds a useful send; a sliver leaves the foreground timer. */
+function cappedTimeout(client, budget, transport, foregroundMs) {
+  const window = recoveryWindow(client, budget);
+  return window !== null && window >= AGENT_TURN_MIN_SEND_MS[transport] ? Math.min(foregroundMs, window) : foregroundMs;
+}
+
 function canRecover(client, budget, waitMs, transport) {
   const window = recoveryWindow(client, budget);
   return window !== null && budget.sends < AGENT_TURN_MAX_SENDS && window - waitMs >= AGENT_TURN_MIN_SEND_MS[transport];
@@ -143,8 +149,7 @@ async function dispatch(client, budget, route, options) {
 export async function sendJsonTurn(client, budget, route, json, { missingBytes = false } = {}) {
   for (;;) {
     if (!maySend(client, budget, 'json')) throw outcomeUnknown(budget);
-    const window = recoveryWindow(client, budget);
-    const timeoutMs = window !== null && window > 0 ? Math.min(AGENT_TURN_ATTEMPT_MS, window) : client.timeoutMs ?? AGENT_TURN_ATTEMPT_MS;
+    const timeoutMs = cappedTimeout(client, budget, 'json', Math.min(AGENT_TURN_ATTEMPT_MS, client.timeoutMs ?? AGENT_TURN_ATTEMPT_MS));
     startTurnClock(client, budget);
     const { result, error } = await dispatch(client, budget, route, { json, timeoutMs });
     if (!error) {
@@ -175,13 +180,12 @@ export async function sendJsonTurn(client, budget, route, json, { missingBytes =
  * when streaming ends. Resolves { receipt }, { refused }, or { ambiguous } after recording the failure.
  */
 export async function sendMultipartTurn(client, budget, route, uploadBody) {
-  const window = () => recoveryWindow(client, budget);
   const body = {
     ...uploadBody,
     onStreamEnd: () => startTurnClock(client, budget),
     // Inside a verified host window the response wait ends with it; past the window, or without one,
     // the existing response timer applies and no recovery send follows.
-    responseTimeoutMs: () => { const left = window(); return left !== null && left > 0 ? Math.min(FILE_RESPONSE_MS, left) : FILE_RESPONSE_MS; }
+    responseTimeoutMs: () => cappedTimeout(client, budget, 'multipart', FILE_RESPONSE_MS)
   };
   const { result, error } = await dispatch(client, budget, route, { uploadBody: body });
   startTurnClock(client, budget);

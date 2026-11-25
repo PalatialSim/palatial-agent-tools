@@ -47,6 +47,17 @@ test('response-header hangs: each attempt is capped by the remaining window and 
   assert.equal(h.time(), 50_000);
 });
 
+test('a first send near the deadline keeps the foreground timer instead of a sliver of the window', async () => {
+  for (const startedAt of [-49_000, -49_999, -60_000]) {
+    const h = harness({ host: 60_000, answers: [hang] });
+    await assert.rejects(submitAgentTurn(h.client, { requestId: 'r-1', message: 'Build it.' }, { startedAt }), unknown('r-1', error => error.turn_sends === 1));
+    assert.equal(h.calls[0].timeoutMs, 30_000);
+  }
+  const roomy = harness({ host: 60_000, answers: [hang, hang] });
+  await assert.rejects(submitAgentTurn(roomy.client, { requestId: 'r-1', message: 'Build it.' }, { startedAt: -40_000 }), unknown('r-1'));
+  assert.equal(roomy.calls[0].timeoutMs, 10_000);
+});
+
 test('mixed gateway failures stop at the four-send ceiling with identical frozen JSON', async () => {
   const h = harness({ answers: [httpError(502), httpError(503), httpError(504), hang, ok()] });
   await assert.rejects(turn(h.client), unknown('r-1', error => error.turn_sends === AGENT_TURN_MAX_SENDS && error.last_http_status === undefined));
