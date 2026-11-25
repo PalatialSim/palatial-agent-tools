@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.27-dev.0
 
 - Agent turns return `request_id` on every receipt and submit error. An omitted ID is generated before the first send. A lost, timed-out, malformed or 5xx turn response returns `AGENT_TURN_OUTCOME_UNKNOWN` with the ID and last status, instead of a bare error; a refusal keeps its status and code, and with a caller-supplied ID states that it does not settle an earlier submission under that ID.
 - Automatic recovery is limited to Agent turn POSTs with a caller-supplied ID and is off unless the host tool-call limit is configured (`PALATIAL_HOST_TIMEOUT_MS`, or the `hostTimeoutMs` client option). It replays the frozen JSON body after a connection failure, timeout, 502, 503 or 504, under one four-send ceiling and turn-phase deadline shared by manifests, file sends and the final submit. File preparation and transfer keep their progress timers.
