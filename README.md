@@ -47,7 +47,16 @@ const receipt = await client.startAgentWithFiles({
 
 Use the same explicit request ID and unchanged files after a lost response. The client verifies local digests and sends only a small receipt first. It repeats a full multipart transfer at most once, only after the server confirms missing bytes. Old inline receipts retain their original replay format.
 
-The JavaScript methods `startAgentTurn(input)` and `getAgentTurn(id)` use camelCase JSON (`requestId` is optional; omission is forwarded to the server for requests without local files) over `POST agent` (new asset), `POST assets/:assetId/agent` (existing asset, sent automatically when `assetId` is set) and `GET agent/:id`; method names do not introduce an alternate HTTP path. The old `agent/turns` path has no alias.
+### Unknown outcomes and automatic recovery
+
+Choose a `request_id` before submitting and keep it. Every receipt and every error from a submit returns `request_id`; when you omit it, the client generates one before the first send and returns that.
+
+- A receipt means the turn was admitted under that ID. Poll its `id` with `turn_id` (or `getAgentTurn`) for the work's status.
+- `AGENT_TURN_OUTCOME_UNKNOWN` means the turn may exist: the response was lost, timed out, malformed, or answered 5xx, or a refusal followed such a send. It carries `request_id`, `turn_sends` and, when known, `last_http_status` and `last_code`. Call again with the same `request_id`, API key and identical inputs once the service responds; the server answers an identical replay with the original turn. Never retry without the ID. A turn confirmed failed stays failed; replacing it is a new request with a new ID.
+- A refusal (4xx) keeps its status and code and adds `request_id`. With your own ID it also carries `earlier_outcome: "unresolved"`: it applies to that attempt and says nothing about an earlier call with the same ID. `REQUEST_ID_CONFLICT` means the ID is bound to different inputs; resend the original inputs to recover it.
+- Automatic recovery inside one call is off unless the host's tool-call limit is configured: `PALATIAL_HOST_TIMEOUT_MS` for the MCP server, or the `hostTimeoutMs` client option (an outer deadline for library callers). It then applies only to Agent turn POSTs with a caller-supplied ID: an identical JSON send is replayed after a connection failure, timeout, 502, 503 or 504 (honoring `Retry-After` on `503 RUN_RETRY_STARTING`), and a lost multipart response is checked through the saved digest manifest. All turn POSTs of one call, including manifests and the one allowed file resend, share a ceiling of four sends and a 120 s turn-phase budget that ends 10 s before the host limit. File hashing, reservation and part transfer keep their own progress timers and do not use the turn budget. Without a configured limit each turn is sent once. Other routes (automatic create, Variant batches, scenes, source reservation) are never replayed automatically.
+
+The JavaScript methods `startAgentTurn(input)` and `getAgentTurn(id)` use camelCase JSON (`requestId` is optional; when omitted the client generates one per call and returns it as `request_id`) over `POST agent` (new asset), `POST assets/:assetId/agent` (existing asset, sent automatically when `assetId` is set) and `GET agent/:id`; method names do not introduce an alternate HTTP path. The old `agent/turns` path has no alias.
 
 ## Archive, unarchive and retry export
 
