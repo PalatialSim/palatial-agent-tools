@@ -8,7 +8,8 @@ import { createRoute, modeFields, validateMode } from './create-modes.js';
 import { createScene, getScene, messageScene, listScenes, answerScene, cancelScene, recoverScene, retrySceneStart, downloadScene } from './scenes.js';
 import { createAuto, automaticCreateInput } from './auto-create.js';
 import { progressUpload } from './upload-progress.js';
-import { uploadAgentSource, submitAgentWithFiles, agentTurnRoute } from './agent-sources.js';
+import { uploadAgentSource, submitAgentWithFiles } from './agent-sources.js';
+import { submitAgentTurn, hostTimeoutMs as configuredHostTimeoutMs } from './agent-turn.js';
 import { agentFileMaxBytes, agentVideoMaxBytes, agentVideoLimitMessage, isAgentVideo } from './agent-file-limits.js';
 
 export const DEFAULT_API_URL = 'https://dashboard.palatial.cloud/api/v1/external/';
@@ -39,7 +40,7 @@ export const agentTurnSchema = z.object({
 }).strict();
 export const mcpAgentTurnSchema = z.object({
   turn_id: agentIdentity.describe('Read this returned request id without creating another request.').optional(),
-  request_id: agentRequestIdentity.describe('Optional stable identity. Omit for a new request on every call; supply the same ID and identical inputs for safe replay after uncertainty.').optional(),
+  request_id: agentRequestIdentity.describe('Stable identity you choose and keep before submitting, such as a UUID. The same ID and identical inputs return the same turn; after an unknown outcome call again with it. Omit only for new work: an ID is then generated and returned.').optional(),
   message: z.string().trim().min(1).max(16000).optional(),
   asset_id: assetIdSchema.optional(), conversation_id: agentIdentity.optional(),
   files: z.array(z.string().min(1).max(4096)).max(50).describe('Explicit local files. MP4/MOV videos: at most 300 MiB (314572800 bytes), the current Mad Max processing limit. Other files: at most 1 GiB total. Dev raw HTTP bodies: at most 100 MiB including metadata/framing; larger files use this tool’s internal resumable transport.').optional(),
@@ -458,7 +459,7 @@ export class PalatialApiError extends Error {
   }
 
   toJSON() {
-    const fields = ['http_status', 'code', 'retryable', 'correlationId', 'reason', 'hint', 'remedy', 'assetId', 'asset_id', 'request_id', 'receipt_file', 'billingMode', 'tokens', 'billing', 'warnings', 'billing_guidance', 'next_message', 'expected_head'];
+    const fields = ['http_status', 'code', 'retryable', 'correlationId', 'reason', 'hint', 'remedy', 'assetId', 'asset_id', 'request_id', 'earlier_outcome', 'last_http_status', 'last_code', 'turn_sends', 'receipt_file', 'billingMode', 'tokens', 'billing', 'warnings', 'billing_guidance', 'next_message', 'expected_head'];
     return { message: this.message, ...Object.fromEntries(fields.filter(key => this[key] !== undefined).map(key => [key, this[key]])) };
   }
 }
@@ -477,27 +478,14 @@ async function sha256File(filename) {
   return hash.digest('hex');
 }
 
-/** Replays of one request the server answered `503 RUN_RETRY_STARTING`, and the longest Retry-After honored. */
-export const RUN_RETRY_STARTING_REPLAYS = 3;
-const RUN_RETRY_STARTING_MAX_WAIT_MS = 30_000;
-
-/**
- * The wait before replaying a request the server answered 503 RUN_RETRY_STARTING (its request is still
- * starting; the same request, resent unchanged, is answered once it has), or null for any other answer.
- */
-async function runRetryStartingWait(response) {
-  if (response.status !== 503) return null;
-  let payload;
-  try { payload = await response.clone().json(); } catch { return null; }
-  const code = payload?.code ?? payload?.error?.code;
-  if (code !== 'RUN_RETRY_STARTING') return null;
-  const header = response.headers.get('retry-after');
-  const seconds = header === null ? 1 : /^\d+$/.test(header.trim()) ? Number(header.trim()) : (Date.parse(header) - Date.now()) / 1000;
-  return Math.min(Math.max(Number.isFinite(seconds) ? seconds : 1, 0) * 1000, RUN_RETRY_STARTING_MAX_WAIT_MS);
+/** Keeps a response's Retry-After on the error, for callers that decide whether to resend. */
+function withRetryAfter(error, header) {
+  if (header !== null) Object.defineProperty(error, 'retryAfter', { value: header, enumerable: false });
+  return error;
 }
 
 export class PalatialClient {
-  constructor({ apiKey, baseUrl = DEFAULT_API_URL, fetchImpl = fetch, allowHttpForTests = false, timeoutMs = 30000, autoTimeoutMs = 180000, maxDownloadBytes = 2 * 1024 ** 3, receiptDir = process.env.PALATIAL_STATE_DIR || path.join(homedir(), '.local', 'state', 'palatial-agent'), sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
+  constructor({ apiKey, baseUrl = DEFAULT_API_URL, fetchImpl = fetch, allowHttpForTests = false, timeoutMs = 30000, autoTimeoutMs = 180000, maxDownloadBytes = 2 * 1024 ** 3, receiptDir = process.env.PALATIAL_STATE_DIR || path.join(homedir(), '.local', 'state', 'palatial-agent'), sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), hostTimeoutMs, hostMarginMs, now } = {}) {
     if (!apiKey?.trim()) throw new Error('Missing Palatial API key.');
     this.apiKey = apiKey.trim();
     this.base = new URL(baseUrl.endsWith('/') ? baseUrl : baseUrl + '/');
@@ -509,38 +497,34 @@ export class PalatialClient {
     this.maxDownloadBytes = maxDownloadBytes;
     this.receiptDir = receiptDir;
     this.sleep = sleep;
+    // A verified host tool-call limit (or a library caller's outer deadline) enables automatic Agent
+    // turn recovery; without one each turn is sent once. See agent-turn.js.
+    this.hostTimeoutMs = configuredHostTimeoutMs(hostTimeoutMs);
+    if (hostMarginMs !== undefined) this.hostMarginMs = hostMarginMs;
+    if (now) this.now = now;
   }
 
-  async request(route, { method = 'GET', body, binaryBody, uploadBody, raw = false, idempotencyKey, timeoutMs = this.timeoutMs, signal, structuredErrors = false } = {}) {
+  async request(route, { method = 'GET', body, json, binaryBody, uploadBody, raw = false, idempotencyKey, timeoutMs = this.timeoutMs, signal, structuredErrors = false } = {}) {
     const url = new URL(route, this.base);
     if (url.origin !== this.base.origin || !url.pathname.startsWith(this.base.pathname)) throw new Error('Request is outside the configured API.');
     const headers = { 'x-api-key': this.apiKey, Accept: 'application/json' };
     if (idempotencyKey !== undefined) headers['Idempotency-Key'] = idempotencyKey;
     if (uploadBody) { headers['Content-Type'] = uploadBody.contentType; headers['Content-Length'] = String(uploadBody.length); }
     else if (binaryBody !== undefined) { headers['Content-Type'] = 'application/octet-stream'; headers['Content-Length'] = String(binaryBody.byteLength); }
-    else if (body && !(body instanceof FormData)) headers['Content-Type'] = 'application/json';
+    else if (json !== undefined || (body && !(body instanceof FormData))) headers['Content-Type'] = 'application/json';
     let response;
     const transfer = uploadBody ? progressUpload(uploadBody.body, uploadBody) : undefined;
     try {
-      // A request still starting on the server (503 RUN_RETRY_STARTING) is resent unchanged after its
-      // Retry-After, only when it names itself (an Idempotency-Key, or a request id in its JSON body):
-      // without one a resend is new work. Multipart and streamed bodies cannot be resent byte for byte.
-      const replayable = !transfer && binaryBody === undefined && !(body instanceof FormData) && (idempotencyKey !== undefined ||
-        (body && typeof body === 'object' && ['requestId', 'request_id'].some(key => typeof body[key] === 'string' && body[key])));
-      for (let replay = 0; ; replay++) {
-        try {
-          response = await this.fetch(url, { method, headers, body: transfer ? transfer.body : binaryBody !== undefined ? binaryBody : body instanceof FormData ? body : body ? JSON.stringify(body) : undefined, redirect: raw ? 'manual' : 'error', signal: transfer?.signal || signal || (timeoutMs === null ? undefined : AbortSignal.timeout(timeoutMs)), ...(transfer ? { duplex: 'half' } : {}) });
-        } catch (error) {
-          const uncertain = method !== 'GET' ? ' The server may have accepted the request. Check your workspace before submitting again; this client does not retry mutations.' : '';
-          throw new Error(safeMessage(error, this.apiKey) + uncertain);
-        }
-        const wait = !replayable || replay >= RUN_RETRY_STARTING_REPLAYS ? null : await runRetryStartingWait(response);
-        if (wait === null) break;
-        await this.sleep(wait);
+      try {
+        response = await this.fetch(url, { method, headers, body: transfer ? transfer.body : binaryBody !== undefined ? binaryBody : json !== undefined ? json : body instanceof FormData ? body : body ? JSON.stringify(body) : undefined, redirect: raw ? 'manual' : 'error', signal: transfer?.signal || signal || (timeoutMs === null ? undefined : AbortSignal.timeout(timeoutMs)), ...(transfer ? { duplex: 'half' } : {}) });
+      } catch (error) {
+        const uncertain = method !== 'GET' ? ' The server may have accepted the request. Check your workspace before submitting again; this client does not retry mutations.' : '';
+        throw Object.assign(new Error(safeMessage(error, this.apiKey) + uncertain), { transport: true });
       }
       if (raw && response.status >= 300 && response.status < 400) return response;
       if (!response.ok) {
         const preserveStructuredError = structuredErrors || route === 'assets/create/auto';
+        const retryAfter = response.headers.get('retry-after');
         const reason = { 400: 'Invalid request', 401: 'Invalid or expired API key', 403: 'Access denied or insufficient credits', 404: 'Asset or workspace not found', 409: 'Request conflicts with asset state', 429: 'Rate limit reached' }[response.status] || 'Service request failed';
         let payload;
         if (response.status < 500 || preserveStructuredError) {
@@ -557,19 +541,19 @@ export class PalatialClient {
             const tokens = Object.fromEntries(['balance', 'required', 'shortfall']
               .filter(key => Number.isFinite(record.tokens?.[key]) && (key === 'balance' || record.tokens[key] >= 0))
               .map(key => [key, record.tokens[key]]));
-            throw new PalatialApiError(`Insufficient credits (HTTP ${response.status}). ${guidance.message}`, {
+            throw withRetryAfter(new PalatialApiError(`Insufficient credits (HTTP ${response.status}). ${guidance.message}`, {
               // Routes with structured errors keep the server's own refusal reason; billing_guidance.reason still names the credit kind.
               http_status: response.status, code: record.code,
               reason: structuredErrors && typeof record.reason === 'string' && /^[a-z0-9_]{1,64}$/.test(record.reason) ? record.reason : guidance.reason,
               ...(typeof record.billingMode === 'string' ? { billingMode: safeBillingValue(record.billingMode, this.apiKey) } : {}),
               ...(Object.keys(tokens).length ? { tokens } : {}),
               ...metadata, billing_guidance: guidance
-            });
+            }), retryAfter);
           }
         }
         const detail = response.status < 500 || preserveStructuredError ? apiErrorDetail(payload, this.apiKey) : '';
         if (preserveStructuredError && typeof payload?.code === 'string' && /^[A-Za-z0-9_]{1,64}$/.test(payload.code)) {
-          throw new PalatialApiError(`${reason} (HTTP ${response.status}).${detail}`, {
+          throw withRetryAfter(new PalatialApiError(`${reason} (HTTP ${response.status}).${detail}`, {
             http_status: response.status, code: payload.code,
             ...(typeof payload.retryable === 'boolean' ? { retryable: payload.retryable } : {}),
             ...(typeof payload.correlationId === 'string' && /^[A-Za-z0-9._:-]{1,192}$/.test(payload.correlationId) ? { correlationId: payload.correlationId } : {}),
@@ -579,14 +563,14 @@ export class PalatialClient {
             ...(typeof payload.reason === 'string' && /^[a-z0-9_]{1,64}$/.test(payload.reason) ? { reason: payload.reason } : {}),
             ...(typeof payload.expected_head === 'string' && /^sha256:[a-f0-9]{64}$/.test(payload.expected_head) ? { expected_head: payload.expected_head } : {}),
             ...(payload.next_message && typeof payload.next_message === 'object' && !Array.isArray(payload.next_message) ? { next_message: safeBillingValue(payload.next_message, this.apiKey) } : {})
-          });
+          }), retryAfter);
         }
         const error = new Error(`${reason} (HTTP ${response.status}).${detail}${method !== 'GET' && response.status >= 500 ? ' Submission outcome is uncertain; inspect your workspace before retrying.' : ''}`);
         error.status = response.status;
-        throw error;
+        throw withRetryAfter(error, retryAfter);
       }
       if (raw) return response;
-      try { return sanitizeBillingFields(await response.json(), this.apiKey); } catch { throw new Error('Palatial returned an invalid JSON response. For a create request, inspect your workspace before submitting again.'); }
+      try { return sanitizeBillingFields(await response.json(), this.apiKey); } catch { throw Object.assign(new Error('Palatial returned an invalid JSON response. For a create request, inspect your workspace before submitting again.'), { invalidResponse: true }); }
     } finally { transfer?.close(); }
   }
 
@@ -689,14 +673,14 @@ export class PalatialClient {
 
   uploadAgentSource(input) { return uploadAgentSource(this, input); }
 
-  startAgentWithFiles(input) {
+  /** `startedAt` is the caller's entry time on this client's clock (MCP tool entry), for the host window. */
+  startAgentWithFiles(input, { startedAt } = {}) {
     const { files, ...intent } = withoutRetiredIntent(input);
-    return submitAgentWithFiles(this, { ...agentTurnSchema.parse(intent), files });
+    return submitAgentWithFiles(this, { ...agentTurnSchema.parse(intent), files }, { startedAt });
   }
 
-  startAgentTurn(input) {
-    const { route, body } = agentTurnRoute(agentTurnSchema.parse(withoutRetiredIntent(input)));
-    return this.request(route, { method: 'POST', body, structuredErrors: true });
+  startAgentTurn(input, { startedAt } = {}) {
+    return submitAgentTurn(this, agentTurnSchema.parse(withoutRetiredIntent(input)), { startedAt });
   }
 
   getAgentTurn(turnId) {

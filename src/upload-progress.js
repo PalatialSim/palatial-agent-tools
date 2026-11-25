@@ -1,5 +1,8 @@
-/** Deadline follows upload progress, then bounds the wait for the response. */
-export function progressUpload(body, { stallTimeoutMs = 60000, responseTimeoutMs = 120000 } = {}) {
+/**
+ * Deadline follows upload progress, then bounds the wait for the response. `responseTimeoutMs` may be a
+ * function read when streaming ends; `onStreamEnd` runs then too.
+ */
+export function progressUpload(body, { stallTimeoutMs = 60000, responseTimeoutMs = 120000, onStreamEnd } = {}) {
   const controller = new AbortController();
   let timer;
   const arm = milliseconds => {
@@ -14,7 +17,8 @@ export function progressUpload(body, { stallTimeoutMs = 60000, responseTimeoutMs
         arm(stallTimeoutMs);
         yield chunk;
       }
-      arm(responseTimeoutMs);
+      onStreamEnd?.();
+      arm(typeof responseTimeoutMs === 'function' ? responseTimeoutMs() : responseTimeoutMs);
     } catch (error) {
       controller.abort(error);
       throw error;

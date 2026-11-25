@@ -137,9 +137,16 @@ test('MCP intent tool sends one multipart POST and repeats only the digest manif
   } });
   const client = await connect(t, async () => native);
   const args = { request_id: 'small-photo', message: 'Create the bin in this photo.', files: [filename] };
+  // No verified host limit: the lost response is returned as an unknown outcome carrying the caller's ID.
+  const lost = await client.callTool({ name: 'palatial_agent', arguments: args });
+  assert.equal(lost.isError, true);
+  assert.equal(lost.structuredContent.code, 'AGENT_TURN_OUTCOME_UNKNOWN');
+  assert.equal(lost.structuredContent.request_id, 'small-photo');
+  assert.equal(calls.length, 1);
   const result = await client.callTool({ name: 'palatial_agent', arguments: args });
   assert.equal(result.isError, undefined);
   assert.equal(result.structuredContent.replayed, true);
+  assert.equal(result.structuredContent.request_id, 'small-photo');
   assert.equal(calls.length, 2);
   assert.equal(calls[0].method, 'POST');
   assert.match(calls[0].headers['Content-Type'], /^multipart\/form-data/);
@@ -170,7 +177,9 @@ test('message-only MCP calls omit request identity and remain new requests, whil
   assert.equal(first.isError, undefined);
   assert.equal(second.isError, undefined);
   assert.notEqual(first.structuredContent.id, second.structuredContent.id);
-  assert.deepEqual(posts, [{ message: args.message }, { message: args.message }]);
+  assert.notEqual(posts[0].requestId, posts[1].requestId);
+  assert.deepEqual([first.structuredContent.request_id, second.structuredContent.request_id], posts.map(post => post.requestId));
+  assert.deepEqual(posts.map(post => post.message), [args.message, args.message]);
   assert.equal(Object.hasOwn(args, 'request_id'), false);
   const explicit = { ...args, request_id: 'preserve-this-id' };
   await client.callTool({ name: 'palatial_agent', arguments: explicit });
@@ -222,4 +231,31 @@ test('asset lifecycle tools preserve the plan refusal code and reject bad IDs be
     assert.equal((await client.callTool({ name: 'palatial_retry_export', arguments: { asset_id } })).isError, true);
   }
   assert.equal(calls, 2);
+});
+
+test('a caller request_id survives a lost result: the next call with it returns the same turn, and a generated ID is reported on errors', async t => {
+  const posts = [];
+  let lose = true;
+  const native = new PalatialClient({ apiKey: 'fixture-key', baseUrl: 'https://dashboard.dev.palatial.cloud/api/v1/external/', hostTimeoutMs: 600_000, sleep: async () => {}, fetchImpl: async (_url, init) => {
+    posts.push(JSON.parse(init.body));
+    if (lose) throw new Error('host gave up; connection closed');
+    return Response.json({ id: 'turn-kept', status: 'running', replayed: posts.length > 1 }, { status: 202 });
+  } });
+  const client = await connect(t, async () => native);
+  const args = { request_id: 'chosen-before-submit', message: 'Build a red bin.' };
+  const first = await client.callTool({ name: 'palatial_agent', arguments: args });
+  assert.equal(first.isError, true);
+  assert.equal(first.structuredContent.code, 'AGENT_TURN_OUTCOME_UNKNOWN');
+  assert.equal(first.structuredContent.request_id, 'chosen-before-submit');
+  assert.equal(posts.length, 4);
+  lose = false;
+  const second = await client.callTool({ name: 'palatial_agent', arguments: args });
+  assert.equal(second.structuredContent.id, 'turn-kept');
+  assert.equal(second.structuredContent.request_id, 'chosen-before-submit');
+  assert.equal(new Set(posts.map(post => JSON.stringify(post))).size, 1);
+  lose = true;
+  const generated = await client.callTool({ name: 'palatial_agent', arguments: { message: 'Build a blue bin.' } });
+  assert.equal(generated.structuredContent.code, 'AGENT_TURN_OUTCOME_UNKNOWN');
+  assert.equal(generated.structuredContent.request_id, posts.at(-1).requestId);
+  assert.equal(posts.length, 6);
 });
