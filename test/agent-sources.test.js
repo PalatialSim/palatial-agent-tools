@@ -90,12 +90,11 @@ async function intentFixture(t) {
         const bytes = Buffer.concat(chunks);
         assert.equal(bytes.length, options.uploadBody.length);
         f.intents.push({ bytes, contentType: options.uploadBody.contentType });
-      } else f.intents.push(options.body);
+      } else f.intents.push(JSON.parse(options.json));
       return { id: 'same-turn', replayed: !options.uploadBody };
     }
     return request(route, options);
   };
-  f.client.startAgentTurn = async input => { f.intents.push(input); return { id: 'same-turn', replayed: true }; };
   f.file = async (name, size = 16) => {
     const filename = path.join(path.dirname(f.filename), name);
     await writeFile(filename, Buffer.alloc(size, 7));
@@ -139,17 +138,26 @@ test('omitting identity creates fresh requests and leaves caller input unchanged
   assert.equal(Object.hasOwn(input, 'requestId'), false);
 });
 
-test('lost multipart response recovers through small manifest without retransmitting bytes', async t => {
-  const f = await intentFixture(t);
+function loseFirstUpload(f) {
   const request = f.client.request;
   let lost = true;
   f.client.request = async (route, options) => {
     const result = await request(route, options);
-    if (options.uploadBody && lost) { lost = false; throw new Error('response lost'); }
+    if (options.uploadBody && lost) { lost = false; throw Object.assign(new Error('response lost'), { transport: true }); }
     return result;
   };
+}
+const unknown = id => error => error.code === 'AGENT_TURN_OUTCOME_UNKNOWN' && error.request_id === id;
+
+test('without a host limit a lost multipart response returns its request_id, and the next same-ID call recovers through the manifest', async t => {
+  const f = await intentFixture(t);
+  loseFirstUpload(f);
   const input = { requestId: 'recover', message: 'Build it.', files: [f.filename] };
-  assert.equal((await submitAgentWithFiles(f.client, input)).replayed, true);
+  await assert.rejects(submitAgentWithFiles(f.client, input), unknown('recover'));
+  assert.equal(f.intents.length, 1);
+  const recovered = await submitAgentWithFiles(f.client, input);
+  assert.equal(recovered.replayed, true);
+  assert.equal(recovered.request_id, 'recover');
   assert.equal(f.intents.filter(intent => intent.bytes).length, 1);
   assert.equal(f.intents[1].files[0].originalName, 'cabinet.mp4');
   assert.ok(JSON.stringify(f.intents[1]).length < 1024);
@@ -158,17 +166,45 @@ test('lost multipart response recovers through small manifest without retransmit
   assert.equal(f.intents.length, 2);
 });
 
-test('missing bytes permits exactly one retransmission and another lost response returns to caller', async t => {
+test('inside a verified host window a lost multipart response recovers through the manifest without retransmitting bytes', async t => {
   const f = await intentFixture(t);
+  f.client.hostTimeoutMs = 600_000;
+  loseFirstUpload(f);
+  const result = await submitAgentWithFiles(f.client, { requestId: 'recover', message: 'Build it.', files: [f.filename] });
+  assert.equal(result.replayed, true);
+  assert.equal(f.intents.filter(intent => intent.bytes).length, 1);
+  assert.equal(f.intents.length, 2);
+});
+
+test('missing bytes permits exactly one retransmission and the four-send ceiling ends the call', async t => {
+  const f = await intentFixture(t);
+  f.client.hostTimeoutMs = 600_000;
   let uploads = 0, manifests = 0;
   f.client.request = async (_route, options) => {
-    if (options.uploadBody) { uploads++; throw new Error('connection lost'); }
+    if (options.uploadBody) { uploads++; throw Object.assign(new Error('connection lost'), { transport: true }); }
     manifests++;
     throw Object.assign(new Error('bytes required'), { code: 'AGENT_SOURCE_BYTES_REQUIRED', http_status: 400 });
   };
-  await assert.rejects(submitAgentWithFiles(f.client, { requestId: 'missing', message: 'Build it.', files: [f.filename] }), /connection lost/);
+  await assert.rejects(submitAgentWithFiles(f.client, { requestId: 'missing', message: 'Build it.', files: [f.filename] }), error => {
+    assert.equal(error.code, 'AGENT_TURN_OUTCOME_UNKNOWN');
+    assert.equal(error.turn_sends, 4);
+    return true;
+  });
   assert.equal(uploads, 2);
-  assert.equal(manifests, 1);
+  assert.equal(manifests, 2);
+});
+
+test('an omitted-ID file call stops after its first ambiguous send and returns the generated request_id', async t => {
+  const f = await intentFixture(t);
+  f.client.hostTimeoutMs = 600_000;
+  loseFirstUpload(f);
+  let id;
+  await assert.rejects(submitAgentWithFiles(f.client, { message: 'Build it.', files: [f.filename] }), error => {
+    id = error.request_id;
+    return error.code === 'AGENT_TURN_OUTCOME_UNKNOWN';
+  });
+  assert.equal(f.intents.length, 1);
+  assert.equal(multipartRequest(f.intents[0].bytes).requestId, id);
 });
 
 test('definitive native conflict never retransmits files', async t => {
@@ -193,10 +229,9 @@ test('large inputs use internal parts and retry only the small stored request', 
   const before = f.calls.length;
   await submitAgentWithFiles(f.client, input);
   assert.equal(f.calls.length, before);
-  const { assetId, ...stored } = f.intents[0];
-  assert.equal(assetId, f.assetId);
-  assert.deepEqual(f.intents[1], stored);
-  assert.deepEqual(f.routes, [`assets/${f.assetId}/agent`]);
+  assert.equal(f.intents[0].assetId, undefined);
+  assert.deepEqual(f.intents[1], f.intents[0]);
+  assert.deepEqual(f.routes, [`assets/${f.assetId}/agent`, `assets/${f.assetId}/agent`]);
 });
 
 test('legacy inline receipts replay their exact old JSON and reject changed files', async t => {

@@ -6,13 +6,9 @@ import { progressUpload } from './upload-progress.js';
 import { agentFileMaxBytes, assertAgentFileSize } from './agent-file-limits.js';
 export { agentFileMaxBytes } from './agent-file-limits.js';
 import { assertLocalPath, assertPublicHttpsUrl, digestHandle, digestRegularFile, openRegularFile, readCappedRegularFile, resolveOutputDirectory, assertResolvedDirectory } from './input-guards.js';
-
-// An existing asset is addressed by path; the body carries only the message and optional extras.
-export function agentTurnRoute(body) {
-  if (body.assetId === undefined) return { route: 'agent', body };
-  const { assetId, ...rest } = body;
-  return { route: `assets/${encodeURIComponent(assetId)}/agent`, body: rest };
-}
+import { agentTurnRoute, agentTurnBudget, sendJsonTurn, sendMultipartTurn, mayTurnSend, turnRefusal, outcomeUnknown } from './agent-turn.js';
+import { PalatialApiError } from './client.js';
+export { agentTurnRoute } from './agent-turn.js';
 
 export const agentSourceUploadSchema = z.object({
   asset_id: z.string().regex(/^[a-fA-F0-9]{24}$/),
@@ -118,11 +114,30 @@ export function agentMultipart(intent, sources) {
   return { manifest, uploadBody: { body: body(), contentType: `multipart/form-data; boundary=${boundary}`, length } };
 }
 
-/** One public operation: native multipart for small requests, resumable parts for large files. */
-export async function submitAgentWithFiles(client, input) {
+/**
+ * One public operation: native multipart for small requests, resumable parts for large files. Every
+ * Agent-turn POST (saved manifest, multipart, resend, final JSON) shares one send ceiling and turn-phase
+ * budget; hashing, reservation and part transfer keep their own progress timers and use neither.
+ */
+export async function submitAgentWithFiles(client, input, { startedAt } = {}) {
   const { files, ...submittedIntent } = input;
+  const callerSupplied = submittedIntent.requestId !== undefined;
   const intent = { ...submittedIntent, requestId: submittedIntent.requestId ?? randomUUID() };
   if (files.length + (intent.attachments?.length || 0) > 50) throw new Error('At most 50 attachments and files combined.');
+  const budget = agentTurnBudget(client, { requestId: intent.requestId, callerSupplied, startedAt });
+  try {
+    return await submitPrepared(client, intent, files, budget);
+  } catch (error) {
+    // Once an identity exists, every surfaced error carries it, so an interrupted file call can resume.
+    if (error && typeof error === 'object' && error.request_id === undefined) {
+      error.request_id = intent.requestId;
+      if (!(error instanceof PalatialApiError)) error.message += ` request_id: ${intent.requestId}.`;
+    }
+    throw error;
+  }
+}
+
+async function submitPrepared(client, intent, files, budget) {
   const sources = [];
   for (const filename of files) {
     assertLocalPath(filename);
@@ -153,10 +168,14 @@ export async function submitAgentWithFiles(client, input) {
     if (error.code === 'EEXIST') throw new Error('This intent is already being prepared. Preserve request_id and inspect its local receipt before retrying.');
     throw error;
   });
+  const sendJson = (input, options) => {
+    const { route, body } = agentTurnRoute(input);
+    return sendJsonTurn(client, budget, route, JSON.stringify(body), options);
+  };
   try {
     let saved = await readReceipt();
     // Old inline receipts retain their original JSON fingerprint and exact request.
-    if (saved && saved.version !== 2) return await client.startAgentTurn(saved.input);
+    if (saved && saved.version !== 2) return await sendJson(saved.input);
     if (intent.attachments?.some(attachment => attachment.inlineData)) throw new Error('Use files for all file bytes when submitting local files; inlineData cannot be combined with multipart.');
     const multipart = agentMultipart(intent, sources);
     const save = async () => {
@@ -172,14 +191,10 @@ export async function submitAgentWithFiles(client, input) {
         throw error;
       }
     };
-    const replay = async () => {
-      const { route, body } = agentTurnRoute(saved.input);
-      try { return { result: await client.request(route, { method: 'POST', body, structuredErrors: true }) }; }
-      catch (error) { if (error.code !== 'AGENT_SOURCE_BYTES_REQUIRED') throw error; return {}; }
-    };
+    // The saved digest manifest: a receipt, or { missingBytes } when the server lacks the bytes.
     if (saved) {
-      const recovered = await replay();
-      if (recovered.result) return recovered.result;
+      const recovered = await sendJson(saved.input, { missingBytes: true });
+      if (!recovered.missingBytes) return recovered;
     } else {
       saved = { version: 2, transport: sources.reduce((sum, source) => sum + source.size, 0) <= multipartMaxBytes ? 'multipart' : 'parts', fingerprint, sources, input: multipart.manifest, uploaded: [] };
       await save();
@@ -202,19 +217,24 @@ export async function submitAgentWithFiles(client, input) {
       }
       saved.input = { ...intent, assetId: saved.assetId, attachments: [...(intent.attachments || []), ...saved.uploaded] };
       await save();
-      return await client.startAgentTurn(saved.input);
+      return await sendJson(saved.input);
     }
-    const send = () => {
-      const { route, body } = agentTurnRoute(intent);
-      return client.request(route, { method: 'POST', uploadBody: agentMultipart(body, sources).uploadBody, structuredErrors: true });
-    };
-    try { return await send(); }
-    catch (error) {
-      if ((error.http_status || error.status) && (error.http_status || error.status) < 500) throw error;
-      const recovered = await replay();
-      if (recovered.result) return recovered.result;
-      // Only an authoritative missing-bytes refusal permits one full retransmission.
-      return await send();
+    const { route, body } = agentTurnRoute(intent);
+    // The generic sender never repeats a stream. Only a validated missing-bytes answer to the saved
+    // manifest, inside the recovery window, permits one retransmission of the verified sources.
+    let retransmitted = false;
+    for (;;) {
+      if (!mayTurnSend(client, budget, 'multipart')) throw outcomeUnknown(budget);
+      const sent = await sendMultipartTurn(client, budget, route, agentMultipart(body, sources).uploadBody);
+      if (sent.receipt) return sent.receipt;
+      if (sent.refused) {
+        if (budget.ambiguous) throw outcomeUnknown(budget);
+        throw turnRefusal(budget, sent.refused);
+      }
+      const recovered = await sendJson(saved.input, { missingBytes: true });
+      if (!recovered.missingBytes) return recovered;
+      if (retransmitted) throw outcomeUnknown(budget, ' (the server still reports missing source bytes)');
+      retransmitted = true;
     }
   } finally {
     await lock.close();

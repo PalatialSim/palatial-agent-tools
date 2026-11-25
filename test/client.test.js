@@ -762,7 +762,7 @@ test('Agent turns use the public owner routes and replay identical request ident
     return init.method === 'POST' ? json(receipt, 202) : json({ ...receipt, status: 'completed', reply: 'Native continuation active', automation: { state: 'active' }, media: { texture: { state: 'unavailable' } } });
   });
   const input = { requestId: 'request-1', assetId: 'asset-1', message: 'Make this chair taller.' };
-  assert.deepEqual(await client.startAgentTurn(input), receipt);
+  assert.deepEqual(await client.startAgentTurn(input), { ...receipt, request_id: input.requestId });
   await client.startAgentTurn(input);
   assert.equal(calls[0].body, calls[1].body);
   assert.deepEqual(JSON.parse(calls[0].body), { requestId: input.requestId, message: input.message });
@@ -826,7 +826,7 @@ test('Agent intent rejects removed manual and execution policy fields', async t 
   assert.equal(calls, 0);
 });
 
-test('Agent SDK forwards omitted request identity on every call without mutating the input', async t => {
+test('Agent SDK generates one request identity per omitted-ID call, returns it, and leaves the input unchanged', async t => {
   const bodies = [];
   const { client } = await fixture(t, async (_url, init) => {
     bodies.push(JSON.parse(init.body));
@@ -836,7 +836,9 @@ test('Agent SDK forwards omitted request identity on every call without mutating
   const first = await client.startAgentTurn(input);
   const second = await client.startAgentTurn(input);
   assert.notEqual(first.id, second.id);
-  assert.deepEqual(bodies, [{ message: input.message }, { message: input.message }]);
+  assert.notEqual(bodies[0].requestId, bodies[1].requestId);
+  assert.deepEqual(bodies.map(body => body.message), [input.message, input.message]);
+  assert.deepEqual([first.request_id, second.request_id], bodies.map(body => body.requestId));
   assert.equal(Object.hasOwn(input, 'requestId'), false);
 });
 
@@ -869,44 +871,13 @@ test('creation preserves long descriptions and relays server length refusals onc
   await assert.rejects(rejected.client.create({ ...basic, description }), /Description is too long/);
 });
 
-test('a request still starting (503 RUN_RETRY_STARTING) is replayed unchanged after its Retry-After, at most three times', async t => {
-  const calls = [], waits = [];
-  const starting = (retryAfter) => new Response(JSON.stringify({ statusCode: 503, code: 'RUN_RETRY_STARTING', retryable: true, message: 'Still starting.' }),
-    { status: 503, headers: { 'Content-Type': 'application/json', ...(retryAfter === undefined ? {} : { 'Retry-After': retryAfter }) } });
-  const answers = [starting('2'), starting('120'), json({ turnId: 'turn-1', status: 'running' })];
-  const { client } = await fixture(t, async (url, init) => { calls.push({ url: String(url), init }); return answers.shift(); },
-    { sleep: async ms => { waits.push(ms); } });
-  const result = await client.request('variants/batch', { method: 'POST', body: { message: 'Build it' }, idempotencyKey: 'request-1', structuredErrors: true });
-  assert.equal(result.turnId, 'turn-1');
-  assert.equal(calls.length, 3);
-  // Retry-After is honored, capped at 30 seconds.
-  assert.deepEqual(waits, [2000, 30_000]);
-  for (const call of calls) {
-    assert.equal(call.init.headers['Idempotency-Key'], 'request-1');
-    assert.equal(call.init.body, JSON.stringify({ message: 'Build it' }));
-  }
-});
-
-test('a request that keeps starting surfaces the refusal after three replays, and other 503s are never replayed', async t => {
+test('generic requests no longer replay RUN_RETRY_STARTING: only audited Agent turns may resend', async t => {
   const calls = [];
-  const starting = () => new Response(JSON.stringify({ code: 'RUN_RETRY_STARTING', retryable: true }), { status: 503, headers: { 'Content-Type': 'application/json' } });
-  const { client } = await fixture(t, async (url, init) => { calls.push(init); return starting(); }, { sleep: async () => {} });
-  await assert.rejects(client.request('agent', { method: 'POST', body: { requestId: 'r-1', message: 'Build it' }, structuredErrors: true }),
-    error => error.code === 'RUN_RETRY_STARTING' && error.retryable === true);
-  assert.equal(calls.length, 4);
-  const other = [];
-  const { client: plain } = await fixture(t, async (url, init) => { other.push(init); return new Response('unavailable', { status: 503 }); }, { sleep: async () => {} });
-  await assert.rejects(plain.request('agent', { method: 'POST', body: { message: 'Build it' } }), /HTTP 503/);
-  assert.equal(other.length, 1);
-});
-
-test('a request without its own identity, or with a multipart body, is never replayed on RUN_RETRY_STARTING', async t => {
-  const calls = [];
-  const starting = () => new Response(JSON.stringify({ code: 'RUN_RETRY_STARTING', retryable: true }), { status: 503, headers: { 'Content-Type': 'application/json' } });
-  const { client } = await fixture(t, async (url, init) => { calls.push(init); return starting(); }, { sleep: async () => {} });
-  // Without a request id each call is new work: resending it could start a second paid job.
-  await assert.rejects(client.request('agent', { method: 'POST', body: { message: 'Build it' }, structuredErrors: true }), error => error.code === 'RUN_RETRY_STARTING');
+  const starting = () => new Response(JSON.stringify({ code: 'RUN_RETRY_STARTING', retryable: true }), { status: 503, headers: { 'Content-Type': 'application/json', 'Retry-After': '1' } });
+  const { client } = await fixture(t, async (_url, init) => { calls.push(init); return starting(); }, { sleep: async () => {}, hostTimeoutMs: 600_000 });
+  await assert.rejects(client.request('variants/batch', { method: 'POST', body: { message: 'Build it' }, idempotencyKey: 'request-1', structuredErrors: true }), error => error.code === 'RUN_RETRY_STARTING');
+  await assert.rejects(client.request('agent', { method: 'POST', body: { requestId: 'r-1', message: 'Build it' }, structuredErrors: true }), error => error.code === 'RUN_RETRY_STARTING');
   const form = new FormData(); form.append('requestId', 'r-1');
   await assert.rejects(client.request('assets/create', { method: 'POST', body: form, idempotencyKey: 'r-1', structuredErrors: true }), error => error.code === 'RUN_RETRY_STARTING');
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3);
 });
