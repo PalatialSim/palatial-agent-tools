@@ -161,8 +161,9 @@ async function submitPrepared(client, intent, files, budget) {
   if (sources.reduce((sum, source) => sum + source.size, 0) > agentFileMaxBytes) throw new Error('One Agent request supports at most 1 GiB of files.');
   // Key order must not matter: a generated requestId lands last, a caller-supplied one usually first.
   const fingerprint = createHash('sha256').update(canonicalJson({ intent, sources })).digest('hex');
-  // Receipts saved before canonical hashing keep their insertion-order fingerprint.
-  const legacyFingerprint = createHash('sha256').update(JSON.stringify({ intent, sources })).digest('hex');
+  // Receipts saved before canonical hashing keep their insertion-order fingerprint; a generated requestId was last.
+  const { requestId, ...rest } = intent;
+  const legacyFingerprints = [intent, { ...rest, requestId }].map(order => createHash('sha256').update(JSON.stringify({ intent: order, sources })).digest('hex'));
   const owner = createHash('sha256').update(JSON.stringify([client.base.href, client.apiKey, intent.requestId])).digest('hex');
   const directory = await resolveOutputDirectory(client.receiptDir);
   await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -172,7 +173,7 @@ async function submitPrepared(client, intent, files, budget) {
     const bytes = await readCappedRegularFile(receipt, intentReceiptMaxBytes);
     if (!bytes) return undefined;
     const saved = JSON.parse(bytes.toString('utf8'));
-    if (saved.fingerprint !== fingerprint && saved.fingerprint !== legacyFingerprint) throw new Error('Request ID already has different intent or source bytes. Preserve the original request and inspect its receipt.');
+    if (saved.fingerprint !== fingerprint && !legacyFingerprints.includes(saved.fingerprint)) throw new Error('Request ID already has different intent or source bytes. Preserve the original request and inspect its receipt.');
     return saved;
   };
   const lock = await open(`${receipt}.lock`, 'wx', 0o600).catch(error => {
